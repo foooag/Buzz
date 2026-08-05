@@ -4,7 +4,7 @@ import { PortForwardList } from "../forwarding/PortForwardList";
 import type { ForwardingApi } from "../forwarding/forwardingApi";
 import { getHostCredential } from "../ssh/savedCredentials";
 import type { CreateSshProfile } from "../ssh/sshTypes";
-import { ProtocolBadge, StatusDot, Tag, hostEndpoint } from "./serversAtoms";
+import { ProtocolBadge, StatusDot, Tag, groupColor, hostEndpoint } from "./serversAtoms";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 function buildSshProfile(host: Host): CreateSshProfile | null {
@@ -79,7 +79,14 @@ export function HostDetailPanel({ host, groups, snippets, onConnect, onClose, on
   const env = host.env ?? {};
   const forwardingProfile = buildSshProfile(host);
   return (
-    <aside className="flex h-full w-[360px] shrink-0 flex-col border-l border-graphite bg-carbon">
+    <aside className="relative flex h-full w-[360px] shrink-0 flex-col overflow-hidden border-l border-graphite bg-carbon">
+      {group ? (
+        <span
+          aria-hidden
+          className="absolute inset-y-0 left-0 w-[3px]"
+          style={{ background: groupColor(group.color) }}
+        />
+      ) : null}
       <header className="flex items-start gap-3 px-4 pb-3 pt-4">
         <span className="mt-1">
           <StatusDot status={host.status ?? "offline"} size={9} />

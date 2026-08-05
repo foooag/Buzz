@@ -69,6 +69,7 @@ function Sidebar({
 
 const NAV_ITEMS = [
   { id: "servers", label: "Servers", icon: "server" },
+  { id: "agent", label: "Agent", icon: "sparkles" },
   { id: "sftp", label: "SFTP", icon: "folder" },
   { id: "forwarding", label: "Port Forwarding", icon: "network" },
   { id: "history", label: "History", icon: "history" },

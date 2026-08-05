@@ -14,6 +14,15 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import {
+  AssistantRuntimeProvider,
+  MessagePrimitive,
+  ThreadPrimitive,
+  useExternalStoreRuntime,
+  type AppendMessage,
+  type MessageState,
+  type ThreadMessageLike,
+} from "@assistant-ui/react";
 import { aiConfigApi } from "@/features/ai/aiApi";
 import type { AiConfigApi, AiProviderConfig } from "@/features/ai/aiConfigTypes";
 import { useInventoryStore } from "@/features/inventory/inventoryStore";
@@ -28,7 +37,10 @@ import type {
   AgentToolConfirmation,
 } from "./agentTypes";
 import { ConfirmCard } from "./ConfirmCard";
-import { MentionComposer } from "./composer/MentionComposer";
+import {
+  MentionComposer,
+  type MentionComposerDraft,
+} from "./composer/MentionComposer";
 import { expandTargets, parseDirectives } from "./directiveText";
 import { HostErrorBanner } from "./HostErrorBanner";
 import type { CommandStep, HostProgress } from "./progressTypes";
@@ -85,7 +97,7 @@ const EXAMPLES: Record<ScenarioId, {
       const first = hosts[0];
       const second = hosts[1];
       return first && second
-        ? `把 @:host[${first.name}]{name=${first.id}} 上的容器同样运行在 @:host[${second.name}]{name=${second.id}} 上`
+        ? `把 @${first.name} 上的容器同样运行在 @${second.name} 上`
         : "把容器从第一台服务器同步到第二台";
     },
   },
@@ -96,7 +108,7 @@ const EXAMPLES: Record<ScenarioId, {
     build(_hosts, groups) {
       const group = groups[0];
       return group
-        ? `@:group[${group.name}]{name=${group.id}} 逐台健康检查`
+        ? `@${group.name} 逐台健康检查`
         : "@Production 逐台健康检查";
     },
   },
@@ -125,13 +137,15 @@ export function AgentPage({
   const [providerId, setProviderId] = useState("");
   const [items, setItems] = useState<AgentItem[]>([]);
   const [hosts, setHosts] = useState<HostProgress[]>([]);
-  const [input, setInput] = useState("");
+  const [agentId, setAgentId] = useState<string>();
+  const [draft, setDraft] = useState<MentionComposerDraft>();
   const [running, setRunning] = useState(false);
   const [awaitingConfirm, setAwaitingConfirm] = useState(false);
   const [error, setError] = useState<string>();
   const [confirmation, setConfirmation] = useState<AgentToolConfirmation>();
   const [scenario, setScenario] = useState<ScenarioId>("docker");
   const agentIdRef = useRef<string | undefined>(undefined);
+  const sendingRef = useRef(false);
   const abortedRef = useRef(false);
   const streamRef = useRef<HTMLDivElement>(null);
   const hostsRef = useRef<Record<string, Host>>({});
@@ -142,6 +156,19 @@ export function AgentPage({
   const hostName = useCallback(
     (hostId: string) => hostsRef.current[hostId]?.name ?? hostId,
     [],
+  );
+
+  const resolveMentionLabel = useCallback(
+    (label: string) => {
+      const host = Object.values(hostsRef.current).find(
+        (candidate) => candidate.name === label,
+      );
+      if (host) return { type: "host" as const, id: host.id };
+      const group = groups.find((candidate) => candidate.name === label);
+      if (group) return { type: "group" as const, id: group.id };
+      return undefined;
+    },
+    [groups],
   );
 
   useEffect(() => {
@@ -175,6 +202,7 @@ export function AgentPage({
     void agentClient.create({ providerConfigId: providerId }).then(
       (snapshot) => {
         agentIdRef.current = snapshot.agentId;
+        setAgentId(snapshot.agentId);
       },
       () => setError("The agent could not be created."),
     );
@@ -183,9 +211,12 @@ export function AgentPage({
   useEffect(() => {
     createAgent();
     return () => {
-      const agentId = agentIdRef.current;
-      if (agentId) void agentClient.close(agentId).catch(() => undefined);
+      const activeAgentId = agentIdRef.current;
+      if (activeAgentId) {
+        void agentClient.close(activeAgentId).catch(() => undefined);
+      }
       agentIdRef.current = undefined;
+      setAgentId(undefined);
     };
   }, [agentClient, createAgent]);
 
@@ -220,16 +251,7 @@ export function AgentPage({
   }, [items]);
 
   const pushMessageItem = useCallback((message: AgentMessage) => {
-    if (message.role === "toolResult") return;
-    if (message.role === "user") {
-      const text = messageText(message.content);
-      setItems((current) => [...current, {
-        id: nextId("msg"),
-        kind: "user",
-        text,
-      }]);
-      return;
-    }
+    if (message.role !== "assistant") return;
     const text = message.content
       .filter((part) => part.type === "text")
       .map((part) => part.text)
@@ -496,18 +518,26 @@ export function AgentPage({
     pushMessageItem,
   ]);
 
-  const send = useCallback((text: string) => {
+  const runPrompt = useCallback(async (text: string) => {
     const trimmed = text.trim();
-    const agentId = agentIdRef.current;
-    if (!trimmed || running || !agentId) {
-      if (trimmed && !agentId) setError("Configure an AI provider in Settings to enable the agent.");
+    const activeAgentId = agentIdRef.current;
+    if (!trimmed || sendingRef.current || running || !activeAgentId) {
+      if (trimmed && !activeAgentId) {
+        setError("Configure an AI provider in Settings to enable the agent.");
+      }
       return;
     }
-    setInput("");
+    sendingRef.current = true;
     setError(undefined);
     setAwaitingConfirm(false);
     abortedRef.current = false;
-    const directives = parseDirectives(trimmed);
+    setItems((current) => [...current, {
+      id: nextId("msg"),
+      kind: "user",
+      text: trimmed,
+    }]);
+    setRunning(true);
+    const directives = parseDirectives(trimmed, resolveMentionLabel);
     const groupHosts = Object.fromEntries(
       groups.map((group) => [
         group.id,
@@ -517,15 +547,21 @@ export function AgentPage({
       ]),
     );
     const targets = expandTargets(directives, groupHosts);
-    setRunning(true);
-    void agentClient.prompt(agentId, trimmed, targets, applyEvent).then(
-      (snapshot) => applySnapshot(snapshot),
-      () => {
-        setRunning(false);
-        setError("The agent request failed.");
-      },
-    );
-  }, [agentClient, applyEvent, applySnapshot, running]);
+    try {
+      const snapshot = await agentClient.prompt(
+        activeAgentId,
+        trimmed,
+        targets,
+        applyEvent,
+      );
+      applySnapshot(snapshot);
+    } catch {
+      setRunning(false);
+      setError("The agent request failed.");
+    } finally {
+      sendingRef.current = false;
+    }
+  }, [agentClient, applyEvent, applySnapshot, groups, resolveMentionLabel, running]);
 
   const handleAbort = useCallback(() => {
     const agentId = agentIdRef.current;
@@ -533,6 +569,25 @@ export function AgentPage({
     abortedRef.current = true;
     void agentClient.abort(agentId).catch(() => undefined);
   }, [agentClient]);
+
+  const threadMessages = useMemo<ThreadMessageLike[]>(
+    () => items.map(itemToThreadMessage),
+    [items],
+  );
+
+  const runtime = useExternalStoreRuntime({
+    messages: threadMessages,
+    convertMessage: (message) => message,
+    isRunning: running,
+    isDisabled: !agentId,
+    isSendDisabled: running || awaitingConfirm || !agentId,
+    onNew: async (message) => {
+      await runPrompt(appendMessageText(message));
+    },
+    onCancel: async () => {
+      handleAbort();
+    },
+  });
 
   const resolveConfirmation = useCallback((
     decision: "run" | "cancel",
@@ -581,7 +636,7 @@ export function AgentPage({
     setItems([]);
     setHosts([]);
     setError(undefined);
-    setInput("");
+    setDraft({ text: "", nonce: Date.now() });
     setRunning(false);
     setAwaitingConfirm(false);
     createAgent();
@@ -595,10 +650,13 @@ export function AgentPage({
     setItems([]);
     setHosts([]);
     setError(undefined);
-    setInput(EXAMPLES[id].build(
-      Object.values(hostsRef.current),
-      groups,
-    ));
+    setDraft({
+      text: EXAMPLES[id].build(
+        Object.values(hostsRef.current),
+        groups,
+      ),
+      nonce: Date.now(),
+    });
   }, [groups, handleAbort, running]);
 
   const toggleExpand = useCallback((id: string) => {
@@ -632,218 +690,213 @@ export function AgentPage({
       : "Ready";
 
   return (
-    <div
-      className="flex h-full min-h-0 flex-col bg-void"
-      data-screen-label="Agent view"
-      data-testid="agent-page"
-    >
-      <div className="flex min-h-0 min-w-0 flex-1">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-graphite bg-carbon px-4">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-acid-lime/12 text-acid-lime">
-                <Sparkles size={16} />
+    <AssistantRuntimeProvider runtime={runtime}>
+      <div
+        className="flex h-full min-h-0 flex-col bg-void"
+        data-screen-label="Agent view"
+        data-testid="agent-page"
+      >
+        <div className="flex min-h-0 min-w-0 flex-1">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-graphite bg-carbon px-4">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-acid-lime/12 text-acid-lime">
+                  <Sparkles size={16} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h2 className="m-0 text-[13px] font-semibold tracking-tight text-paper">
+                      Agent
+                    </h2>
+                    <span className="inline-flex items-center gap-1 rounded-full bg-graphite/70 px-1.5 py-0.5 text-[10px] text-fog">
+                      <span
+                        className={
+                          "h-1.5 w-1.5 rounded-full " +
+                          (awaitingConfirm
+                            ? "bg-coral-red"
+                            : running
+                              ? "standby-dot bg-acid-lime"
+                              : "bg-pulse-green")
+                        }
+                      />
+                      {statusLabel}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-1 text-[11px] text-fog">
+                    <ShieldCheck size={11} />
+                    <span className="truncate">Multi-host ops · headless SSH</span>
+                  </div>
+                </div>
               </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h2 className="m-0 text-[13px] font-semibold tracking-tight text-paper">
-                    Agent
-                  </h2>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-graphite/70 px-1.5 py-0.5 text-[10px] text-fog">
-                    <span
-                      className={
-                        "h-1.5 w-1.5 rounded-full " +
-                        (awaitingConfirm
-                          ? "bg-coral-red"
-                          : running
-                            ? "standby-dot bg-acid-lime"
-                            : "bg-pulse-green")
-                      }
-                    />
-                    {statusLabel}
-                  </span>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <div className="flex items-center rounded-md border border-graphite bg-obsidian/60">
+                  {(Object.keys(EXAMPLES) as ScenarioId[]).map((id) => {
+                    const example = EXAMPLES[id];
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        title={`${example.desc} — ${example.preview}`}
+                        onClick={() => switchScenario(id)}
+                        className={
+                          "rounded-[5px] px-2.5 py-1.5 text-[11.5px] transition-colors " +
+                          (scenario === id
+                            ? "bg-graphite text-mist"
+                            : "text-fog hover:text-mist")
+                        }
+                      >
+                        {example.label}
+                      </button>
+                    );
+                  })}
                 </div>
-                <div className="mt-0.5 flex items-center gap-1 text-[11px] text-fog">
-                  <ShieldCheck size={11} />
-                  <span className="truncate">Multi-host ops · headless SSH</span>
-                </div>
+                <button
+                  type="button"
+                  onClick={newTask}
+                  aria-label="New task"
+                  title="New task"
+                  className="grid h-7 w-7 place-items-center rounded-md text-fog transition-colors hover:bg-white/5 hover:text-mist"
+                >
+                  <Plus size={15} />
+                </button>
               </div>
             </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              <div className="flex items-center rounded-md border border-graphite bg-obsidian/60">
-                {(Object.keys(EXAMPLES) as ScenarioId[]).map((id) => {
-                  const example = EXAMPLES[id];
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      title={`${example.desc} — ${example.preview}`}
-                      onClick={() => switchScenario(id)}
-                      className={
-                        "rounded-[5px] px-2.5 py-1.5 text-[11.5px] transition-colors " +
-                        (scenario === id
-                          ? "bg-graphite text-mist"
-                          : "text-fog hover:text-mist")
-                      }
-                    >
-                      {example.label}
-                    </button>
-                  );
-                })}
+
+            {items.length === 0 ? (
+              <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center">
+                <div className="grid h-11 w-11 place-items-center rounded-xl border border-acid-lime/20 bg-acid-lime/10 text-acid-lime">
+                  <Sparkles size={20} />
+                </div>
+                <h3 className="m-0 mt-4 text-[14px] font-medium text-mist">
+                  Agent standing by
+                </h3>
+                <p className="m-0 mt-1.5 max-w-[280px] text-[12px] leading-relaxed text-fog">
+                  Type <span className="text-acid-lime">@</span> to pick a server
+                  or group, then describe the ops task — the agent connects
+                  headlessly and reports progress on the right.
+                </p>
+                {error ? (
+                  <p role="alert" className="mt-3 text-[12px] text-coral-red">
+                    {error}
+                  </p>
+                ) : null}
               </div>
-              <button
-                type="button"
-                onClick={newTask}
-                aria-label="New task"
-                title="New task"
-                className="grid h-7 w-7 place-items-center rounded-md text-fog transition-colors hover:bg-white/5 hover:text-mist"
-              >
-                <Plus size={15} />
-              </button>
-            </div>
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <div
+                  ref={streamRef}
+                  className="scroll-thin min-h-0 flex-1 overflow-y-auto bg-carbon/60 px-4 py-3"
+                >
+                  <div className="flex flex-col gap-3.5">
+                    <ThreadPrimitive.Messages>
+                      {({ message }) => (
+                        <AgentMessageView
+                          key={message.id}
+                          message={message}
+                          onToggleExpand={toggleExpand}
+                        />
+                      )}
+                    </ThreadPrimitive.Messages>
+                  </div>
+                </div>
+                {credentialHostIds.length > 0 ? (
+                  <div className="shrink-0 px-4 pb-3">
+                    {credentialHostIds.map((hostId) => (
+                      <HostErrorBanner
+                        key={hostId}
+                        hostLabel={hostName(hostId)}
+                        onConnect={onConnectFromServers}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+                {error ? (
+                  <p
+                    role="alert"
+                    className="shrink-0 px-4 pb-2 text-[12px] text-coral-red"
+                  >
+                    {error}
+                  </p>
+                ) : null}
+              </div>
+            )}
+
+            <MentionComposer
+              onAbort={handleAbort}
+              busy={running}
+              awaitingConfirm={awaitingConfirm}
+              disabled={!agentId}
+              providerLabel={providerLabel}
+              draft={draft}
+            />
           </div>
 
-          {items.length === 0 ? (
-            <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center">
-              <div className="grid h-11 w-11 place-items-center rounded-xl border border-acid-lime/20 bg-acid-lime/10 text-acid-lime">
-                <Sparkles size={20} />
-              </div>
-              <h3 className="m-0 mt-4 text-[14px] font-medium text-mist">
-                Agent standing by
-              </h3>
-              <p className="m-0 mt-1.5 max-w-[280px] text-[12px] leading-relaxed text-fog">
-                Type <span className="text-acid-lime">@</span> to pick a server or
-                group, then describe the ops task — the agent connects headlessly and
-                reports progress on the right.
-              </p>
-              {error ? (
-                <p role="alert" className="mt-3 text-[12px] text-coral-red">
-                  {error}
-                </p>
-              ) : null}
-            </div>
-          ) : (
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              <AgentMessageStream
-                items={items}
-                streamRef={streamRef}
-                onToggleExpand={toggleExpand}
-              />
-              {credentialHostIds.length > 0 ? (
-                <div className="shrink-0 px-4 pb-3">
-                  {credentialHostIds.map((hostId) => (
-                    <HostErrorBanner
-                      key={hostId}
-                      hostLabel={hostName(hostId)}
-                      onConnect={onConnectFromServers}
-                    />
-                  ))}
-                </div>
-              ) : null}
-              {error ? (
-                <p
-                  role="alert"
-                  className="shrink-0 px-4 pb-2 text-[12px] text-coral-red"
-                >
-                  {error}
-                </p>
-              ) : null}
-            </div>
-          )}
-
-          <MentionComposer
-            input={input}
-            onInputChange={setInput}
-            onSend={send}
-            onAbort={handleAbort}
-            busy={running}
-            awaitingConfirm={awaitingConfirm}
-            providerLabel={providerLabel}
-          />
+          {hosts.length > 0 ? (
+            <ProgressPanel
+              progress={hosts}
+              onConnectFromServers={onConnectFromServers}
+            />
+          ) : null}
         </div>
 
-        {hosts.length > 0 ? (
-          <ProgressPanel
-            progress={hosts}
-            onConnectFromServers={onConnectFromServers}
+        {confirmation ? (
+          <ConfirmCard
+            confirmation={confirmation}
+            onResolve={resolveConfirmation}
           />
         ) : null}
       </div>
-
-      {confirmation ? (
-        <ConfirmCard confirmation={confirmation} onResolve={resolveConfirmation} />
-      ) : null}
-    </div>
-  );
-}
-
-function AgentMessageStream({
-  items,
-  streamRef,
-  onToggleExpand,
-}: {
-  items: AgentItem[];
-  streamRef: React.RefObject<HTMLDivElement | null>;
-  onToggleExpand: (id: string) => void;
-}) {
-  return (
-    <div
-      ref={streamRef}
-      className="scroll-thin min-h-0 flex-1 overflow-y-auto bg-carbon/60 px-4 py-3"
-    >
-      <div className="flex flex-col gap-3.5">
-        {items.map((item) => (
-          <AgentMessageView
-            key={item.id}
-            item={item}
-            onToggleExpand={onToggleExpand}
-          />
-        ))}
-      </div>
-    </div>
+    </AssistantRuntimeProvider>
   );
 }
 
 function AgentMessageView({
-  item,
+  message,
   onToggleExpand,
 }: {
-  item: AgentItem;
+  message: MessageState;
   onToggleExpand: (id: string) => void;
 }) {
-  if (item.kind === "user") {
+  const buzz = message.metadata?.custom?.buzz as
+    | { kind?: string; card?: ToolCardItem }
+    | undefined;
+  if (buzz?.kind === "tool" && buzz.card) {
+    return <AgentCommandCard card={buzz.card} onToggleExpand={onToggleExpand} />;
+  }
+  if (message.role === "user") {
+    const text = threadMessageText(message.content);
     return (
-      <div className="rise-in flex gap-2.5">
+      <MessagePrimitive.Root className="rise-in flex gap-2.5">
         <AgentAvatar label="U" />
         <div className="min-w-0 flex-1 pt-0.5">
           <div className="text-[11px] font-medium text-fog">You</div>
           <div className="mt-0.5 whitespace-pre-wrap text-[13px] leading-relaxed text-mist">
-            {item.text}
+            {text}
           </div>
         </div>
-      </div>
+      </MessagePrimitive.Root>
     );
   }
-  if (item.kind === "assistant") {
+  if (message.role === "assistant") {
+    const text = threadMessageText(message.content);
+    if (!text) return null;
+    const streaming = message.status?.type === "running";
     return (
-      <div className="rise-in flex gap-2.5">
+      <MessagePrimitive.Root className="rise-in flex gap-2.5">
         <AgentAvatar tone="ai" />
         <div className="min-w-0 flex-1 pt-0.5">
           <div className="text-[11px] font-medium text-acid-lime/90">Agent</div>
           <div
             className={
               "mt-0.5 whitespace-pre-wrap text-[13px] leading-relaxed text-mist " +
-              (item.streaming ? "stream-caret" : "")
+              (streaming ? "stream-caret" : "")
             }
           >
-            {item.text}
+            {text}
           </div>
         </div>
-      </div>
+      </MessagePrimitive.Root>
     );
-  }
-  if (item.kind === "tool") {
-    return <AgentCommandCard card={item} onToggleExpand={onToggleExpand} />;
   }
   return null;
 }
@@ -1002,12 +1055,42 @@ function AgentCommandCard({
   );
 }
 
-function messageText(content: AgentMessage["content"]): string {
+function threadMessageText(content: ThreadMessageLike["content"]): string {
   if (typeof content === "string") return content;
   return content
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("");
+}
+
+function appendMessageText(message: AppendMessage): string {
+  if (typeof message.content === "string") return message.content;
+  return message.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("");
+}
+
+function itemToThreadMessage(item: AgentItem): ThreadMessageLike {
+  if (item.kind === "user") {
+    return { role: "user", id: item.id, content: item.text };
+  }
+  if (item.kind === "assistant") {
+    return {
+      role: "assistant",
+      id: item.id,
+      content: item.text ? [{ type: "text", text: item.text }] : [],
+      status: item.streaming
+        ? { type: "running" }
+        : { type: "complete", reason: "stop" },
+    };
+  }
+  return {
+    role: "assistant",
+    id: item.id,
+    content: [],
+    metadata: { custom: { buzz: { kind: "tool", card: item } } },
+  };
 }
 
 function findLastIndex<T>(

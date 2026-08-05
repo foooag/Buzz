@@ -7,6 +7,7 @@
 const { useState, useCallback, useEffect } = React;
 const { Sidebar } = window;
 const { AiSession } = window;
+const { AgentView } = window;
 const { ServersView, SftpView, PortForwardingView, HistoryView } = window;
 const { PreferencesWindow } = window;
 const { Icon, SESSION, TIMELINE } = window;
@@ -79,6 +80,10 @@ function BuzzApp() {
     setActiveSessionId(null);
   }, []);
 
+  const goToServers = useCallback(() => {
+    navigate("servers");
+  }, [navigate]);
+
   const openLocalShell = useCallback(() => {
     connectHost({ host: LOCAL_SHELL });
   }, [connectHost]);
@@ -135,6 +140,8 @@ function BuzzApp() {
           <div className="flex min-h-0 flex-1 flex-col">
             {activeView === "servers" ? (
               <ServersView onConnect={connectHost} />
+            ) : activeView === "agent" ? (
+              <AgentView onConnectFromServers={goToServers} />
             ) : activeView === "sftp" ? (
               <SftpView />
             ) : activeView === "forwarding" ? (

@@ -7,6 +7,7 @@ import {
   CardFooter,
   CardHeader,
 } from "@/components/ui/card";
+import { CapsLockIndicator } from "@/components/ui/caps-lock-indicator";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -27,6 +28,14 @@ import {
   recordConnectionAttempt,
 } from "../workspace/connectionHistory";
 
+export type SaveAsServerInput = {
+  hostname: string;
+  port: number;
+  username: string;
+  authKind: SshAuthKind;
+  credentialRef: string;
+};
+
 export function SshConnectForm({
   api,
   hostId,
@@ -38,11 +47,13 @@ export function SshConnectForm({
   onCancel,
   onEvent,
   onOpened,
+  onSaveAsServer,
 }: {
   api: SshApi; hostId: string; defaultHostname: string; defaultPort?: number;
   defaultUsername?: string; defaultAuthKind?: SshAuthKind; onCancel: () => void;
   keepaliveInterval?: number;
   onEvent: (event: TerminalEvent) => void; onOpened: (opened: OpenedTerminal) => void;
+  onSaveAsServer?: (input: SaveAsServerInput) => Promise<void>;
 }) {
   const [hostname, setHostname] = useState(defaultHostname);
   const [port, setPort] = useState(String(defaultPort));
@@ -51,6 +62,7 @@ export function SshConnectForm({
   const [password, setPassword] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [passphrase, setPassphrase] = useState("");
+  const [saveAsServer, setSaveAsServer] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -86,6 +98,20 @@ export function SshConnectForm({
             credentialRef, identityId: null, keepaliveInterval,
           }, { cols: 80, rows: 24 }, onEvent);
           markConnectionConnected(historyId, opened.sessionId);
+          if (saveAsServer && onSaveAsServer) {
+            try {
+              await onSaveAsServer({
+                hostname: parsed.data.hostname,
+                port: parsed.data.port,
+                username: parsed.data.username,
+                authKind: parsed.data.authKind,
+                credentialRef,
+              });
+            } catch {
+              // A failed persist must not mask an already-open SSH session.
+              setError("Connected, but the connection could not be saved as a server.");
+            }
+          }
           onOpened(opened);
         } catch {
           markConnectionFailed(historyId);
@@ -128,7 +154,16 @@ export function SshConnectForm({
           {authKind === "password" ? (
             <Label className={fieldLabel}>
               Password
-              <Input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
+              <span className="relative">
+                <Input
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  className="pr-8"
+                />
+                <CapsLockIndicator />
+              </span>
             </Label>
           ) : (
             <>
@@ -138,10 +173,29 @@ export function SshConnectForm({
               </Label>
               <Label className={fieldLabel}>
                 Passphrase
-                <Input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} />
+                <span className="relative">
+                  <Input
+                    type="password"
+                    value={passphrase}
+                    onChange={(event) => setPassphrase(event.target.value)}
+                    className="pr-8"
+                  />
+                  <CapsLockIndicator />
+                </span>
               </Label>
             </>
           )}
+          {onSaveAsServer ? (
+            <label className="flex cursor-pointer items-center gap-2 text-[12px] text-mist">
+              <input
+                type="checkbox"
+                checked={saveAsServer}
+                onChange={(event) => setSaveAsServer(event.target.checked)}
+                className="h-3.5 w-3.5 accent-[#e4f222]"
+              />
+              Save this connection as a server so it appears in the list
+            </label>
+          ) : null}
           {error ? (
             <Alert variant="destructive">
               <AlertDescription>{error}</AlertDescription>

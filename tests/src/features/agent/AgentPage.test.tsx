@@ -4,6 +4,41 @@ import userEvent from "@testing-library/user-event";
 import { AgentPage } from "@/features/agent/AgentPage";
 import type { AgentClient } from "@/features/agent/agentTypes";
 import type { AiConfigApi, AiProviderConfig } from "@/features/ai/aiConfigTypes";
+import { useInventoryStore } from "@/features/inventory/inventoryStore";
+import type { Group, Host, Identity } from "@/shared/types";
+
+const timestamp = "2026-08-05T00:00:00.000Z";
+
+function seedInventory() {
+  const groups: Group[] = [{
+    id: "g1",
+    vaultId: "v1",
+    parentId: null,
+    name: "Production",
+    color: "coral",
+    count: 1,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }];
+  const hosts: Host[] = [{
+    id: "h1",
+    vaultId: "v1",
+    groupId: "g1",
+    name: "web-prod-01",
+    address: "10.0.0.10",
+    username: "ubuntu",
+    tags: [],
+    notes: "",
+    status: "online",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }];
+  useInventoryStore.getState().setResources(
+    groups,
+    hosts,
+    [] as Identity[],
+  );
+}
 
 function fakeClient() {
   return {
@@ -69,6 +104,7 @@ describe("AgentPage", () => {
     const client = fakeClient();
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
     const input = await screen.findByLabelText("Message agent");
+    await waitFor(() => expect(input).toBeEnabled());
     await userEvent.type(input, "uptime{Enter}");
     expect(client.prompt).toHaveBeenCalledWith(
       "a1",
@@ -76,6 +112,25 @@ describe("AgentPage", () => {
       [],
       expect.any(Function),
     );
+  });
+
+  it("resolves a friendly @ mention into prompt targets", async () => {
+    seedInventory();
+    const client = fakeClient();
+    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
+    const input = await screen.findByLabelText("Message agent");
+    await waitFor(() => expect(input).toBeEnabled());
+    await userEvent.type(input, "run @");
+    await userEvent.click(
+      await screen.findByRole("option", { name: /web-prod-01/ }),
+    );
+    await userEvent.type(input, "uptime{Enter}");
+    await waitFor(() => expect(client.prompt).toHaveBeenCalledWith(
+      "a1",
+      "run @web-prod-01 uptime",
+      ["h1"],
+      expect.any(Function),
+    ));
   });
 
   it("shows the standing-by empty state when no provider is usable", async () => {

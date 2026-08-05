@@ -129,7 +129,11 @@ export class MultiHostAgentRuntime {
       {},
     );
     const allowed = new Set(explicitTargets);
-    for (const directive of parseDirectives(text)) {
+    const resolver = this.#resolver;
+    for (const directive of parseDirectives(
+      text,
+      resolver ? (label) => resolver.resolveMentionLabel(label) : undefined,
+    )) {
       if (directive.type === "host") {
         assertNoUnknownTargets([directive.id], allowed);
       } else {

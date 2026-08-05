@@ -1,5 +1,6 @@
 import { ChevronDown, Plus, Trash2, Upload, X } from "lucide-react";
 import { useState } from "react";
+import { CapsLockIndicator } from "@/components/ui/caps-lock-indicator";
 import type {
   CreateHostInput,
   Group,
@@ -476,16 +477,19 @@ export function HostFormPanel({
                         <TextInput value={draft.username} onChange={(username) => set({ username })} placeholder="ubuntu" mono />
                       </Labeled>
                       <Labeled label="Server password">
-                        <TextInput
-                          type="password"
-                          value={password}
-                          onChange={enterCredential(setPassword)}
-                          placeholder={
-                            hasMatchingSavedCredential
-                              ? ENCRYPTED_CREDENTIAL_PLACEHOLDER
-                              : undefined
-                          }
-                        />
+                        <div className="relative">
+                          <TextInput
+                            type="password"
+                            value={password}
+                            onChange={enterCredential(setPassword)}
+                            placeholder={
+                              hasMatchingSavedCredential
+                                ? ENCRYPTED_CREDENTIAL_PLACEHOLDER
+                                : undefined
+                            }
+                          />
+                          <CapsLockIndicator />
+                        </div>
                       </Labeled>
                     </>
                   ) : (
@@ -554,7 +558,14 @@ export function HostFormPanel({
                         />
                       </Labeled>
                       <Labeled label="Passphrase">
-                        <TextInput type="password" value={passphrase} onChange={setPassphrase} />
+                        <div className="relative">
+                          <TextInput
+                            type="password"
+                            value={passphrase}
+                            onChange={setPassphrase}
+                          />
+                          <CapsLockIndicator />
+                        </div>
                       </Labeled>
                     </fieldset>
                   )}

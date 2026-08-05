@@ -20,6 +20,10 @@ Buzz is an Electron desktop application. The React/TypeScript renderer lives in 
 
 Use two-space indentation, double quotes, semicolons, and strict TypeScript. React components and types use `PascalCase`; functions, hooks, and stores use `camelCase`. Group feature files by role, such as `inventoryApi.ts`, `inventoryStore.ts`, and `deterministicInventoryApi.ts`. Preserve the `@/` alias and use `cn()` to merge Tailwind classes.
 
+### UI Components
+
+Prefer shadcn/ui for frontend components. Reuse the existing primitives in `src/components/ui/` (via `@/components/ui/...`) whenever one fits; when a new primitive is needed, add it with the shadcn CLI (`pnpm dlx shadcn@latest add ...`) and keep it in `src/components/ui/` with the project's new-york style. Use lucide-react icons and Tailwind theme tokens for styling rather than ad-hoc colors. Reach for hand-rolled markup only when a shadcn primitive genuinely cannot express the interaction.
+
 ## Testing Guidelines
 
 Add tests with every behavior change. Prefer Testing Library semantic queries over implementation details. Keep deterministic frontend APIs aligned with real IPC APIs. Desktop commands require domain and command-contract coverage; register new commands in `electron/command-names.ts`, the matching domain handler, and its contract test. No numeric coverage threshold is configured, but affected paths and regressions should be exercised.

@@ -151,4 +151,25 @@ describe("HostFormPanel", () => {
       }),
     );
   });
+
+  it("mounts a Caps Lock indicator next to password credential fields", async () => {
+    const user = userEvent.setup();
+    render(
+      <HostFormPanel
+        groups={[]}
+        identities={[]}
+        hosts={[]}
+        snippets={[]}
+        onSave={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+
+    expect(screen.getByLabelText("Caps Lock is on")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Identity"), "privateKey");
+    // The password field is replaced by the private-key fields; the passphrase
+    // keeps its own Caps Lock indicator.
+    expect(screen.getByLabelText("Caps Lock is on")).toBeInTheDocument();
+  });
 });

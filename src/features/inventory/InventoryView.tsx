@@ -14,7 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import type { Group, GroupColor, Host, InventoryErrorCode } from "../../shared/types";
+import type { GroupColor, Host, InventoryErrorCode } from "../../shared/types";
 import type { InventoryApi } from "./inventoryApi";
 import type { ForwardingApi } from "../forwarding/forwardingApi";
 import { useInventoryStore } from "./inventoryStore";
@@ -209,13 +209,17 @@ export function InventoryView({ api, query = "", sshApi, forwardingApi, onSshEve
         authKind: credential.authKind,
         credentialRef,
       };
+      let saved: Host;
       if (id) {
-        await api.updateHost({ ...input, id });
+        saved = await api.updateHost({ ...input, id });
         setPanel({ type: "detail", id });
       } else {
-        const created = await api.createHost(input);
-        setPanel({ type: "detail", id: created.id });
+        saved = await api.createHost(input);
+        setPanel({ type: "detail", id: saved.id });
       }
+      // Reflect the saved host immediately so the list and group rail update
+      // even before the reload round-trip completes.
+      useInventoryStore.getState().upsertHost(saved);
       if (id) setSavedCredential(id, null);
       setConnectionError(null);
       await loadResources();
@@ -395,7 +399,9 @@ export function InventoryView({ api, query = "", sshApi, forwardingApi, onSshEve
                 tabIndex={0}
                 aria-label={`Select ${host.name}`}
                 data-active={selected || undefined}
+                title={`Double-click to connect ${hostEndpoint(host)}`}
                 onClick={() => setPanel({ type: "detail", id: host.id })}
+                onDoubleClick={() => connectHost(host)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
@@ -403,10 +409,18 @@ export function InventoryView({ api, query = "", sshApi, forwardingApi, onSshEve
                   }
                 }}
                 className={
-                  "group card relative cursor-pointer rounded-xl border bg-obsidian/40 p-3.5 transition-colors " +
+                  "group card relative cursor-pointer overflow-hidden rounded-xl border bg-obsidian/40 p-3.5 transition-colors " +
                   (selected ? "border-acid-lime/60 bg-graphite/60" : "border-graphite hover:border-smoke hover:bg-graphite/40")
                 }
               >
+                {host.groupId ? (
+                  <span
+                    aria-hidden
+                    className="absolute inset-y-0 left-0 w-[3px]"
+                    style={{ background: groupColor(groupMap[host.groupId]?.color) }}
+                    title={groupMap[host.groupId]?.name}
+                  />
+                ) : null}
                 <div className="flex items-start gap-2">
                   <span className="mt-1.5 shrink-0">
                     <StatusDot status={host.status ?? "offline"} />
@@ -454,12 +468,22 @@ export function InventoryView({ api, query = "", sshApi, forwardingApi, onSshEve
               key={host.id}
               type="button"
               onClick={() => setPanel({ type: "detail", id: host.id })}
+              onDoubleClick={() => connectHost(host)}
               aria-label={`Select ${host.name}`}
+              title={`Double-click to connect ${hostEndpoint(host)}`}
               className={
-                "grid w-full grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors " +
+                "relative grid w-full grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3 overflow-hidden rounded-lg border px-3 py-2 text-left transition-colors " +
                 (selected ? "border-acid-lime/60 bg-graphite/60" : "border-graphite/60 hover:bg-white/5")
               }
             >
+              {host.groupId ? (
+                <span
+                  aria-hidden
+                  className="absolute inset-y-0 left-0 w-[3px]"
+                  style={{ background: groupColor(groupMap[host.groupId]?.color) }}
+                  title={groupMap[host.groupId]?.name}
+                />
+              ) : null}
               <StatusDot status={host.status ?? "offline"} />
               <div className="min-w-0">
                 <div className="truncate text-[13px] font-medium text-mist">{host.name}</div>

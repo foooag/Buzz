@@ -1,4 +1,10 @@
 import { useMemo } from "react";
+import {
+  unstable_useMentionAdapter,
+  type Unstable_DirectiveFormatter,
+  type Unstable_DirectiveSegment,
+  type Unstable_Mention,
+} from "@assistant-ui/react";
 import { useInventoryStore } from "@/features/inventory/inventoryStore";
 import type { Group, Host } from "@/shared/types";
 import type { AgentMentionCategory, AgentMentionItem } from "../agentTypes";
@@ -44,4 +50,60 @@ export function useMentionSources() {
     }),
     [groupsById, hostsById],
   );
+}
+
+export function useAgentMentionAdapter() {
+  const { hosts, groups } = useMentionSources();
+  const items = useMemo<Unstable_Mention[]>(() => {
+    const groupItems: Unstable_Mention[] = groups.map((group) => ({
+      id: group.id,
+      type: "group",
+      label: group.name,
+      description: `${hosts.filter((host) => host.groupId === group.id).length} hosts · expands to group`,
+    }));
+    const hostItems: Unstable_Mention[] = hosts.map((host) => ({
+      id: host.id,
+      type: "host",
+      label: host.name,
+      description: host.address,
+    }));
+    return [...groupItems, ...hostItems];
+  }, [groups, hosts]);
+
+  const formatter = useMemo<Unstable_DirectiveFormatter>(
+    () => ({
+      serialize: (item) => `@${item.label}`,
+      parse: (text) => {
+        const segments: Unstable_DirectiveSegment[] = [];
+        const mentionRe = /@([^\s@]+)/g;
+        let lastIndex = 0;
+        for (const match of text.matchAll(mentionRe)) {
+          if (match.index > lastIndex) {
+            segments.push({
+              kind: "text",
+              text: text.slice(lastIndex, match.index),
+            });
+          }
+          segments.push({
+            kind: "mention",
+            type: "host",
+            label: match[1],
+            id: match[1],
+          });
+          lastIndex = match.index + match[0].length;
+        }
+        if (lastIndex < text.length) {
+          segments.push({ kind: "text", text: text.slice(lastIndex) });
+        }
+        return segments;
+      },
+    }),
+    [],
+  );
+
+  return unstable_useMentionAdapter({
+    items,
+    includeModelContextTools: false,
+    formatter,
+  });
 }

@@ -4,18 +4,45 @@ export type MentionTarget = {
   label: string;
 };
 
-const DIRECTIVE_RE = /:(host|group)\[([^\]]*)\]\{name=([^}]+)\}/g;
+export type MentionResolver = (
+  label: string,
+) => { type: "host" | "group"; id: string } | undefined;
 
-export function parseDirectives(text: string): MentionTarget[] {
-  const targets: MentionTarget[] = [];
+const DIRECTIVE_RE = /:(host|group)\[([^\]]*)\]\{name=([^}]+)\}/g;
+const FRIENDLY_MENTION_RE = /@([^\s@]+)/g;
+
+export function parseDirectives(
+  text: string,
+  resolveMention?: MentionResolver,
+): MentionTarget[] {
+  const matches: Array<{ index: number; target: MentionTarget }> = [];
   for (const match of text.matchAll(DIRECTIVE_RE)) {
-    targets.push({
-      type: match[1] as "host" | "group",
-      label: match[2],
-      id: match[3],
+    matches.push({
+      index: match.index ?? 0,
+      target: {
+        type: match[1] as "host" | "group",
+        label: match[2],
+        id: match[3],
+      },
     });
   }
-  return targets;
+  if (resolveMention) {
+    for (const match of text.matchAll(FRIENDLY_MENTION_RE)) {
+      const resolved = resolveMention(match[1]);
+      if (!resolved) continue;
+      matches.push({
+        index: match.index ?? 0,
+        target: {
+          type: resolved.type,
+          label: match[1],
+          id: resolved.id,
+        },
+      });
+    }
+  }
+  return matches
+    .sort((a, b) => a.index - b.index)
+    .map((entry) => entry.target);
 }
 
 export function expandTargets(

@@ -119,9 +119,11 @@ export function createPrototypeInventoryApi(): InventoryApi {
       return { id: crypto.randomUUID(), ...input, createdAt: timestamp, updatedAt: timestamp };
     },
     async updateHost(input) {
-      const current = hosts.find((host) => host.id === input.id);
-      if (!current) throw { code: "INVENTORY_NOT_FOUND" };
-      return { ...current, ...input, updatedAt: timestamp };
+      const index = hosts.findIndex((host) => host.id === input.id);
+      if (index < 0) throw { code: "INVENTORY_NOT_FOUND" };
+      const updated = { ...hosts[index], ...input, updatedAt: timestamp };
+      hosts[index] = updated;
+      return updated;
     },
     async deleteHost() {},
     async listIdentities(vaultId) { return identities.filter((identity) => identity.vaultId === vaultId); },

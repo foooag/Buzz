@@ -1,7 +1,12 @@
-import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import {
+  AssistantRuntimeProvider,
+  useExternalStoreRuntime,
+  type AppendMessage,
+  type ThreadMessageLike,
+} from "@assistant-ui/react";
 import { MentionComposer } from "@/features/agent/composer/MentionComposer";
 import { useInventoryStore } from "@/features/inventory/inventoryStore";
 import type { Group, Host, Identity } from "@/shared/types";
@@ -39,16 +44,27 @@ function seedInventory() {
   );
 }
 
+function appendText(message: AppendMessage): string {
+  if (typeof message.content === "string") return message.content;
+  return message.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("");
+}
+
 describe("MentionComposer", () => {
   it("sends text on Enter", async () => {
     seedInventory();
-    let sent = "";
-    render(<Harness onSend={(text) => { sent = text; }} />);
-    await userEvent.type(screen.getByLabelText("Message agent"), "uptime{Enter}");
-    expect(sent).toBe("uptime");
+    const onSend = vi.fn();
+    render(<Harness onSend={onSend} />);
+    await userEvent.type(
+      screen.getByLabelText("Message agent"),
+      "uptime{Enter}",
+    );
+    expect(onSend).toHaveBeenCalledWith("uptime");
   });
 
-  it("opens the mention picker on @ and inserts a host directive", async () => {
+  it("opens the mention picker on @ and inserts a friendly host mention", async () => {
     seedInventory();
     render(<Harness onSend={() => undefined} />);
     const input = screen.getByLabelText("Message agent");
@@ -57,7 +73,11 @@ describe("MentionComposer", () => {
     expect(screen.getByText("Groups")).toBeVisible();
     expect(screen.getByText("Servers")).toBeVisible();
     await userEvent.click(screen.getByRole("option", { name: /web-prod-01/ }));
-    expect(input).toHaveValue("run :host[web-prod-01]{name=h1}");
+    await waitFor(() => {
+      expect((input as HTMLTextAreaElement).value).toContain(
+        "run @web-prod-01",
+      );
+    });
   });
 
   it("filters mentions by query", async () => {
@@ -67,19 +87,25 @@ describe("MentionComposer", () => {
     await userEvent.type(input, "@web-prod");
     expect(await screen.findByText("Mention target")).toBeVisible();
     expect(screen.getByRole("option", { name: /web-prod-01/ })).toBeVisible();
-    expect(screen.queryByText("No servers or groups match")).toBeNull();
+    expect(screen.queryByText(/No servers or groups match/)).toBeNull();
   });
 });
 
 function Harness({ onSend }: { onSend: (text: string) => void }) {
-  const [value, setValue] = useState("");
+  const runtime = useExternalStoreRuntime<ThreadMessageLike>({
+    messages: [],
+    convertMessage: (message) => message,
+    onNew: async (message) => {
+      onSend(appendText(message));
+    },
+  });
   return (
-    <MentionComposer
-      input={value}
-      onInputChange={setValue}
-      onSend={onSend}
-      busy={false}
-      awaitingConfirm={false}
-    />
+    <AssistantRuntimeProvider runtime={runtime}>
+      <MentionComposer
+        busy={false}
+        awaitingConfirm={false}
+        onAbort={() => undefined}
+      />
+    </AssistantRuntimeProvider>
   );
 }

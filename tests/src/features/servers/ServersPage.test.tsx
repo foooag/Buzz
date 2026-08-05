@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeterministicForwardingApi } from "@/features/forwarding/deterministicForwardingApi";
@@ -130,5 +130,66 @@ describe("SSH quick connect", () => {
     expect(
       await screen.findByText(/no port forwarding rules/i),
     ).toBeInTheDocument();
+  });
+
+  it("saves a quick-connect target as a persistent server when the checkbox is checked", async () => {
+    const timestamp = "2026-07-30T00:00:00.000Z";
+    const createHost = vi.fn(async (input: Parameters<InventoryApi["createHost"]>[0]) => ({
+      id: "host-saved",
+      ...input,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }));
+    const inventoryWithVault: InventoryApi = {
+      ...inventory,
+      listVaults: vi.fn(async () => [
+        {
+          id: "vault-1",
+          name: "Synthetic Vault",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+      createHost,
+    };
+    useInventoryStore.setState({ activeVaultId: "vault-1" });
+    const sshWithCredential: SshApi = {
+      ...ssh,
+      storeCredential: vi.fn(async () => "credential-ref-1"),
+      open: vi.fn(async () => ({ sessionId: "ssh-session-1", title: "10.0.0.20" })),
+    };
+    const user = userEvent.setup();
+    render(
+      <ServersPage
+        inventoryApi={inventoryWithVault}
+        sshApi={sshWithCredential}
+        onSshEvent={() => undefined}
+        onSshOpened={() => undefined}
+      />,
+    );
+
+    const input = screen.getByRole("textbox", { name: "Find a host or enter an SSH command" });
+    await user.type(input, "ssh deploy@10.0.0.20");
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+
+    await user.type(screen.getByLabelText("Password"), "synthetic-password");
+    await user.click(screen.getByRole("checkbox", { name: /save this connection as a server/i }));
+    await user.click(screen.getByRole("button", { name: "Connect SSH" }));
+
+    await waitFor(() =>
+      expect(createHost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          vaultId: "vault-1",
+          address: "10.0.0.20",
+          username: "deploy",
+          port: 22,
+          authKind: "password",
+          credentialRef: "credential-ref-1",
+        }),
+      ),
+    );
+    // The quick-connect form closes and the search is cleared.
+    expect(screen.queryByRole("form", { name: "Connect SSH" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Find a host or enter an SSH command" })).toHaveValue("");
   });
 });

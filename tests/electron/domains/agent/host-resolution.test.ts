@@ -82,4 +82,31 @@ describe("createAgentHostResolver", () => {
       code: "AGENT_HOST_NOT_FOUND",
     });
   });
+
+  it("resolves mention labels to inventory hosts and groups", () => {
+    const inventory = {
+      listVaults: vi.fn(() => [{ id: "vault-1", name: "Local vault" }]),
+      listHosts: vi.fn(() => [host]),
+      listGroups: vi.fn(() => [{
+        id: "g1",
+        vaultId: "vault-1",
+        parentId: null,
+        name: "Production",
+      }]),
+    } as unknown as InventoryRepository;
+    const resolver = createAgentHostResolver(
+      inventory,
+      { get: vi.fn() } as unknown as SshCredentialVault,
+    );
+
+    expect(resolver.resolveMentionLabel("web-prod-01")).toEqual({
+      type: "host",
+      id: "h1",
+    });
+    expect(resolver.resolveMentionLabel("Production")).toEqual({
+      type: "group",
+      id: "g1",
+    });
+    expect(resolver.resolveMentionLabel("missing")).toBeUndefined();
+  });
 });

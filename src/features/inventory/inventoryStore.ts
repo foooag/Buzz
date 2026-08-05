@@ -16,6 +16,7 @@ export type InventoryStore = {
   setVaults: (vaults: Vault[]) => void;
   activateVault: (id: string) => void;
   setResources: (groups: Group[], hosts: Host[], identities: Identity[]) => void;
+  upsertHost: (host: Host) => void;
   setIdentities: (identities: Identity[]) => void;
   fail: (code: InventoryErrorCode) => void;
 };
@@ -38,6 +39,10 @@ const stateCreator: StateCreator<InventoryStore> = (set, get) => ({
     identities: Object.fromEntries(identities.map((item) => [item.id, item])),
     status: "ready", errorCode: null,
   }),
+  upsertHost: (host) => set((state) => ({
+    hosts: { ...state.hosts, [host.id]: host },
+    errorCode: null,
+  })),
   setIdentities: (identities) => set({
     identities: Object.fromEntries(identities.map((item) => [item.id, item])),
     status: "ready",

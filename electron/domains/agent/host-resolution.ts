@@ -9,9 +9,15 @@ export type SavedCredentialLike = {
   credentialRef: string;
 };
 
+export type AgentMentionRef = {
+  type: "host" | "group";
+  id: string;
+};
+
 export type AgentHostResolver = {
   resolveProfile(hostId: string): Promise<CreateSshProfile>;
   groupHosts(): Record<string, string[]>;
+  resolveMentionLabel(label: string): AgentMentionRef | undefined;
 };
 
 export function resolveHeadlessProfile(
@@ -66,6 +72,19 @@ export function createAgentHostResolver(
         }
       }
       return result;
+    },
+    resolveMentionLabel(label) {
+      for (const vault of inventory.listVaults()) {
+        const host = inventory
+          .listHosts(vault.id)
+          .find((candidate) => candidate.name === label);
+        if (host) return { type: "host", id: host.id };
+        const group = inventory
+          .listGroups(vault.id)
+          .find((candidate) => candidate.name === label);
+        if (group) return { type: "group", id: group.id };
+      }
+      return undefined;
     },
   };
 }

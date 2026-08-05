@@ -90,4 +90,94 @@ describe("verified SSH frontend flow", () => {
     expect(screen.getByRole("alertdialog", { name: "SSH host key changed" })).toBeVisible();
     expect(screen.queryByRole("button", { name: /trust/i })).not.toBeInTheDocument();
   });
+
+  it("persists the connection as a server when the checkbox is checked", async () => {
+    const api = fakeApi();
+    const onSaveAsServer = vi.fn(async () => undefined);
+    const onOpened = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SshConnectForm
+        api={api}
+        hostId="quick:ssh.example.test:22221"
+        defaultHostname="ssh.example.test"
+        defaultPort={22221}
+        defaultUsername="tester"
+        onCancel={() => undefined}
+        onEvent={() => undefined}
+        onOpened={onOpened}
+        onSaveAsServer={onSaveAsServer}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("Password"), "synthetic-password");
+    await user.click(
+      screen.getByRole("checkbox", { name: /save this connection as a server/i }),
+    );
+    await user.click(screen.getByRole("button", { name: "Connect SSH" }));
+
+    await waitFor(() => expect(onSaveAsServer).toHaveBeenCalledWith({
+      hostname: "ssh.example.test",
+      port: 22221,
+      username: "tester",
+      authKind: "password",
+      credentialRef: "credential-1",
+    }));
+    await waitFor(() => expect(onOpened).toHaveBeenCalledWith({
+      sessionId: "ssh-session-1", title: "ssh.example.test",
+    }));
+  });
+
+  it("does not persist a server when the checkbox is unchecked", async () => {
+    const api = fakeApi();
+    const onSaveAsServer = vi.fn(async () => undefined);
+    const user = userEvent.setup();
+    render(
+      <SshConnectForm
+        api={api}
+        hostId="quick:ssh.example.test:22"
+        defaultHostname="ssh.example.test"
+        onCancel={() => undefined}
+        onEvent={() => undefined}
+        onOpened={() => undefined}
+        onSaveAsServer={onSaveAsServer}
+      />,
+    );
+
+    await user.type(screen.getByRole("textbox", { name: "Username" }), "tester");
+    await user.type(screen.getByLabelText("Password"), "synthetic-password");
+    await user.click(screen.getByRole("button", { name: "Connect SSH" }));
+
+    await waitFor(() => expect(onSaveAsServer).not.toHaveBeenCalled());
+  });
+
+  it("keeps the session open even when persisting as a server fails", async () => {
+    const api = fakeApi();
+    const onSaveAsServer = vi.fn(async () => {
+      throw new Error("storage full");
+    });
+    const onOpened = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SshConnectForm
+        api={api}
+        hostId="quick:ssh.example.test:22"
+        defaultHostname="ssh.example.test"
+        defaultUsername="tester"
+        onCancel={() => undefined}
+        onEvent={() => undefined}
+        onOpened={onOpened}
+        onSaveAsServer={onSaveAsServer}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("Password"), "synthetic-password");
+    await user.click(screen.getByRole("checkbox", { name: /save this connection as a server/i }));
+    await user.click(screen.getByRole("button", { name: "Connect SSH" }));
+
+    await waitFor(() => expect(onOpened).toHaveBeenCalled());
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "could not be saved as a server",
+    );
+  });
 });

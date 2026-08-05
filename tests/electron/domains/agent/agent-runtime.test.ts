@@ -62,6 +62,65 @@ describe("MultiHostAgentRuntime", () => {
     await runtime.close("owner-1", agentId);
   });
 
+  it("accepts a friendly @ mention that resolves to a turn target", async () => {
+    const runtime = new MultiHostAgentRuntime(
+      modelRuntime([textResponse("Ready")]),
+      historyRepository(),
+      allowRisk(),
+      fakeHeadless(),
+      {
+        ...resolver(),
+        resolveMentionLabel: vi.fn((label) =>
+          label === "web-prod-01"
+            ? { type: "host" as const, id: "h1" }
+            : undefined,
+        ),
+      },
+    );
+    const { agentId } = runtime.create("owner-1", {
+      providerConfigId: "cfg-1",
+      targets: ["h1"],
+    });
+    const completed = await runtime.prompt(
+      "owner-1",
+      agentId,
+      "check @web-prod-01",
+      { targets: ["h1"] },
+      () => undefined,
+    );
+    expect(completed.status).toBe("idle");
+    await runtime.close("owner-1", agentId);
+  });
+
+  it("rejects a friendly @ mention that resolves outside the turn targets", async () => {
+    const runtime = new MultiHostAgentRuntime(
+      modelRuntime([]),
+      historyRepository(),
+      allowRisk(),
+      fakeHeadless(),
+      {
+        ...resolver(),
+        resolveMentionLabel: vi.fn((label) =>
+          label === "other-host"
+            ? { type: "host" as const, id: "h2" }
+            : undefined,
+        ),
+      },
+    );
+    const { agentId } = runtime.create("owner-1", {
+      providerConfigId: "cfg-1",
+      targets: ["h1"],
+    });
+    await expect(runtime.prompt(
+      "owner-1",
+      agentId,
+      "do something on @other-host",
+      { targets: ["h1"] },
+      () => undefined,
+    )).rejects.toMatchObject({ code: "AGENT_TARGET_NOT_ALLOWED" });
+    await runtime.close("owner-1", agentId);
+  });
+
   it("runs host_exec on an allowed host through the headless channel", async () => {
     const headless = fakeHeadless();
     const risk = allowRisk();
@@ -318,5 +377,6 @@ function resolver(): AgentHostResolver {
       keepaliveInterval: null,
     })),
     groupHosts: vi.fn(() => ({ g1: ["h1", "h2"] })),
+    resolveMentionLabel: vi.fn(() => undefined),
   };
 }

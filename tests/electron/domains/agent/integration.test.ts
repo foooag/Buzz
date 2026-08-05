@@ -187,5 +187,6 @@ function resolver(): AgentHostResolver {
       keepaliveInterval: null,
     })),
     groupHosts: vi.fn(() => ({ g1: ["h1", "h2"] })),
+    resolveMentionLabel: vi.fn(() => undefined),
   };
 }

@@ -43,6 +43,8 @@ test("runs a multi-host task and shows the per-host progress rail", async ({ pag
   const dialog = page.locator("div.pop-in").filter({
     hasText: "Confirm high-risk command",
   });
+  await expect(dialog).toBeVisible();
+  await page.waitForTimeout(250);
   const dialogWidth = await dialog.evaluate(
     (element) => element.getBoundingClientRect().width,
   );

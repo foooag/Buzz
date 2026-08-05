@@ -2,10 +2,11 @@ import { ExternalLink, Search, X } from "lucide-react";
 import { useState } from "react";
 import { InventoryView } from "../inventory/InventoryView";
 import type { InventoryApi } from "../inventory/inventoryApi";
+import { useInventoryStore } from "../inventory/inventoryStore";
 import type { ForwardingApi } from "../forwarding/forwardingApi";
 import type { SshApi } from "../ssh/sshApi";
 import type { OpenedTerminal, TerminalEvent } from "../shell/terminalTypes";
-import { SshConnectForm } from "../ssh/SshConnectForm";
+import { SshConnectForm, type SaveAsServerInput } from "../ssh/SshConnectForm";
 
 export type QuickSshTarget = {
   hostname: string;
@@ -57,6 +58,29 @@ export function ServersPage({ inventoryApi, sshApi, forwardingApi, onSshEvent, o
   const canConnect = Boolean(parsedTarget && sshApi && onSshEvent && onSshOpened);
   const openQuickConnect = () => {
     if (parsedTarget && canConnect) setQuickTarget(parsedTarget);
+  };
+  const handleSaveAsServer = async (input: SaveAsServerInput) => {
+    const vaultId = useInventoryStore.getState().activeVaultId;
+    if (!vaultId) return;
+    const created = await inventoryApi.createHost({
+      vaultId,
+      groupId: null,
+      name: input.hostname,
+      address: input.hostname,
+      username: input.username,
+      tags: [],
+      notes: "",
+      protocol: "ssh",
+      port: input.port,
+      authKind: input.authKind,
+      credentialRef: input.credentialRef,
+      status: "offline",
+      label: "",
+      lastConnected: "never",
+    });
+    useInventoryStore.getState().upsertHost(created);
+    setQuickTarget(null);
+    setQuery("");
   };
   return (
     <section aria-labelledby="servers-heading" className="flex h-full min-h-0 flex-col overflow-hidden bg-void">
@@ -114,6 +138,7 @@ export function ServersPage({ inventoryApi, sshApi, forwardingApi, onSshEvent, o
             onCancel={() => setQuickTarget(null)}
             onEvent={onSshEvent}
             onOpened={onSshOpened}
+            onSaveAsServer={handleSaveAsServer}
           />
         ) : (
           <InventoryView

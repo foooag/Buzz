@@ -18,7 +18,7 @@
           "path": "Buzz.html",
           "createdAt": "2026-07-25T03:56:45.495Z",
           "status": "needs-review",
-          "subtitle": "Add AI provider form: plain API-key field with show/hide, saved as form data (no vault/encryption).",
+          "subtitle": "Add Agent sidebar: @-mention host/group picker, multi-host headless ops, per-host progress rail, risk confirm",
           "viewport": {
             "width": 1440,
             "height": 900
@@ -28,5 +28,5 @@
     }
   },
   "createdAt": "2026-07-25T03:13:38.099Z",
-  "updatedAt": "2026-08-03T10:38:05.036Z"
+  "updatedAt": "2026-08-05T14:15:33.452Z"
 }

@@ -14,6 +14,22 @@ describe("renderer directive text", () => {
     ]);
   });
 
+  it("resolves friendly @ mentions through the inventory resolver", () => {
+    const resolveMention = (label: string) =>
+      label === "db-primary"
+        ? { type: "host" as const, id: "h1" }
+        : label === "prod"
+          ? { type: "group" as const, id: "g1" }
+          : undefined;
+    expect(parseDirectives(
+      "把 @db-primary 的容器跑到 @prod",
+      resolveMention,
+    )).toEqual([
+      { type: "host", id: "h1", label: "db-primary" },
+      { type: "group", id: "g1", label: "prod" },
+    ]);
+  });
+
   it("expands groups and preserves order", () => {
     expect(expandTargets(
       [
