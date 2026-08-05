@@ -1,13 +1,13 @@
 {
   "name": "buzz",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "A secure Electron desktop client for remote sessions",
   "author": "Buzz Contributors",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {
-    "dev": "concurrently -k \"pnpm dev:web\" \"wait-on http://127.0.0.1:1420 && electron .\"",
+    "dev": "pnpm build:electron && concurrently -k \"pnpm dev:web\" \"wait-on http://127.0.0.1:1420 && electron .\"",
     "dev:web": "vite",
     "build": "pnpm typecheck && pnpm build:renderer && pnpm build:electron",
     "build:renderer": "vite build",

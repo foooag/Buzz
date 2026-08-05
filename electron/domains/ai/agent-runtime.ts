@@ -191,6 +191,7 @@ export class AiAgentRuntime {
         return;
       }
       case "message_update": {
+        if (event.message.role !== "assistant") return;
         const message = mergeAssistantStream(
           entry.streamingAssistant,
           event.message,

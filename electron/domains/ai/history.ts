@@ -226,6 +226,7 @@ function storageError(): DomainError {
 
 type AgentMessage = {
   role?: string;
+  type?: string;
   stopReason?: string;
   content?: unknown;
   toolCallId?: string;
