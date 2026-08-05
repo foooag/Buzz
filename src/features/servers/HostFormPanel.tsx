@@ -336,6 +336,10 @@ export function HostFormPanel({
     set({ protocol, port: protocol === "telnet" ? 23 : 22 });
   const isSerial = draft.protocol === "serial";
   const hasMatchingSavedCredential = savedAuthKind === authKind;
+  const enterCredential = (setter: (value: string) => void) => (value: string) => {
+    setter(value);
+    if (value) setSaveCredential(true);
+  };
   const enteredCredential = authKind === "password" ? password : privateKey;
   const requiresUsername = draft.protocol === "ssh" && authKind === "privateKey";
   const environmentIsValid = Object.keys(draft.env ?? {}).every((name) =>
@@ -475,7 +479,7 @@ export function HostFormPanel({
                         <TextInput
                           type="password"
                           value={password}
-                          onChange={setPassword}
+                          onChange={enterCredential(setPassword)}
                           placeholder={
                             hasMatchingSavedCredential
                               ? ENCRYPTED_CREDENTIAL_PLACEHOLDER
@@ -521,7 +525,7 @@ export function HostFormPanel({
                               const reader = new FileReader();
                               reader.addEventListener("load", () => {
                                 if (typeof reader.result === "string") {
-                                  setPrivateKey(reader.result);
+                                  enterCredential(setPrivateKey)(reader.result);
                                 }
                               });
                               reader.readAsText(file);
@@ -540,7 +544,7 @@ export function HostFormPanel({
                       <Labeled label="Private key" hint="OpenSSH PEM content; encrypted in the local credential vault">
                         <TextAreaInput
                           value={privateKey}
-                          onChange={setPrivateKey}
+                          onChange={enterCredential(setPrivateKey)}
                           placeholder={
                             hasMatchingSavedCredential
                               ? ENCRYPTED_CREDENTIAL_PLACEHOLDER
