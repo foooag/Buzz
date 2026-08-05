@@ -20,5 +20,5 @@
     },
     "types": ["vitest/globals", "@testing-library/jest-dom", "node", "vite/client"]
   },
-  "include": ["src"]
+  "include": ["src", "tests"]
 }

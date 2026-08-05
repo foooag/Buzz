@@ -2,12 +2,12 @@
 
 ## Project Structure & Module Organization
 
-Buzz is an Electron desktop application. The React/TypeScript renderer lives in `src/`; the isolated Electron main/preload boundary and backend domains live in `electron/`. Backend domains are grouped under `electron/domains/` for inventory, terminal, SSH, forwarding, SFTP, and AI. Vitest tests are colocated as `*.test.ts(x)`; browser Playwright scenarios live in `e2e/`; Electron scenarios live in `e2e-electron/`.
+Buzz is an Electron desktop application. The React/TypeScript renderer lives in `src/`; the isolated Electron main/preload boundary and backend domains live in `electron/`. Backend domains are grouped under `electron/domains/` for inventory, terminal, SSH, forwarding, SFTP, and AI. All Vitest unit/component tests live in `tests/`, mirroring the source roots: `tests/src/` for renderer tests and `tests/electron/` for main-process tests; the shared setup is `tests/setup.ts`. Browser Playwright scenarios live in `e2e/`; Electron scenarios live in `e2e-electron/`. Renderer tests import app modules through the `@/` alias; main-process tests use relative imports into `electron/`.
 
 ## Build, Test, and Development Commands
 
 - `pnpm install` installs dependencies.
-- `pnpm dev` starts Vite and launches Electron.
+- `pnpm dev` builds the Electron main process, then starts Vite and launches Electron.
 - `pnpm dev:web` starts only the Vite renderer at `127.0.0.1:1420`.
 - `pnpm typecheck` validates TypeScript without emitting files.
 - `pnpm test` runs all Vitest unit and component tests.

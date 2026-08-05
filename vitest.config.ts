@@ -11,9 +11,9 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    setupFiles: ["./src/test/setup.ts"],
+    setupFiles: ["./tests/setup.ts"],
     css: true,
-    include: ["src/**/*.test.{ts,tsx}", "electron/**/*.test.ts"],
-    exclude: ["node_modules/**", "dist/**", "e2e/**"],
+    include: ["tests/**/*.test.{ts,tsx}"],
+    exclude: ["node_modules/**", "dist/**", "dist-electron/**", "e2e/**", "e2e-electron/**"],
   },
 });
