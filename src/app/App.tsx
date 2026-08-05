@@ -51,6 +51,9 @@ import {
 import { UpdateDialog } from "../features/updater/UpdateDialog";
 import { aiConfigApi } from "../features/ai/aiApi";
 import type { AiConfigApi } from "../features/ai/aiConfigTypes";
+import { AgentPage } from "../features/agent/AgentPage";
+import { agentApi } from "../features/agent/agentApi";
+import type { AgentClient } from "../features/agent/agentTypes";
 
 type AppProps = {
   api?: TerminalApi;
@@ -59,6 +62,7 @@ type AppProps = {
   ssh?: SshApi;
   sftp?: SftpApi;
   aiConfig?: AiConfigApi;
+  agent?: AgentClient;
   runtimeFactory?: TerminalRuntimeFactory;
   resizeObserverFactory?: ResizeObserverFactory;
 };
@@ -70,6 +74,7 @@ export function App({
   ssh = sshApi,
   sftp = sftpApi,
   aiConfig = aiConfigApi,
+  agent = agentApi,
   runtimeFactory,
   resizeObserverFactory,
 }: AppProps = {}) {
@@ -331,6 +336,13 @@ export function App({
             const payload = new TextEncoder().encode(`${commands.join("\n")}\n`);
             await api.write(sessionId, payload);
           }}
+        />
+      ) : destination === "agent" ? (
+        <AgentPage
+          agentClient={agent}
+          providerApi={aiConfig}
+          inventoryApi={inventory}
+          onConnectFromServers={() => setDestination("servers")}
         />
       ) : destination === "sftp" ? (
         <SftpPanel api={sftp} keepaliveInterval={terminalPreferences.keepaliveInterval} />

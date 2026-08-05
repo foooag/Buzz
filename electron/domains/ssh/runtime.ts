@@ -69,6 +69,7 @@ export class SshRuntime {
   readonly #emit: (streamId: string | undefined, event: TerminalEvent) => void;
   readonly #bindings: SshBindings;
   readonly #sessions = new Map<string, Session>();
+  readonly #headlessClients = new Map<string, Client>();
   readonly #pending = new Map<string, PendingDecision>();
 
   constructor(
@@ -263,6 +264,53 @@ export class SshRuntime {
     return this.#sessions.has(sessionId);
   }
 
+  async openHeadless(
+    input: CreateSshProfile,
+    connectionId: string,
+    streamId?: string,
+  ): Promise<string> {
+    const profile = normalizeProfile(input);
+    const client = await this.connectClient(profile, connectionId, streamId);
+    this.#headlessClients.set(connectionId, client);
+    client.once("close", () => {
+      if (this.#headlessClients.get(connectionId) === client) {
+        this.#headlessClients.delete(connectionId);
+      }
+    });
+    return connectionId;
+  }
+
+  hasHeadless(connectionId: string): boolean {
+    return this.#headlessClients.has(connectionId);
+  }
+
+  async executeHeadless(
+    connectionId: string,
+    cwd: string,
+    command: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<SshCommandResult> {
+    const client = this.#headlessClients.get(connectionId);
+    if (!client) throw sessionNotFound();
+    return this.#executeOnClient(
+      client,
+      cwd,
+      command,
+      timeoutMs,
+      signal,
+      () => undefined,
+      () => undefined,
+    );
+  }
+
+  async closeHeadless(connectionId: string): Promise<void> {
+    const client = this.#headlessClients.get(connectionId);
+    if (!client) return;
+    this.#headlessClients.delete(connectionId);
+    client.end();
+  }
+
   host(sessionId: string): string {
     return this.#session(sessionId).profile.hostname;
   }
@@ -274,18 +322,42 @@ export class SshRuntime {
     timeoutMs: number,
     signal?: AbortSignal,
   ): Promise<SshCommandResult> {
-    if (signal?.aborted) throw commandAbortedError();
     const session = this.#session(sessionId);
+    return this.#executeOnClient(
+      session.client,
+      cwd,
+      command,
+      timeoutMs,
+      signal,
+      () => this.#emit(session.streamId, {
+        type: "output",
+        sessionId,
+        data: Array.from(Buffer.from(`\r\n$ ${command}\r\n`)),
+      }),
+      (chunk) => this.#emit(session.streamId, {
+        type: "output",
+        sessionId,
+        data: Array.from(chunk),
+      }),
+    );
+  }
+
+  async #executeOnClient(
+    client: Client,
+    cwd: string,
+    command: string,
+    timeoutMs: number,
+    signal: AbortSignal | undefined,
+    announce: (command: string) => void,
+    emitOutput: (chunk: Buffer) => void,
+  ): Promise<SshCommandResult> {
+    if (signal?.aborted) throw commandAbortedError();
     const boundedTimeout = Math.min(300_000, Math.max(1_000, timeoutMs));
     const cwdExpression = cwd.trim() === "$HOME" ? "$HOME" : quote([cwd]);
     const remoteCommand = `cd -- ${cwdExpression} && ${command}`;
-    this.#emit(session.streamId, {
-      type: "output",
-      sessionId,
-      data: Array.from(Buffer.from(`\r\n$ ${command}\r\n`)),
-    });
+    announce(remoteCommand);
     const channel = await new Promise<ClientChannel>((resolve, reject) => {
-      session.client.exec(remoteCommand, (error, opened) => {
+      client.exec(remoteCommand, (error, opened) => {
         if (error) reject(disconnectedError());
         else resolve(opened);
       });
@@ -320,11 +392,7 @@ export class SshRuntime {
         if (remaining > 0) target.push(chunk.subarray(0, remaining));
         if (chunk.byteLength > remaining) truncated = true;
         bytes += Math.min(chunk.byteLength, remaining);
-        this.#emit(session.streamId, {
-          type: "output",
-          sessionId,
-          data: Array.from(chunk),
-        });
+        emitOutput(chunk);
       };
       const timer = setTimeout(() => {
         if (settled) return;
@@ -397,6 +465,9 @@ export class SshRuntime {
   async closeAll(): Promise<void> {
     for (const sessionId of [...this.#pending.keys()]) this.#clearPending(sessionId, false);
     await Promise.all([...this.#sessions.keys()].map((sessionId) => this.close(sessionId)));
+    for (const connectionId of [...this.#headlessClients.keys()]) {
+      await this.closeHeadless(connectionId);
+    }
   }
 
   #authentication(

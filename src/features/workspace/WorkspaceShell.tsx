@@ -15,7 +15,7 @@ function recentDot(status: string): string {
   return "bg-fog/50";
 }
 
-export type Destination = "servers" | "sftp" | "forwarding" | "history" | "terminal";
+export type Destination = "servers" | "agent" | "sftp" | "forwarding" | "history" | "terminal";
 
 type WorkspaceShellProps = {
   children: ReactNode;
