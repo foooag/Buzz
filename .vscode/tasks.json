@@ -1,0 +1,78 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ui:dev",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["dev:web", "--clearScreen", "false"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "NO_COLOR": "1",
+          "FORCE_COLOR": "0"
+        }
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*VITE.*",
+          "endsPattern": ".*Local:.*127\\.0\\.0\\.1:1420.*"
+        }
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "showReuseMessage": false
+      }
+    },
+    {
+      "label": "build:electron",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["build:electron"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": ["$tsc"],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "showReuseMessage": false
+      }
+    },
+    {
+      "label": "electron:watch",
+      "type": "shell",
+      "command": "pnpm",
+      "args": [
+        "exec",
+        "tsc",
+        "-p",
+        "electron/tsconfig.json",
+        "--watch"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": "$tsc-watch",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "showReuseMessage": false
+      }
+    },
+    {
+      "label": "pre-debug-main",
+      "dependsOn": ["build:electron", "electron:watch", "ui:dev"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ]
+}

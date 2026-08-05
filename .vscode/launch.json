@@ -1,0 +1,56 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "客户端开发 (Electron)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "pnpm dev",
+      "cwd": "${workspaceFolder}",
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
+    },
+    {
+      "name": "Debug Main Process",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeArgs": [
+        "${workspaceFolder}/electron/watch-dev.mjs"
+      ],
+      "preLaunchTask": "pre-debug-main",
+      "sourceMaps": true,
+      "outFiles": [
+        "${workspaceFolder}/dist-electron/**/*.js"
+      ],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/dist-electron/**"
+      ],
+      "skipFiles": [
+        "<node_internals>/**"
+      ],
+      "autoAttachChildProcesses": true,
+      "outputCapture": "std",
+      "timeout": 30000
+    },
+    {
+      "name": "前端调试 (Chrome)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://127.0.0.1:1420",
+      "webRoot": "${workspaceFolder}/src",
+      "sourceMaps": true
+    },
+    {
+      "name": "前端服务 (Vite Dev)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "pnpm dev:web",
+      "cwd": "${workspaceFolder}",
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
+    }
+  ]
+}
