@@ -4,31 +4,12 @@
 //     • scripted agent turns that drive a per-host progress rail on the right
 //     • high-risk command confirm card (approve / deny)
 //     • credential-missing + host-key banners
-//   Two demo scenarios (a "Scenario" select toggles between them):
-//     docker  — "把 @web-prod-01 上的容器同样运行在 @web-prod-02 上" (cross-host sync)
-//     fleet   — "@Production 逐台健康检查" (group batch + risk + credential gaps)
 //   No auto-mount; shell.jsx renders <AgentView/> for the "agent" destination.
 // Exported to `window`.
 
-const { useEffect, useRef, useState, useCallback } = React;
+const { useEffect, useMemo, useRef, useState, useCallback } = React;
 const { Icon, INV, lineTokens, formatDuration, nextId } = window;
 
-const SCENARIOS = {
-  docker: {
-    id: "docker",
-    label: "Docker sync",
-    request: "把 @web-prod-01 上的容器同样运行在 @web-prod-02 上",
-    desc: "Cross-host container sync",
-    preview: "docker ps → inspect → pull → run",
-  },
-  fleet: {
-    id: "fleet",
-    label: "Fleet health",
-    request: "@Production 逐台健康检查",
-    desc: "Group batch · risk + gaps",
-    preview: "uptime → df → risk confirm · cred missing",
-  },
-};
 
 const DOCKER_TIMELINE = [
   {
@@ -530,7 +511,14 @@ function AgentStatusBadge({ status, result }) {
         declined
       </span>
     );
-  const ok = result && result.exitCode === 0;
+  if (status === "aborted")
+    return (
+      <span className="inline-flex items-center gap-1 rounded-pill bg-graphite/60 px-2 py-0.5 text-[11px] text-fog">
+        aborted
+      </span>
+    );
+  if (!result) return <span className="text-[11px] text-fog">—</span>;
+  const ok = result.exitCode === 0;
   return (
     <span
       className={
@@ -780,6 +768,319 @@ function ProgressRail({ hosts, onConnectFromServers }) {
 }
 
 /* ----------------------------------------------------------------------------
+ * Chat session store — localStorage-backed history of agent conversations.
+ * Each session is a complete snapshot: scenario, input draft, messages,
+ * per-host progress rail state, and lifecycle phase. Switching sessions
+ * restores the exact visual state (including command-card expand state).
+ * ------------------------------------------------------------------------- */
+
+const AGENT_SESSIONS_KEY = "buzz.agent.sessions.v1";
+const AGENT_ACTIVE_KEY = "buzz.agent.activeSessionId.v1";
+
+function loadSessionsFromDisk() {
+  try {
+    const raw = window.localStorage.getItem(AGENT_SESSIONS_KEY);
+    if (!raw) return [];
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list)) return [];
+    return list.filter((s) => s && typeof s === "object" && s.id);
+  } catch {
+    return [];
+  }
+}
+
+function saveSessionsToDisk(sessions) {
+  try {
+    window.localStorage.setItem(AGENT_SESSIONS_KEY, JSON.stringify(sessions));
+  } catch {
+    /* quota / private mode — non-fatal */
+  }
+}
+
+function loadActiveIdFromDisk() {
+  try {
+    return window.localStorage.getItem(AGENT_ACTIVE_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveActiveIdToDisk(id) {
+  try {
+    if (id) window.localStorage.setItem(AGENT_ACTIVE_KEY, id);
+    else window.localStorage.removeItem(AGENT_ACTIVE_KEY);
+  } catch {
+    /* non-fatal */
+  }
+}
+
+function summarizeTitle(text, scenarioId) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return SCENARIOS[scenarioId]?.label ?? "New task";
+  const firstLine = trimmed.split("\n")[0];
+  // Strip @-mention directives like :host[foo]{name=…} and :group[…]{…} so
+  // the title reads naturally.
+  const cleaned = firstLine
+    .replace(/:(?:host|group)\[([^\]]+)\]\{[^}]*\}/g, "@$1")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned.length > 56 ? cleaned.slice(0, 55).trimEnd() + "…" : cleaned;
+}
+
+function formatSessionTime(iso) {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday =
+      d.getFullYear() === yesterday.getFullYear() &&
+      d.getMonth() === yesterday.getMonth() &&
+      d.getDate() === yesterday.getDate();
+    const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (sameDay) return time;
+    if (isYesterday) return "Yesterday";
+    const sameYear = d.getFullYear() === now.getFullYear();
+    return d.toLocaleDateString([], sameYear ? { month: "short", day: "numeric" } : { year: "numeric", month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
+function newSession(scenarioId, inputDraft) {
+  const id = nextId("agent-session");
+  const now = new Date().toISOString();
+  return {
+    id,
+    title: "New task",
+    scenarioId,
+    input: inputDraft ?? "",
+    messages: [],
+    hosts: [],
+    phase: "idle",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+// When restoring a stored session, transient flags (streaming carets,
+// "running" tool cards) are normalised to a stable end-state so a reloaded
+// conversation doesn't appear to be mid-flight.
+function normalizeRestoredMessages(msgs) {
+  return (Array.isArray(msgs) ? msgs : []).map((m) => {
+    if (m.role === "assistant" && m.streaming) return { ...m, streaming: false };
+    if (m.role === "tool" && (m.status === "pending" || m.status === "running"))
+      return { ...m, status: "aborted" };
+    return m;
+  });
+}
+function normalizeRestoredHosts(hs) {
+  return (Array.isArray(hs) ? hs : []).map((h) => ({
+    ...h,
+    status: h.status === "working" || h.status === "connecting" ? "aborted" : h.status,
+    commands: (h.commands || []).map((c) =>
+      c.status === "running" ? { ...c, status: "error", error: "Interrupted by reload." } : c,
+    ),
+  }));
+}
+
+/* ----------------------------------------------------------------------------
+ * History dropdown — header popover listing past sessions with rename /
+ * delete and a "New chat" entry. Closes on outside click / Esc.
+ * ------------------------------------------------------------------------- */
+
+function HistoryDropdown({
+  sessions,
+  activeId,
+  onSelect,
+  onNewChat,
+  onRename,
+  onDelete,
+  onClose,
+}) {
+  const ref = useRef(null);
+  const [renamingId, setRenamingId] = useState(null);
+  const [draft, setDraft] = useState("");
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (renamingId) setRenamingId(null);
+        else onClose();
+      }
+    };
+    const onDown = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onDown);
+    };
+  }, [onClose, renamingId]);
+
+  const startRename = (s) => {
+    setRenamingId(s.id);
+    setDraft(s.title);
+  };
+
+  const commitRename = () => {
+    if (renamingId && draft.trim()) onRename(renamingId, draft.trim());
+    setRenamingId(null);
+  };
+
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      aria-label="Chat history"
+      className="pop-in absolute right-0 top-[calc(100%+6px)] z-40 w-[min(360px,calc(100vw-32px))] overflow-hidden rounded-xl border border-graphite bg-carbon shadow-[0_16px_48px_rgb(0_0_0/0.5)]"
+    >
+      <div className="flex items-center justify-between gap-2 border-b border-graphite px-3 py-2">
+        <div className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-fog/70">
+          <Icon name="history" size={11} className="text-acid-lime" />
+          Chat history
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            onNewChat();
+            onClose();
+          }}
+          className="inline-flex items-center gap-1 rounded-md border border-graphite bg-obsidian/60 px-2 py-1 text-[11px] font-medium text-mist transition-colors hover:bg-graphite"
+        >
+          <Icon name="plus" size={11} />
+          New chat
+        </button>
+      </div>
+
+      <div className="scroll-thin max-h-[320px] overflow-y-auto p-1.5">
+        {sessions.length === 0 ? (
+          <p className="px-2.5 py-6 text-center text-[12px] text-fog">
+            No past chats yet — start a new task and it will appear here.
+          </p>
+        ) : (
+          sessions.map((s) => {
+            const active = s.id === activeId;
+            const renaming = renamingId === s.id;
+            const scenarioLabel = SCENARIOS[s.scenarioId]?.label ?? s.scenarioId;
+            const msgCount = s.messages?.length ?? 0;
+            return (
+              <div
+                key={s.id}
+                role="menuitem"
+                tabIndex={0}
+                onClick={() => {
+                  if (renaming) return;
+                  onSelect(s.id);
+                  onClose();
+                }}
+                onKeyDown={(e) => {
+                  if (renaming) return;
+                  if (e.key === "Enter") {
+                    onSelect(s.id);
+                    onClose();
+                  }
+                }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  startRename(s);
+                }}
+                className={
+                  "group/hist relative flex w-full cursor-pointer items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors " +
+                  (active ? "bg-graphite" : "hover:bg-white/5")
+                }
+              >
+                <span
+                  className={
+                    "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full " +
+                    (s.phase === "streaming" || s.phase === "awaiting-confirm"
+                      ? "bg-acid-lime"
+                      : active
+                        ? "bg-pulse-green"
+                        : "bg-fog/40")
+                  }
+                />
+                <span className="min-w-0 flex-1">
+                  {renaming ? (
+                    <input
+                      autoFocus
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          commitRename();
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          setRenamingId(null);
+                        }
+                      }}
+                      onBlur={commitRename}
+                      className="w-full rounded border border-smoke bg-black/40 px-1.5 py-0.5 text-[13px] text-paper outline-none focus:border-acid-lime/50"
+                    />
+                  ) : (
+                    <span className="block truncate text-[13px] leading-snug text-paper">
+                      {s.title}
+                    </span>
+                  )}
+                  <span className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-fog">
+                    <span className="rounded-pill bg-graphite/80 px-1.5 py-px">{scenarioLabel}</span>
+                    <span>{msgCount} msg{msgCount === 1 ? "" : "s"}</span>
+                    <span className="text-fog/50">·</span>
+                    <span>{formatSessionTime(s.updatedAt)}</span>
+                  </span>
+                </span>
+                {!renaming ? (
+                  <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/hist:opacity-100">
+                    <button
+                      type="button"
+                      aria-label={"Rename " + s.title}
+                      title="Rename"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startRename(s);
+                      }}
+                      className="grid h-6 w-6 place-items-center rounded text-fog transition-colors hover:bg-white/10 hover:text-mist"
+                    >
+                      <Icon name="edit" size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={"Delete " + s.title}
+                      title="Delete"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(s.id);
+                      }}
+                      className="grid h-6 w-6 place-items-center rounded text-fog transition-colors hover:bg-coral-red/15 hover:text-coral-red"
+                    >
+                      <Icon name="trash" size={12} />
+                    </button>
+                  </span>
+                ) : null}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      <div className="border-t border-graphite px-3 py-1.5 text-[10.5px] text-fog/60">
+        Double-click to rename · <kbd className="rounded border border-graphite bg-obsidian px-1 py-px font-sans text-[9.5px]">Esc</kbd> to dismiss
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
  * Confirm dialog (high-risk) + credential banner (F6 / F8)
  * ------------------------------------------------------------------------- */
 
@@ -925,11 +1226,50 @@ function CredentialBanner({ onConnect }) {
  * ------------------------------------------------------------------------- */
 
 function AgentView({ onConnectFromServers }) {
-  const [scenario, setScenario] = useState("docker");
-  const [phase, setPhase] = useState("idle"); // idle | streaming | awaiting-confirm | done | aborted
-  const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState(SCENARIOS.docker.request);
-  const [hosts, setHosts] = useState([]); // [{ hostId, hostLabel, status, commands }]
+  // ----- Session store: list of past chats, plus the active session id. ----
+  // sessions is kept BOTH in state (for rendering) and in a ref (for
+  // synchronous access inside persist). The ref is the source of truth
+  // during the persist cycle — it lets us decide "create vs update" without
+  // waiting for React to flush setState.
+  const [sessions, setSessions] = useState(() => {
+    const fromDisk = loadSessionsFromDisk();
+    return fromDisk.length > 0 ? fromDisk : [];
+  });
+  const sessionsRef = useRef(sessions);
+  const [activeId, setActiveId] = useState(() => {
+    const fromDisk = loadActiveIdFromDisk();
+    const list = loadSessionsFromDisk();
+    if (fromDisk && list.some((s) => s.id === fromDisk)) return fromDisk;
+    return null; // null = a fresh, unsaved scratch session
+  });
+  // Mirror of activeId as a ref so persistence writes can resolve the "real"
+  // current session id synchronously inside setSessions updaters, without
+  // waiting for the next render. Scratch sessions get an id up front.
+  // NOTE: no sync useEffect here — activeIdRef is the source of truth during
+  // the persist cycle; the state is only for rendering. We deliberately do
+  // NOT copy state → ref on every render, because the ref can be ahead of
+  // the state (ref set in the same tick that setActiveId was queued).
+  const activeIdRef = useRef(activeId);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  // ----- Live conversation state for the ACTIVE session. ------------------
+  // If a stored active session exists, hydrate live state from it so a
+  // reload picks up exactly where the user left off.
+  const initialStored = useMemo(() => {
+    if (!activeId) return null;
+    return sessions.find((s) => s.id === activeId) ?? null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [scenario, setScenario] = useState(initialStored?.scenarioId ?? "docker");
+  const [phase, setPhase] = useState(() => {
+    const p = initialStored?.phase ?? "idle";
+    return p === "streaming" || p === "awaiting-confirm" ? "aborted" : p;
+  });
+  const [messages, setMessages] = useState(() => normalizeRestoredMessages(initialStored?.messages));
+  const [input, setInput] = useState(
+    initialStored?.input ?? SCENARIOS[initialStored?.scenarioId ?? "docker"].request,
+  );
+  const [hosts, setHosts] = useState(() => normalizeRestoredHosts(initialStored?.hosts));
   const [confirm, setConfirm] = useState(null);
 
   const inputRef = useRef(null);
@@ -1178,24 +1518,219 @@ function AgentView({ onConnectFromServers }) {
     );
   }, []);
 
-  const switchScenario = (id) => {
-    if (runningRef.current) handleAbort();
-    setScenario(id);
+  /* ----- Session lifecycle ------------------------------------------------
+   * persistLiveIntoSession: write the current live state into the active
+   * session record, creating one if needed. Fully imperative — mutates
+   * sessionsRef synchronously, then mirrors into setSessions so React
+   * re-renders. This avoids the React 18 setState-updater deferral trap
+   * where assignedId would otherwise not be visible until after the next
+   * flush.
+   */
+  const persistLiveIntoSession = useCallback(
+    (overrides = {}) => {
+      const snap = {
+        scenarioId: overrides.scenarioId ?? scenario,
+        input: overrides.input ?? input,
+        messages: overrides.messages ?? messages,
+        hosts: overrides.hosts ?? hosts,
+        phase: overrides.phase ?? phase,
+      };
+      const now = new Date().toISOString();
+      const existingId = activeIdRef.current;
+      const prev = sessionsRef.current;
+      let next;
+      let assignedId = existingId;
+      if (existingId && prev.some((s) => s.id === existingId)) {
+        next = prev.map((s) =>
+          s.id === existingId
+            ? {
+                ...s,
+                ...snap,
+                title: overrides.title ?? deriveTitle(snap.messages, snap.scenarioId, s.title),
+                updatedAt: now,
+              }
+            : s,
+        );
+      } else {
+        assignedId = nextId("agent-session");
+        const first = {
+          id: assignedId,
+          title: overrides.title ?? deriveTitle(snap.messages, snap.scenarioId, "New task"),
+          createdAt: now,
+          updatedAt: now,
+          ...snap,
+        };
+        next = [first, ...prev];
+      }
+      sessionsRef.current = next;
+      saveSessionsToDisk(next);
+      setSessions(next);
+      if (assignedId && assignedId !== existingId) {
+        activeIdRef.current = assignedId;
+        setActiveId(assignedId);
+        saveActiveIdToDisk(assignedId);
+      }
+      return assignedId;
+    },
+    [scenario, input, messages, hosts, phase],
+  );
+
+  function deriveTitle(msgs, scenarioId, fallback) {
+    const firstUser = (msgs || []).find((m) => m.role === "user" && m.text);
+    if (firstUser) return summarizeTitle(firstUser.text, scenarioId);
+    return fallback && fallback !== "New task" ? fallback : summarizeTitle("", scenarioId);
+  }
+
+  // Hydrate live state from a stored session record.
+  const hydrateFromSession = useCallback((s) => {
+    cancelledRef.current = true; // stop any in-flight stream
+    timeoutsRef.current.forEach((resolve, t) => {
+      clearTimeout(t);
+      resolve();
+    });
+    timeoutsRef.current.clear();
+    if (confirmResolverRef.current) {
+      const r = confirmResolverRef.current;
+      confirmResolverRef.current = null;
+      r({ decision: "cancel" });
+    }
     setConfirm(null);
+    runningRef.current = false;
+    cancelledRef.current = false;
+
+    setScenario(s.scenarioId ?? "docker");
+    setInput(s.input ?? "");
+    setMessages(normalizeRestoredMessages(s.messages));
+    setHosts(normalizeRestoredHosts(s.hosts));
+    const p = s.phase ?? "idle";
+    setPhase(p === "streaming" || p === "awaiting-confirm" ? "aborted" : p);
+  }, []);
+
+  // Public: switch to a stored session (persisting current one first).
+  const selectSession = useCallback(
+    (id) => {
+      if (id === activeIdRef.current) return;
+      // Persist the session we're leaving (it may be the unsaved scratch one).
+      const leavingHadContent =
+        messages.length > 0 || (input && input !== SCENARIOS.docker.request && input !== SCENARIOS.fleet.request);
+      if (activeIdRef.current || leavingHadContent) {
+        persistLiveIntoSession();
+      }
+      const target = sessions.find((s) => s.id === id);
+      if (!target) return;
+      activeIdRef.current = id;
+      setActiveId(id);
+      saveActiveIdToDisk(id);
+      hydrateFromSession(target);
+    },
+    [sessions, messages, input, persistLiveIntoSession, hydrateFromSession],
+  );
+
+  // Public: start a new, empty chat.
+  const startNewChat = useCallback(() => {
+    const leavingHadContent =
+      messages.length > 0 || (input && input !== SCENARIOS.docker.request && input !== SCENARIOS.fleet.request);
+    if (activeIdRef.current || leavingHadContent) {
+      persistLiveIntoSession();
+    }
+    activeIdRef.current = null;
+    setActiveId(null);
+    saveActiveIdToDisk(null);
+    cancelledRef.current = true;
+    timeoutsRef.current.forEach((resolve, t) => {
+      clearTimeout(t);
+      resolve();
+    });
+    timeoutsRef.current.clear();
+    if (confirmResolverRef.current) {
+      const r = confirmResolverRef.current;
+      confirmResolverRef.current = null;
+      r({ decision: "cancel" });
+    }
+    setConfirm(null);
+    runningRef.current = false;
+    cancelledRef.current = false;
+    setScenario("docker");
+    setInput(SCENARIOS.docker.request);
     setMessages([]);
     setHosts([]);
     setPhase("idle");
-    cancelledRef.current = false;
-    setInput(SCENARIOS[id].request);
-  };
+  }, [messages, input, persistLiveIntoSession]);
 
-  // Esc: dismiss confirm → picker → abort
+  const renameSession = useCallback((id, title) => {
+    const next = sessionsRef.current.map((s) =>
+      s.id === id ? { ...s, title, updatedAt: new Date().toISOString() } : s,
+    );
+    sessionsRef.current = next;
+    saveSessionsToDisk(next);
+    setSessions(next);
+  }, []);
+
+  const deleteSession = useCallback((id) => {
+    const next = sessionsRef.current.filter((s) => s.id !== id);
+    sessionsRef.current = next;
+    saveSessionsToDisk(next);
+    setSessions(next);
+    if (activeIdRef.current === id) {
+      activeIdRef.current = null;
+      setActiveId(null);
+      saveActiveIdToDisk(null);
+      setScenario("docker");
+      setInput(SCENARIOS.docker.request);
+      setMessages([]);
+      setHosts([]);
+      setPhase("idle");
+    }
+  }, []);
+
+  // Scenario switch — same as before, but the current conversation is
+  // persisted first so the user doesn't lose it. The scenario picker at the
+  // top only changes the next task's script for a *fresh* chat; if the chat
+  // already has messages we keep them and just tag the scenario forward.
+  const switchScenario = useCallback(
+    (id) => {
+      if (runningRef.current) handleAbort();
+      setConfirm(null);
+      cancelledRef.current = false;
+      if (messages.length === 0) {
+        // Fresh chat — switch scenario cleanly and prefill the request.
+        setScenario(id);
+        setInput(SCENARIOS[id].request);
+        setHosts([]);
+        setPhase("idle");
+        if (activeIdRef.current) {
+          persistLiveIntoSession({ scenarioId: id, input: SCENARIOS[id].request, hosts: [], phase: "idle" });
+        }
+      } else {
+        // Existing conversation: tag the new scenario forward without wiping.
+        setScenario(id);
+        if (activeIdRef.current) persistLiveIntoSession({ scenarioId: id });
+      }
+    },
+    [messages.length, persistLiveIntoSession],
+  );
+
+  // Auto-persist the live session whenever the conversation has meaningful
+  // content. We deliberately skip the very first paint (scratch chat with no
+  // user input yet) so a session record only materialises once the user has
+  // actually engaged.
+  useEffect(() => {
+    if (messages.length === 0) return;
+    persistLiveIntoSession();
+  }, [messages, hosts, phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Esc: dismiss confirm → history dropdown → picker → abort
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== "Escape") return;
       if (confirmResolverRef.current) {
         e.preventDefault();
         resolveConfirm("cancel");
+        return;
+      }
+      if (historyOpen) {
+        e.preventDefault();
+        setHistoryOpen(false);
         return;
       }
       if (runningRef.current) {
@@ -1208,10 +1743,16 @@ function AgentView({ onConnectFromServers }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, awaitingConfirm]);
+  }, [busy, awaitingConfirm, historyOpen]);
 
   const showCredentialBanner = messages.some(
     (m) => m.role === "tool" && m.status === "credential-missing",
+  );
+
+  const activeSession = activeId ? sessions.find((s) => s.id === activeId) : null;
+  const sortedSessions = useMemo(
+    () => [...sessions].sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || "")),
+    [sessions],
   );
 
   return (
@@ -1243,6 +1784,11 @@ function AgentView({ onConnectFromServers }) {
                     />
                     {awaitingConfirm ? "Approval" : busy ? "Working" : "Ready"}
                   </span>
+                  {activeSession ? (
+                    <span className="hidden max-w-[220px] truncate rounded-pill bg-graphite/40 px-1.5 py-0.5 text-[10px] text-fog/90 sm:inline" title={activeSession.title}>
+                      {activeSession.title}
+                    </span>
+                  ) : null}
                 </div>
                 <div className="mt-0.5 flex items-center gap-1 text-[11px] text-fog">
                   <Icon name="shield" size={11} />
@@ -1269,11 +1815,37 @@ function AgentView({ onConnectFromServers }) {
                   </button>
                 ))}
               </div>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setHistoryOpen((v) => !v)}
+                  aria-label="Chat history"
+                  aria-expanded={historyOpen}
+                  title="Chat history"
+                  className={
+                    "grid h-7 w-7 place-items-center rounded-md transition-colors " +
+                    (historyOpen ? "bg-graphite text-mist" : "text-fog hover:bg-white/5 hover:text-mist")
+                  }
+                >
+                  <Icon name="history" size={15} />
+                </button>
+                {historyOpen ? (
+                  <HistoryDropdown
+                    sessions={sortedSessions}
+                    activeId={activeId}
+                    onSelect={selectSession}
+                    onNewChat={startNewChat}
+                    onRename={renameSession}
+                    onDelete={deleteSession}
+                    onClose={() => setHistoryOpen(false)}
+                  />
+                ) : null}
+              </div>
               <button
                 type="button"
-                onClick={() => switchScenario(scenario)}
-                aria-label="New task"
-                title="New task"
+                onClick={startNewChat}
+                aria-label="New chat"
+                title="New chat"
                 className="grid h-7 w-7 place-items-center rounded-md text-fog transition-colors hover:bg-white/5 hover:text-mist"
               >
                 <Icon name="plus" size={15} />

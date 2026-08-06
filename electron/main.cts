@@ -13,6 +13,8 @@ import type { SftpAssociations } from "./domains/sftp/associations.js";
 import type { AiService } from "./domains/ai/service.js";
 import type { MultiHostAgentRuntime } from "./domains/agent/agent-runtime.js";
 import type { SshHeadlessRuntime } from "./domains/ssh/headless.js";
+import { autoUpdater } from "electron-updater";
+
 
 const projectRoot = path.resolve(__dirname, "..");
 const streamOwners = new Map<string, WebContents>();
@@ -323,6 +325,10 @@ async function start(): Promise<void> {
       app.quit();
     });
   });
+
+  const server = "https://hazel-6wpt14yej-gofancyevers-projects.vercel.app"
+  const url = `${server}/update/${process.platform}/${app.getVersion()}`
+  autoUpdater.setFeedURL({ url, provider: "generic" })
 }
 
 void start();
