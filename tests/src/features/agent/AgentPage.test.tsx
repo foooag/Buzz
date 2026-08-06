@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentPage } from "@/features/agent/AgentPage";
 import type { AgentClient } from "@/features/agent/agentTypes";
+import { createDeterministicAiConfigApi } from "@/features/ai/deterministicAiApi";
 import type { AiConfigApi, AiProviderConfig } from "@/features/ai/aiConfigTypes";
 import { useInventoryStore } from "@/features/inventory/inventoryStore";
 import type { Group, Host, Identity } from "@/shared/types";
@@ -88,6 +89,11 @@ function provider(): AiProviderConfig {
   };
 }
 
+beforeEach(() => {
+  window.localStorage.clear();
+  useInventoryStore.getState().setResources([], [], []);
+});
+
 describe("AgentPage", () => {
   it("creates an agent and renders the prototype composer", async () => {
     const client = fakeClient();
@@ -98,13 +104,17 @@ describe("AgentPage", () => {
     }));
     expect(screen.getByRole("heading", { name: "Agent" })).toBeVisible();
     expect(screen.getByText("Agent standing by")).toBeVisible();
+    expect(screen.getByText("Claude · claude-sonnet-5")).toBeVisible();
+    expect(screen.queryByText("No provider configured")).toBeNull();
   });
 
   it("sends a prompt with parsed targets on submit", async () => {
     const client = fakeClient();
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    const input = await screen.findByLabelText("Message agent");
-    await waitFor(() => expect(input).toBeEnabled());
+    await waitFor(() => {
+      expect(screen.getByLabelText("Message agent")).toBeEnabled();
+    });
+    const input = screen.getByLabelText("Message agent");
     await userEvent.type(input, "uptime{Enter}");
     expect(client.prompt).toHaveBeenCalledWith(
       "a1",
@@ -118,8 +128,10 @@ describe("AgentPage", () => {
     seedInventory();
     const client = fakeClient();
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    const input = await screen.findByLabelText("Message agent");
-    await waitFor(() => expect(input).toBeEnabled());
+    await waitFor(() => {
+      expect(screen.getByLabelText("Message agent")).toBeEnabled();
+    });
+    const input = screen.getByLabelText("Message agent");
     await userEvent.type(input, "run @");
     await userEvent.click(
       await screen.findByRole("option", { name: /web-prod-01/ }),
@@ -138,5 +150,61 @@ describe("AgentPage", () => {
     render(<AgentPage agentClient={client} providerApi={providerApi([])} />);
     expect(await screen.findByText("Agent standing by")).toBeVisible();
     expect(client.create).not.toHaveBeenCalled();
+  });
+
+  it("reloads providers when the revision changes and reflects a newly configured one", async () => {
+    const list = vi
+      .fn<AiConfigApi["list"]>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([provider()]);
+    const client = fakeClient();
+    const { rerender } = render(
+      <AgentPage
+        agentClient={client}
+        providerApi={{ list } as unknown as AiConfigApi}
+      />,
+    );
+    expect(await screen.findByText("No provider configured")).toBeVisible();
+
+    rerender(
+      <AgentPage
+        agentClient={client}
+        providerApi={{ list } as unknown as AiConfigApi}
+        providerRevision={1}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText("Claude · claude-sonnet-5")).toBeVisible();
+    });
+    expect(screen.queryByText("No provider configured")).toBeNull();
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+  });
+
+  it("reflects a provider configured through the AI settings flow using the real config api", async () => {
+    const api = createDeterministicAiConfigApi([]);
+    const client = fakeClient();
+    const { rerender } = render(
+      <AgentPage agentClient={client} providerApi={api} />,
+    );
+    expect(await screen.findByText("No provider configured")).toBeVisible();
+
+    // The user adds a provider in the AI preferences section.
+    await api.create({
+      providerKind: "anthropic",
+      name: "Claude",
+      baseUrl: "https://api.anthropic.com",
+      modelId: "claude-sonnet-5",
+      apiKey: "sk-test",
+      isDefault: true,
+    });
+
+    // Preferences close → providerRevision bump.
+    rerender(
+      <AgentPage agentClient={client} providerApi={api} providerRevision={1} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText("Claude · claude-sonnet-5")).toBeVisible();
+    });
+    expect(screen.queryByText("No provider configured")).toBeNull();
   });
 });

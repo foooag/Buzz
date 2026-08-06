@@ -8,6 +8,7 @@ import {
 import {
   Check,
   ChevronDown,
+  History,
   Plus,
   Server,
   ShieldCheck,
@@ -42,50 +43,25 @@ import {
   type MentionComposerDraft,
 } from "./composer/MentionComposer";
 import { expandTargets, parseDirectives } from "./directiveText";
+import { HistoryDropdown } from "./HistoryDropdown";
 import { HostErrorBanner } from "./HostErrorBanner";
+import type { AgentItem, ToolCardItem, ToolStatus } from "./agentItems";
+import { nextId } from "./agentItems";
 import type { CommandStep, HostProgress } from "./progressTypes";
 import { ProgressPanel } from "./ProgressPanel";
-
-type ToolStatus =
-  | "pending"
-  | "running"
-  | "done"
-  | "error"
-  | "credential-missing"
-  | "declined"
-  | "aborted";
-
-type ToolCardItem = {
-  id: string;
-  kind: "tool";
-  toolCallId: string;
-  cmd: string;
-  hostId: string;
-  hostLabel: string;
-  verdict: { allow: boolean };
-  status: ToolStatus;
-  exitCode?: number | null;
-  durationMs?: number;
-  output?: string;
-  startedAt?: number;
-  expanded: boolean;
-  errorMessage?: string;
-};
-
-type MessageItem = {
-  id: string;
-  kind: "user" | "assistant";
-  text: string;
-  streaming?: boolean;
-};
-
-type AgentItem = MessageItem | ToolCardItem;
-
-let itemSeq = 0;
-function nextId(prefix: string): string {
-  itemSeq += 1;
-  return `${prefix}-${Date.now()}-${itemSeq}`;
-}
+import {
+  loadActiveIdFromDisk,
+  loadSessionsFromDisk,
+  normalizeRestoredHosts,
+  normalizeRestoredItems,
+  normalizeRestoredPhase,
+  saveActiveIdToDisk,
+  saveSessionsToDisk,
+  sortSessionsByRecent,
+  summarizeTitle,
+  type AgentSession,
+  type AgentSessionPhase,
+} from "./sessionStore";
 
 export type AgentPageProps = {
   agentClient?: AgentClient;
@@ -93,6 +69,7 @@ export type AgentPageProps = {
   inventoryApi?: InventoryApi;
   onConnectFromServers?: () => void;
   onRequestPreferences?: () => void;
+  providerRevision?: number;
 };
 
 export function AgentPage({
@@ -101,9 +78,11 @@ export function AgentPage({
   inventoryApi,
   onConnectFromServers,
   onRequestPreferences,
+  providerRevision = 0,
 }: AgentPageProps) {
   const [providers, setProviders] = useState<AiProviderConfig[]>([]);
   const [providerId, setProviderId] = useState("");
+  const promptedForProvidersRef = useRef(false);
   const [items, setItems] = useState<AgentItem[]>([]);
   const [hosts, setHosts] = useState<HostProgress[]>([]);
   const [agentId, setAgentId] = useState<string>();
@@ -120,6 +99,48 @@ export function AgentPage({
   const groupsById = useInventoryStore((state) => state.groups);
   hostsRef.current = useInventoryStore((state) => state.hosts);
   const groups = useMemo(() => Object.values(groupsById), [groupsById]);
+
+  // ----- Chat history: localStorage-backed sessions, one agent per session. -
+  // sessions lives both in state (rendering) and a ref (synchronous access for
+  // persistence). activeIdRef is the source of truth during the persist cycle —
+  // it is set in the same tick that setActiveId is queued, so callbacks never
+  // wait for a React flush.
+  const [sessions, setSessions] = useState<AgentSession[]>(() => {
+    const fromDisk = loadSessionsFromDisk();
+    return fromDisk.length > 0 ? fromDisk : [];
+  });
+  const sessionsRef = useRef(sessions);
+  const [activeId, setActiveId] = useState<string | null>(() => {
+    const fromDisk = loadActiveIdFromDisk();
+    const list = loadSessionsFromDisk();
+    if (fromDisk && list.some((session) => session.id === fromDisk)) {
+      return fromDisk;
+    }
+    return null; // null = a fresh, unsaved scratch session
+  });
+  const activeIdRef = useRef<string | null>(activeId);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [inputText, setInputText] = useState("");
+
+  // Hydrate live conversation state from a stored session record so a reload
+  // picks up exactly where the user left off.
+  const initialStored = useMemo(() => {
+    if (!activeId) return null;
+    return sessions.find((session) => session.id === activeId) ?? null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [phase, setPhase] = useState<AgentSessionPhase>(() =>
+    normalizeRestoredPhase(initialStored?.phase),
+  );
+  useEffect(() => {
+    if (initialStored) {
+      setItems(normalizeRestoredItems(initialStored.items));
+      setHosts(normalizeRestoredHosts(initialStored.hosts));
+      setInputText(initialStored.input);
+      setDraft({ text: initialStored.input, nonce: Date.now() });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const hostName = useCallback(
     (hostId: string) => hostsRef.current[hostId]?.name ?? hostId,
@@ -139,6 +160,9 @@ export function AgentPage({
     [groups],
   );
 
+  // Load the usable providers once on mount, and again whenever the provider
+  // revision changes (bumped when preferences close — the list may have changed
+  // while they were open). Only the first successful load prompts for setup.
   useEffect(() => {
     let active = true;
     void providerApi.list().then(
@@ -153,7 +177,10 @@ export function AgentPage({
             ? current
             : (usable.find((item) => item.isDefault)?.id ?? usable[0]?.id ?? ""),
         );
-        if (usable.length === 0) onRequestPreferences?.();
+        if (usable.length === 0 && !promptedForProvidersRef.current) {
+          promptedForProvidersRef.current = true;
+          onRequestPreferences?.();
+        }
       },
       () => {
         if (active) setError("Could not load AI providers.");
@@ -162,7 +189,7 @@ export function AgentPage({
     return () => {
       active = false;
     };
-  }, [providerApi, onRequestPreferences]);
+  }, [providerApi, providerRevision, onRequestPreferences]);
 
   const createAgent = useCallback(() => {
     if (!providerId) return;
@@ -385,6 +412,7 @@ export function AgentPage({
   ) => {
     setConfirmation(confirmation);
     setAwaitingConfirm(true);
+    setPhase("awaiting-confirm");
     setItems((current) =>
       current.map((item) =>
         item.kind === "tool" &&
@@ -420,6 +448,7 @@ export function AgentPage({
     switch (event.type) {
       case "agentStart":
         setRunning(true);
+        setPhase("streaming");
         setError(undefined);
         return;
       case "messageStart":
@@ -446,6 +475,7 @@ export function AgentPage({
         setRunning(false);
         setAwaitingConfirm(false);
         setConfirmation(undefined);
+        setPhase(abortedRef.current ? "aborted" : "done");
         setHosts((current) =>
           current.map((host) => {
             if (abortedRef.current) {
@@ -506,6 +536,7 @@ export function AgentPage({
       text: trimmed,
     }]);
     setRunning(true);
+    setPhase("streaming");
     const directives = parseDirectives(trimmed, resolveMentionLabel);
     const groupHosts = Object.fromEntries(
       groups.map((group) => [
@@ -567,6 +598,7 @@ export function AgentPage({
     const current = confirmation;
     setConfirmation(undefined);
     setAwaitingConfirm(false);
+    setPhase("streaming");
     void agentClient
       .decideTool(agentId, current.confirmationId, decision === "run", command)
       .catch(() => setError("The confirmation is no longer valid."));
@@ -597,19 +629,187 @@ export function AgentPage({
     }
   }, [agentClient, confirmation]);
 
-  const newTask = useCallback(() => {
-    const agentId = agentIdRef.current;
-    if (agentId) void agentClient.abort(agentId).catch(() => undefined);
-    abortedRef.current = false;
+  // ----- Session lifecycle ------------------------------------------------
+  // persistLiveIntoSession writes the current live conversation (items, hosts,
+  // composer draft, phase) into the active session record, creating one when
+  // needed. It is fully imperative — mutates sessionsRef synchronously, then
+  // mirrors into setSessions so React re-renders — so the "create vs update"
+  // decision never waits on a setState flush.
+  const persistLiveIntoSession = useCallback(
+    (overrides?: Partial<Pick<AgentSession, "items" | "hosts" | "input" | "phase">>) => {
+      const now = new Date().toISOString();
+      const snap = {
+        items: overrides?.items ?? items,
+        hosts: overrides?.hosts ?? hosts,
+        input: overrides?.input ?? inputText,
+        phase: overrides?.phase ?? phase,
+      };
+      const existingId = activeIdRef.current;
+      const prev = sessionsRef.current;
+      let next: AgentSession[];
+      let assignedId = existingId;
+      if (existingId && prev.some((session) => session.id === existingId)) {
+        next = prev.map((session) =>
+          session.id === existingId
+            ? {
+                ...session,
+                ...snap,
+                // Auto-title a fresh chat from its first user message, but
+                // preserve a manual rename (or an already-derived title).
+                title:
+                  session.title === "New task"
+                    ? deriveTitle(snap.items)
+                    : session.title,
+                updatedAt: now,
+              }
+            : session,
+        );
+      } else {
+        assignedId = nextId("agent-session");
+        const first: AgentSession = {
+          id: assignedId,
+          title: deriveTitle(snap.items),
+          createdAt: now,
+          updatedAt: now,
+          ...snap,
+        };
+        next = [first, ...prev];
+      }
+      sessionsRef.current = next;
+      saveSessionsToDisk(next);
+      setSessions(next);
+      if (assignedId && assignedId !== existingId) {
+        activeIdRef.current = assignedId;
+        setActiveId(assignedId);
+        saveActiveIdToDisk(assignedId);
+      }
+      return assignedId;
+    },
+    [items, hosts, inputText, phase],
+  );
+
+  const deriveTitle = useCallback((currentItems: AgentItem[]) => {
+    const firstUser = currentItems.find(
+      (item) => item.kind === "user" && Boolean(item.text.trim()),
+    );
+    if (firstUser && firstUser.kind === "user") {
+      return summarizeTitle(firstUser.text);
+    }
+    return summarizeTitle("");
+  }, []);
+
+  // Reset the live conversation without touching persisted sessions.
+  const resetLiveState = useCallback(() => {
     setConfirmation(undefined);
     setItems([]);
     setHosts([]);
     setError(undefined);
     setDraft({ text: "", nonce: Date.now() });
+    setInputText("");
     setRunning(false);
     setAwaitingConfirm(false);
+    setPhase("idle");
+  }, []);
+
+  // Refresh the backend agent so its own history starts clean for the next task.
+  const restartAgent = useCallback(() => {
+    const currentAgentId = agentIdRef.current;
+    if (currentAgentId) void agentClient.close(currentAgentId).catch(() => undefined);
+    agentIdRef.current = undefined;
+    setAgentId(undefined);
     createAgent();
   }, [agentClient, createAgent]);
+
+  // New chat: persist anything meaningful from the conversation we're leaving,
+  // then reset to a fresh, unsaved scratch session with its own agent.
+  const startNewChat = useCallback(() => {
+    const leavingHasContent =
+      items.length > 0 || Boolean(inputText.trim());
+    if (activeIdRef.current || leavingHasContent) {
+      persistLiveIntoSession();
+    }
+    activeIdRef.current = null;
+    setActiveId(null);
+    saveActiveIdToDisk(null);
+    const currentAgentId = agentIdRef.current;
+    if (currentAgentId) void agentClient.abort(currentAgentId).catch(() => undefined);
+    resetLiveState();
+    restartAgent();
+  }, [
+    items.length,
+    inputText,
+    persistLiveIntoSession,
+    resetLiveState,
+    restartAgent,
+    agentClient,
+  ]);
+
+  // Switch to a stored session (persisting the current one first).
+  const selectSession = useCallback(
+    (id: string) => {
+      if (id === activeIdRef.current) return;
+      const leavingHasContent = items.length > 0 || Boolean(inputText.trim());
+      if (activeIdRef.current || leavingHasContent) {
+        persistLiveIntoSession();
+      }
+      const target = sessions.find((session) => session.id === id);
+      if (!target) return;
+      activeIdRef.current = id;
+      setActiveId(id);
+      saveActiveIdToDisk(id);
+      setInputText(target.input);
+      setItems(normalizeRestoredItems(target.items));
+      setHosts(normalizeRestoredHosts(target.hosts));
+      setPhase(normalizeRestoredPhase(target.phase));
+      setConfirmation(undefined);
+      setDraft({ text: target.input, nonce: Date.now() });
+      setError(undefined);
+      restartAgent();
+    },
+    [
+      sessions,
+      items.length,
+      inputText,
+      persistLiveIntoSession,
+      restartAgent,
+    ],
+  );
+
+  const renameSession = useCallback((id: string, title: string) => {
+    const next = sessionsRef.current.map((session) =>
+      session.id === id
+        ? { ...session, title, updatedAt: new Date().toISOString() }
+        : session,
+    );
+    sessionsRef.current = next;
+    saveSessionsToDisk(next);
+    setSessions(next);
+  }, []);
+
+  const deleteSession = useCallback(
+    (id: string) => {
+      const next = sessionsRef.current.filter((session) => session.id !== id);
+      sessionsRef.current = next;
+      saveSessionsToDisk(next);
+      setSessions(next);
+      if (activeIdRef.current === id) {
+        activeIdRef.current = null;
+        setActiveId(null);
+        saveActiveIdToDisk(null);
+        resetLiveState();
+        restartAgent();
+      }
+    },
+    [resetLiveState, restartAgent],
+  );
+
+  // Auto-persist the live session whenever the conversation has meaningful
+  // content. The very first paint (a scratch chat with no user input yet) is
+  // skipped so a session record only materialises once the user engages.
+  useEffect(() => {
+    if (items.length === 0) return;
+    persistLiveIntoSession();
+  }, [items, hosts, phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleExpand = useCallback((id: string) => {
     setItems((current) =>
@@ -640,6 +840,11 @@ export function AgentPage({
     : running
       ? "Working"
       : "Ready";
+
+  const activeSession = activeId
+    ? sessions.find((session) => session.id === activeId)
+    : null;
+  const sortedSessions = useMemo(() => sortSessionsByRecent(sessions), [sessions]);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -673,6 +878,14 @@ export function AgentPage({
                       />
                       {statusLabel}
                     </span>
+                    {activeSession ? (
+                      <span
+                        className="hidden max-w-[220px] truncate rounded-full bg-graphite/40 px-1.5 py-0.5 text-[10px] text-fog/90 sm:inline"
+                        title={activeSession.title}
+                      >
+                        {activeSession.title}
+                      </span>
+                    ) : null}
                   </div>
                   <div className="mt-0.5 flex items-center gap-1 text-[11px] text-fog">
                     <ShieldCheck size={11} />
@@ -681,11 +894,39 @@ export function AgentPage({
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setHistoryOpen((value) => !value)}
+                    aria-label="Chat history"
+                    aria-expanded={historyOpen}
+                    title="Chat history"
+                    className={
+                      "grid h-7 w-7 place-items-center rounded-md transition-colors " +
+                      (historyOpen
+                        ? "bg-graphite text-mist"
+                        : "text-fog hover:bg-white/5 hover:text-mist")
+                    }
+                  >
+                    <History size={15} />
+                  </button>
+                  {historyOpen ? (
+                    <HistoryDropdown
+                      sessions={sortedSessions}
+                      activeId={activeId}
+                      onSelect={selectSession}
+                      onNewChat={startNewChat}
+                      onRename={renameSession}
+                      onDelete={deleteSession}
+                      onClose={() => setHistoryOpen(false)}
+                    />
+                  ) : null}
+                </div>
                 <button
                   type="button"
-                  onClick={newTask}
-                  aria-label="New task"
-                  title="New task"
+                  onClick={startNewChat}
+                  aria-label="New chat"
+                  title="New chat"
                   className="grid h-7 w-7 place-items-center rounded-md text-fog transition-colors hover:bg-white/5 hover:text-mist"
                 >
                   <Plus size={15} />
@@ -753,7 +994,9 @@ export function AgentPage({
             )}
 
             <MentionComposer
+              key={`${providerId || "unconfigured"}:${agentId ?? "creating"}`}
               onAbort={handleAbort}
+              onTextChange={setInputText}
               busy={running}
               awaitingConfirm={awaitingConfirm}
               disabled={!agentId}

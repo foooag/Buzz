@@ -32,6 +32,7 @@ type MentionAdapter = NonNullable<
 
 type MentionComposerProps = {
   onAbort?: () => void;
+  onTextChange?: (text: string) => void;
   busy: boolean;
   awaitingConfirm: boolean;
   disabled?: boolean;
@@ -41,6 +42,7 @@ type MentionComposerProps = {
 
 export function MentionComposer({
   onAbort,
+  onTextChange,
   busy,
   awaitingConfirm,
   disabled,
@@ -53,13 +55,17 @@ export function MentionComposer({
     () => new Map(hosts.map((host) => [host.id, host])),
     [hosts],
   );
-  const { setText } = unstable_useComposerInput({
+  const { value, setText } = unstable_useComposerInput({
     disabled: disabled || awaitingConfirm,
   });
 
   useEffect(() => {
     if (draft) setText(draft.text);
   }, [draft, setText]);
+
+  useEffect(() => {
+    onTextChange?.(value);
+  }, [value, onTextChange]);
 
   return (
     <ComposerPrimitive.Unstable_TriggerPopoverRoot>

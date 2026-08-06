@@ -86,6 +86,7 @@ export function App({
   const [changedHostKeySession, setChangedHostKeySession] = useState<string | null>(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [preferencesSection, setPreferencesSection] = useState<SectionId | undefined>(undefined);
+  const [providerRevision, setProviderRevision] = useState(0);
   const sshSessionIds = useRef(new Set<string>());
   const [themeId, setThemeId] = useState(
     () => localStorage.getItem("terminus.terminalTheme") ?? defaultTerminalThemeId,
@@ -348,6 +349,7 @@ export function App({
           agentClient={agent}
           providerApi={aiConfig}
           inventoryApi={inventory}
+          providerRevision={providerRevision}
           onConnectFromServers={() => setDestination("servers")}
           onRequestPreferences={openAiPreferences}
         />
@@ -370,7 +372,12 @@ export function App({
     />
     <PreferencesWindow
       open={preferencesOpen}
-      onClose={() => setPreferencesOpen(false)}
+      onClose={() => {
+        setPreferencesOpen(false);
+        // Bump so AgentPage re-fetches the provider list — it may have changed
+        // while preferences were open (e.g. a provider was just configured).
+        setProviderRevision((value) => value + 1);
+      }}
       inventoryApi={inventory}
       sftpApi={sftp}
       sshApi={ssh}
