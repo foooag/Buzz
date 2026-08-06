@@ -40,6 +40,44 @@ describe("MultiHostAgentRuntime", () => {
     expect(runtime.activeCount()).toBe(0);
   });
 
+  it("streams reasoning blocks to the AgentPage wire events", async () => {
+    const runtime = new MultiHostAgentRuntime(
+      modelRuntime([reasoningResponse()]),
+      historyRepository(),
+      allowRisk(),
+      fakeHeadless(),
+      resolver(),
+    );
+    const { agentId } = runtime.create("owner-1", {
+      providerConfigId: "cfg-1",
+    });
+    const events: Array<{ type: string; [key: string]: unknown }> = [];
+
+    const completed = await runtime.prompt(
+      "owner-1",
+      agentId,
+      "think first",
+      {},
+      (event) => events.push(event),
+    );
+
+    expect(events.filter((event) => event.type === "messageUpdate").at(-1))
+      .toMatchObject({
+        message: {
+          content: [
+            { type: "thinking", thinking: "1.70" },
+            { type: "text", text: "Done" },
+          ],
+        },
+      });
+    expect(completed.messages.at(-1)).toMatchObject({
+      content: [
+        { type: "thinking", thinking: "1.70" },
+        { type: "text", text: "Done" },
+      ],
+    });
+  });
+
   it("rejects a directive whose host is not in the turn targets", async () => {
     const runtime = new MultiHostAgentRuntime(
       modelRuntime([]),
@@ -255,6 +293,56 @@ function textResponse(text: string): AssistantMessageEvent[] {
     { type: "text_delta", contentIndex: 0, delta: text, partial },
     { type: "text_end", contentIndex: 0, content: text, partial },
     { type: "done", reason: "stop", message: partial },
+  ];
+}
+
+function reasoningResponse(): AssistantMessageEvent[] {
+  const start = assistantMessage([], "pending");
+  const firstThinking = assistantMessage([
+    { type: "thinking", thinking: "1." },
+  ], "pending");
+  const completeThinking = assistantMessage([
+    { type: "thinking", thinking: "1.70" },
+  ], "pending");
+  const complete = assistantMessage([
+    { type: "thinking", thinking: "1.70" },
+    { type: "text", text: "Done" },
+  ]);
+  return [
+    { type: "start", partial: start },
+    { type: "thinking_start", contentIndex: 0, partial: start },
+    {
+      type: "thinking_delta",
+      contentIndex: 0,
+      delta: "1.",
+      partial: firstThinking,
+    },
+    {
+      type: "thinking_delta",
+      contentIndex: 0,
+      delta: "70",
+      partial: completeThinking,
+    },
+    {
+      type: "thinking_end",
+      contentIndex: 0,
+      content: "1.70",
+      partial: completeThinking,
+    },
+    { type: "text_start", contentIndex: 1, partial: completeThinking },
+    {
+      type: "text_delta",
+      contentIndex: 1,
+      delta: "Done",
+      partial: complete,
+    },
+    {
+      type: "text_end",
+      contentIndex: 1,
+      content: "Done",
+      partial: complete,
+    },
+    { type: "done", reason: "stop", message: complete },
   ];
 }
 

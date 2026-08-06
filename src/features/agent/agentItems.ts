@@ -28,6 +28,7 @@ export type MessageItem = {
   id: string;
   kind: "user" | "assistant";
   text: string;
+  thinking?: string;
   streaming?: boolean;
 };
 

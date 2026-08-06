@@ -248,26 +248,19 @@ export function AgentPage({
 
   const pushMessageItem = useCallback((message: AgentMessage) => {
     if (message.role !== "assistant") return;
-    const text = message.content
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("")
-      .trim();
+    const { text, thinking } = assistantContent(message);
     setItems((current) => [...current, {
       id: nextId("msg"),
       kind: "assistant",
       text,
+      thinking,
       streaming: true,
     }]);
   }, []);
 
   const patchAssistant = useCallback((message: AgentMessage, streaming: boolean) => {
     if (message.role !== "assistant") return;
-    const text = message.content
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("")
-      .trim();
+    const { text, thinking } = assistantContent(message);
     setItems((current) => {
       const index = findLastIndex(current, (item) => item.kind === "assistant");
       if (index === -1) {
@@ -275,12 +268,13 @@ export function AgentPage({
           id: nextId("msg"),
           kind: "assistant",
           text,
+          thinking,
           streaming,
         }];
       }
       return current.map((item, itemIndex) =>
         itemIndex === index
-          ? { ...item, text, streaming }
+          ? { ...item, text, thinking, streaming }
           : item,
       );
     });
@@ -351,15 +345,20 @@ export function AgentPage({
   const handleToolEnd = useCallback((event: Extract<AgentEvent, { type: "toolEnd" }>) => {
     const details = resultDetails(event.result);
     const code = errorCode(event.result);
+    const failed = event.isError || isNonZeroExit(details?.exitCode);
     const credentialMissing =
-      event.isError && code === "AGENT_HOST_CREDENTIAL_MISSING";
-    const declined = event.isError && code === "AGENT_DECLINED";
+      failed && code === "AGENT_HOST_CREDENTIAL_MISSING";
+    const declined = failed && code === "AGENT_DECLINED";
+    const failureMessage = failed
+      ? toolFailureMessage(event.result, details)
+      : undefined;
+    const output = commandOutput(details) ?? failureMessage;
     setItems((current) =>
       current.map((item) => {
         if (item.kind !== "tool" || item.toolCallId !== event.toolCallId) {
           return item;
         }
-        const status: ToolStatus = event.isError
+        const status: ToolStatus = failed
           ? credentialMissing
             ? "credential-missing"
             : declined
@@ -371,8 +370,8 @@ export function AgentPage({
           status,
           exitCode: details?.exitCode ?? null,
           durationMs: Date.now() - (item.startedAt ?? Date.now()),
-          output: details?.stdout ?? errorMessage(event.result),
-          errorMessage: event.isError ? errorMessage(event.result) : undefined,
+          output,
+          errorMessage: failureMessage,
         };
       }),
     );
@@ -382,14 +381,14 @@ export function AgentPage({
           command.id === event.toolCallId
             ? {
                 ...command,
-                status: event.isError ? "error" as const : "ok" as const,
+                status: failed ? "error" as const : "ok" as const,
                 awaitingConfirmation: false,
-                error: event.isError
+                error: failed
                   ? credentialMissing
                     ? "Connection refused — no saved credential."
                     : declined
                       ? "Declined by user."
-                      : errorMessage(event.result)
+                      : failureMessage
                   : undefined,
               }
             : command,
@@ -442,9 +441,44 @@ export function AgentPage({
   const applySnapshot = useCallback((snapshot: AgentSnapshot) => {
     setRunning(snapshot.status !== "idle");
     setError(snapshot.errorMessage);
+    const latestAssistantIndex = findLastIndex(
+      snapshot.messages,
+      (message) => message.role === "assistant",
+    );
+    const latestUserIndex = findLastIndex(
+      snapshot.messages,
+      (message) => message.role === "user",
+    );
+    if (latestAssistantIndex <= latestUserIndex) return;
+    const latestAssistant = snapshot.messages[latestAssistantIndex];
+    if (latestAssistant?.role !== "assistant") return;
+    const { text, thinking } = assistantContent(latestAssistant);
+    if (!text && !thinking) return;
+    setItems((current) => {
+      const lastUserIndex = findLastIndex(current, (item) => item.kind === "user");
+      const assistantIndex = findLastIndex(
+        current,
+        (item) => item.kind === "assistant",
+      );
+      if (assistantIndex > lastUserIndex) {
+        return current.map((item, index) =>
+          index === assistantIndex
+            ? { ...item, text, thinking, streaming: false }
+            : item,
+        );
+      }
+      return [...current, {
+        id: nextId("msg"),
+        kind: "assistant",
+        text,
+        thinking,
+        streaming: false,
+      }];
+    });
   }, []);
 
   const applyEvent = useCallback((event: AgentEvent) => {
+    debugAgentMessage("receive", event);
     switch (event.type) {
       case "agentStart":
         setRunning(true);
@@ -472,7 +506,7 @@ export function AgentPage({
         handleConfirmation(event.confirmation);
         return;
       case "agentEnd":
-        setRunning(false);
+        applySnapshot(event.snapshot);
         setAwaitingConfirm(false);
         setConfirmation(undefined);
         setPhase(abortedRef.current ? "aborted" : "done");
@@ -501,7 +535,6 @@ export function AgentPage({
           );
           abortedRef.current = false;
         }
-        setError(event.snapshot.errorMessage);
         return;
       case "historySaveFailed":
         setError("The agent session history could not be saved.");
@@ -510,6 +543,7 @@ export function AgentPage({
         return;
     }
   }, [
+    applySnapshot,
     handleConfirmation,
     handleToolEnd,
     handleToolStart,
@@ -547,6 +581,11 @@ export function AgentPage({
       ]),
     );
     const targets = expandTargets(directives, groupHosts);
+    debugAgentMessage("send", {
+      agentId: activeAgentId,
+      text: trimmed,
+      targets,
+    });
     try {
       const snapshot = await agentClient.prompt(
         activeAgentId,
@@ -554,10 +593,14 @@ export function AgentPage({
         targets,
         applyEvent,
       );
+      debugAgentMessage("complete", snapshot);
       applySnapshot(snapshot);
-    } catch {
+    } catch (caught) {
       setRunning(false);
-      setError("The agent request failed.");
+      debugAgentMessage("error", caught);
+      setError(caught instanceof Error && caught.message.trim()
+        ? caught.message
+        : "The agent request failed.");
     } finally {
       sendingRef.current = false;
     }
@@ -1032,7 +1075,7 @@ function AgentMessageView({
   onToggleExpand: (id: string) => void;
 }) {
   const buzz = message.metadata?.custom?.buzz as
-    | { kind?: string; card?: ToolCardItem }
+    | { kind?: string; card?: ToolCardItem; thinking?: string }
     | undefined;
   if (buzz?.kind === "tool" && buzz.card) {
     return <AgentCommandCard card={buzz.card} onToggleExpand={onToggleExpand} />;
@@ -1053,26 +1096,65 @@ function AgentMessageView({
   }
   if (message.role === "assistant") {
     const text = threadMessageText(message.content);
-    if (!text) return null;
+    const thinking = buzz?.kind === "assistant" ? buzz.thinking ?? "" : "";
+    if (!text && !thinking) return null;
     const streaming = message.status?.type === "running";
     return (
       <MessagePrimitive.Root className="rise-in flex gap-2.5">
         <AgentAvatar tone="ai" />
         <div className="min-w-0 flex-1 pt-0.5">
           <div className="text-[11px] font-medium text-acid-lime/90">Agent</div>
-          <div
-            className={
-              "mt-0.5 whitespace-pre-wrap text-[13px] leading-relaxed text-mist " +
-              (streaming ? "stream-caret" : "")
-            }
-          >
-            {text}
-          </div>
+          {thinking ? (
+            <AgentThinkingBlock
+              text={thinking}
+              streaming={streaming && !text}
+            />
+          ) : null}
+          {text ? (
+            <div
+              className={
+                "mt-0.5 whitespace-pre-wrap text-[13px] leading-relaxed text-mist " +
+                (streaming ? "stream-caret" : "")
+              }
+            >
+              {text}
+            </div>
+          ) : null}
         </div>
       </MessagePrimitive.Root>
     );
   }
   return null;
+}
+
+function AgentThinkingBlock({
+  text,
+  streaming,
+}: {
+  text: string;
+  streaming: boolean;
+}) {
+  const ref = useRef<HTMLDetailsElement>(null);
+
+  useEffect(() => {
+    if (ref.current && !ref.current.open) ref.current.open = true;
+  }, [text]);
+
+  return (
+    <details ref={ref} className="group mt-1 text-fog" open>
+      <summary className="cursor-pointer select-none text-[11px]">
+        Thinking
+      </summary>
+      <div
+        className={
+          "mt-1 whitespace-pre-wrap break-words border-l border-graphite pl-3 text-[12px] leading-relaxed " +
+          (streaming ? "stream-caret" : "")
+        }
+      >
+        {text}
+      </div>
+    </details>
+  );
 }
 
 function AgentAvatar({ tone, label }: { tone?: "ai"; label?: string }) {
@@ -1257,6 +1339,14 @@ function itemToThreadMessage(item: AgentItem): ThreadMessageLike {
       status: item.streaming
         ? { type: "running" }
         : { type: "complete", reason: "stop" },
+      metadata: {
+        custom: {
+          buzz: {
+            kind: "assistant",
+            thinking: item.thinking ?? "",
+          },
+        },
+      },
     };
   }
   return {
@@ -1264,6 +1354,24 @@ function itemToThreadMessage(item: AgentItem): ThreadMessageLike {
     id: item.id,
     content: [],
     metadata: { custom: { buzz: { kind: "tool", card: item } } },
+  };
+}
+
+function assistantContent(message: Extract<AgentMessage, { role: "assistant" }>): {
+  text: string;
+  thinking: string;
+} {
+  return {
+    text: message.content
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("")
+      .trim(),
+    thinking: message.content
+      .filter((part) => part.type === "thinking")
+      .map((part) => part.thinking)
+      .join("")
+      .trim(),
   };
 }
 
@@ -1279,16 +1387,46 @@ function findLastIndex<T>(
 
 function resultDetails(
   result: unknown,
-): { stdout?: string; exitCode?: number | null } | undefined {
+): { stdout?: string; stderr?: string; exitCode?: number | null } | undefined {
   if (!result || typeof result !== "object") return undefined;
   const details = (result as { details?: unknown }).details;
   if (!details || typeof details !== "object") return undefined;
-  const value = details as { stdout?: unknown; exitCode?: unknown };
+  const value = details as {
+    stdout?: unknown;
+    stderr?: unknown;
+    exitCode?: unknown;
+  };
   return {
     stdout: typeof value.stdout === "string" ? value.stdout : undefined,
+    stderr: typeof value.stderr === "string" ? value.stderr : undefined,
     exitCode:
       typeof value.exitCode === "number" ? value.exitCode : null,
   };
+}
+
+function commandOutput(
+  details: ReturnType<typeof resultDetails>,
+): string | undefined {
+  if (!details) return undefined;
+  const parts = [details.stdout, details.stderr]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .map((value) => value.trimEnd());
+  return parts.length > 0 ? parts.join("\n") : undefined;
+}
+
+function isNonZeroExit(exitCode: number | null | undefined): boolean {
+  return typeof exitCode === "number" && exitCode !== 0;
+}
+
+function toolFailureMessage(
+  result: unknown,
+  details: ReturnType<typeof resultDetails>,
+): string {
+  return commandOutput(details)
+    ?? errorMessage(result)
+    ?? (typeof details?.exitCode === "number"
+      ? `Command exited with code ${details.exitCode}.`
+      : "The command failed without an error message.");
 }
 
 function errorCode(result: unknown): string | undefined {
@@ -1312,4 +1450,45 @@ function formatDuration(ms: number): string {
   if (ms < 1_000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1_000).toFixed(1)}s`;
   return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1_000)}s`;
+}
+
+function debugAgentMessage(
+  direction: "send" | "receive" | "complete" | "error",
+  value: unknown,
+): void {
+  if (import.meta.env.MODE !== "development") return;
+  console.debug(`[agent-page:${direction}]`, redactAgentDebugValue(value));
+}
+
+function redactAgentDebugValue(value: unknown): unknown {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: redactAgentDebugText(value.message),
+    };
+  }
+  try {
+    return JSON.parse(JSON.stringify(value, (key, nested) => {
+      if (isSensitiveDebugKey(key)) return "[redacted]";
+      return typeof nested === "string"
+        ? redactAgentDebugText(nested)
+        : nested;
+    })) as unknown;
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+function isSensitiveDebugKey(key: string): boolean {
+  return /^(apiKey|password|passphrase|privateKey|credential|credentialRef|secret|token|authorization|thinkingSignature|thoughtSignature)$/i
+    .test(key);
+}
+
+function redactAgentDebugText(value: string): string {
+  return value
+    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g,
+      "[redacted private key]")
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[redacted api key]")
+    .replace(/\b(password|passphrase|api[_-]?key|token|secret)\s*[:=]\s*\S+/gi,
+      "$1=[redacted]");
 }

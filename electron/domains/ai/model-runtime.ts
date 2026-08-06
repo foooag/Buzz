@@ -37,6 +37,12 @@ export class AiModelRuntime {
       return failedStream(fallbackModel(), safeMessage(error));
     }
     const model = createModel(config);
+    debugModelMessage("input", {
+      providerConfigId,
+      model: { provider: model.provider, id: model.id, api: model.api },
+      context,
+      options: publicStreamOptions(options),
+    });
     try {
       const source = createStream(config, context, {
         ...options,
@@ -149,10 +155,14 @@ function sanitizedStream(
   void (async () => {
     try {
       for await (const event of source) {
-        output.push(sanitizeEvent(event, apiKey));
+        const sanitized = sanitizeEvent(event, apiKey);
+        debugModelMessage("output", sanitized);
+        output.push(sanitized);
       }
     } catch (error) {
-      output.push(errorEvent(model, safeMessage(error, apiKey)));
+      const event = errorEvent(model, safeMessage(error, apiKey));
+      debugModelMessage("output", event);
+      output.push(event);
     }
   })();
   return output;
@@ -171,7 +181,11 @@ function sanitizeEvent(event: AssistantMessageEvent, apiKey?: string): Assistant
 
 function failedStream(model: Model<string>, message: string): AssistantMessageEventStream {
   const output = createAssistantMessageEventStream();
-  queueMicrotask(() => output.push(errorEvent(model, message)));
+  queueMicrotask(() => {
+    const event = errorEvent(model, message);
+    debugModelMessage("output", event);
+    output.push(event);
+  });
   return output;
 }
 
@@ -228,4 +242,50 @@ function safeMessage(error: unknown, apiKey?: string): string {
       : "The AI provider request failed.";
   if (apiKey) message = message.split(apiKey).join("[redacted]");
   return message.slice(0, 1_000);
+}
+
+function debugModelMessage(direction: "input" | "output", value: unknown): void {
+  if (!agentDebugEnabled()) return;
+  console.debug(`[agent-runtime:model:${direction}]`, redactModelDebugValue(value));
+}
+
+function agentDebugEnabled(): boolean {
+  return process.defaultApp === true || process.env.BUZZ_AGENT_DEBUG === "1";
+}
+
+function publicStreamOptions(options: SimpleStreamOptions): Record<string, unknown> {
+  return {
+    ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
+    ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+    ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.signal ? { aborted: options.signal.aborted } : {}),
+  };
+}
+
+function redactModelDebugValue(value: unknown): unknown {
+  try {
+    return JSON.parse(JSON.stringify(value, (key, nested) => {
+      if (isSensitiveModelDebugKey(key)) return "[redacted]";
+      return typeof nested === "string"
+        ? redactModelDebugText(nested)
+        : nested;
+    })) as unknown;
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+function isSensitiveModelDebugKey(key: string): boolean {
+  return /^(apiKey|password|passphrase|privateKey|credential|credentialRef|secret|token|authorization|thinkingSignature|thoughtSignature)$/i
+    .test(key);
+}
+
+function redactModelDebugText(value: string): string {
+  return value
+    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g,
+      "[redacted private key]")
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[redacted api key]")
+    .replace(/\b(password|passphrase|api[_-]?key|token|secret)\s*[:=]\s*\S+/gi,
+      "$1=[redacted]");
 }

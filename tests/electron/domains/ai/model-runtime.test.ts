@@ -3,7 +3,11 @@ import { AiModelRuntime } from "../../../../electron/domains/ai/model-runtime";
 import type { AiConfigRepository } from "../../../../electron/domains/ai/repository";
 import type { ResolvedAiProviderConfig } from "../../../../electron/domains/ai/types";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
 describe("Electron AI model runtime", () => {
   it("probes an OpenAI-compatible endpoint through the approved Pi runtime", async () => {
@@ -38,6 +42,37 @@ describe("Electron AI model runtime", () => {
       id: "model-test",
       provider: "terminus:provider-1",
     });
+  });
+
+  it("prints redacted model input and streamed output when debugging is enabled", async () => {
+    vi.stubEnv("BUZZ_AGENT_DEBUG", "1");
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn(async () => response(["hello"])));
+    const resolved = config();
+    const repository = { getResolved: vi.fn(() => resolved) } as unknown as AiConfigRepository;
+    const runtime = new AiModelRuntime(repository);
+    const stream = runtime.stream(resolved.public.id, {
+      messages: [{
+        role: "user",
+        content: "apiKey=sk-must-not-be-logged",
+        timestamp: Date.now(),
+      }],
+    });
+
+    for await (const _event of stream) {
+      // Consume the complete stream so every model output event is logged.
+    }
+
+    expect(debug).toHaveBeenCalledWith(
+      "[agent-runtime:model:input]",
+      expect.any(Object),
+    );
+    expect(debug).toHaveBeenCalledWith(
+      "[agent-runtime:model:output]",
+      expect.any(Object),
+    );
+    expect(JSON.stringify(debug.mock.calls)).not.toContain("sk-must-not-be-logged");
+    expect(JSON.stringify(debug.mock.calls)).toContain("apiKey=[redacted]");
   });
 });
 

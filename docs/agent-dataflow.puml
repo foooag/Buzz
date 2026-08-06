@@ -1,0 +1,79 @@
+@startuml agent-dataflow
+
+hide stereotype
+skinparam shadowing false
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 13
+skinparam classFontSize 13
+skinparam classAttributeFontSize 11
+skinparam classHeaderBackgroundColor #0B0E14
+skinparam classBackgroundColor #0B0E14
+skinparam classBorderColor #3B4254
+skinparam arrowColor #8892A6
+skinparam noteBackgroundColor #10141D
+skinparam noteBorderColor #3B4254
+skinparam rectangleBackgroundColor #0B0E14
+skinparam rectangleBorderColor #3B4254
+skinparam rectangleBorderThickness 2
+skinparam packageBackgroundColor #08090D
+skinparam packageBorderColor #2A3040
+skinparam sequenceMessageAlign center
+
+title <b>Agent 数据流 — 从提示词到渲染</b>
+
+participant "User" as USER
+participant "MentionComposer\ntyped text" as COMPOSER
+participant "AgentPage\nstate + useExternalStoreRuntime" as PAGE
+participant "agentApi\n(renderer)" as API
+participant "Electron main\nMultiHostAgentRuntime" as MAIN
+participant "pi-agent-core\nAgent + model" as CORE
+participant "SSH headless\nhost exec" as SSH
+
+== 输入：prompt 流 ==
+
+USER -> COMPOSER: @server + 描述任务
+COMPOSER -> PAGE: onTextChange (inputText)
+
+PAGE -> PAGE: parseDirectives + expandTargets\n(resolveMentionLabel / inventory groups)
+
+PAGE -> API: agentClient.prompt(agentId, text, targets, applyEvent)
+activate API
+API -> MAIN: IPC "agent_prompt" (finite stream)
+activate MAIN
+MAIN -> CORE: agent.prompt(text)
+
+== 输出：事件流 ==
+
+CORE --> MAIN: agent events
+MAIN -> MAIN: #handleEvent → wireAgentEvent\n(agentStart / messageStart\nmessageUpdate / messageEnd\ntoolStart / toolEnd / agentEnd)
+MAIN --> API: streamed AgentEvent
+API --> PAGE: applyEvent(event)
+deactivate API
+
+PAGE -> PAGE: applyEvent reducer
+activate PAGE
+PAGE -> PAGE: pushMessageItem / patchAssistant\n(assistant 文本 → items)
+PAGE -> PAGE: handleToolStart\n(tool 卡片 → items + hosts)
+PAGE -> MAIN: agentClient.decideTool(...)\n(确认回执，反向)
+PAGE -> PAGE: handleConfirmation\n(awaitingConfirm / phase)
+PAGE -> PAGE: persistLiveIntoSession\n(sessions + localStorage)
+PAGE -> PAGE: runtime = useExternalStoreRuntime\n(messages: items → ThreadMessageLike)
+PAGE -> PAGE: itemToThreadMessage\n(message → custom buzz tool card)
+PAGE -> PAGE: ThreadPrimitive / AgentMessageView\n渲染 items
+PAGE -> PAGE: ProgressPanel 渲染 hosts
+deactivate PAGE
+
+CORE -> CORE: tool host_exec\n(risk.assess → 需确认/放行)
+CORE -> SSH: headless.exec(hostId, command, cwd)
+SSH --> CORE: stdout / exitCode / error
+CORE --> MAIN: tool_end 结果
+MAIN --> PAGE: agentEnd (snapshot)
+
+== 会话生命周期（localStorage） ==
+
+PAGE -> PAGE: startNewChat / selectSession\n/ renameSession / deleteSession
+PAGE -> PAGE: saveSessionsToDisk / loadSessionsFromDisk
+PAGE -> PAGE: restartAgent\n(close 旧 agent → create 新 agent)
+PAGE -> API: agentClient.create / close / abort
+
+@enduml

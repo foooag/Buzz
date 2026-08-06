@@ -1,8 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentPage } from "@/features/agent/AgentPage";
-import type { AgentClient } from "@/features/agent/agentTypes";
+import type { AgentClient, AgentMessage } from "@/features/agent/agentTypes";
 import { createDeterministicAiConfigApi } from "@/features/ai/deterministicAiApi";
 import type { AiConfigApi, AiProviderConfig } from "@/features/ai/aiConfigTypes";
 import { useInventoryStore } from "@/features/inventory/inventoryStore";
@@ -94,6 +94,11 @@ beforeEach(() => {
   useInventoryStore.getState().setResources([], [], []);
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
+
 describe("AgentPage", () => {
   it("creates an agent and renders the prototype composer", async () => {
     const client = fakeClient();
@@ -121,6 +126,201 @@ describe("AgentPage", () => {
       "uptime",
       [],
       expect.any(Function),
+    );
+  });
+
+  it("prints development send, receive, and completion messages", async () => {
+    vi.stubEnv("MODE", "development");
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    const client = fakeClient();
+    vi.mocked(client.prompt).mockImplementation(async (
+      _agentId,
+      _text,
+      _targets,
+      onEvent,
+    ) => {
+      onEvent({ type: "agentStart" });
+      return {
+        agentId: "a1",
+        providerConfigId: "cfg-1",
+        status: "idle",
+        hosts: [],
+        messages: [],
+      };
+    });
+    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
+    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
+
+    await userEvent.type(screen.getByLabelText("Message agent"), "uptime{Enter}");
+
+    await waitFor(() => expect(debug).toHaveBeenCalledWith(
+      "[agent-page:complete]",
+      expect.any(Object),
+    ));
+    expect(debug).toHaveBeenCalledWith("[agent-page:send]", expect.any(Object));
+    expect(debug).toHaveBeenCalledWith("[agent-page:receive]", { type: "agentStart" });
+  });
+
+  it("shows stderr and marks a non-zero command exit as failed", async () => {
+    seedInventory();
+    const client = fakeClient();
+    vi.mocked(client.prompt).mockImplementation(async (
+      _agentId,
+      _text,
+      _targets,
+      onEvent,
+    ) => {
+      onEvent({
+        type: "toolStart",
+        toolCallId: "call-1",
+        toolName: "host_exec",
+        args: { hostId: "h1", command: "docker ps" },
+      });
+      onEvent({
+        type: "toolEnd",
+        toolCallId: "call-1",
+        toolName: "host_exec",
+        result: {
+          details: {
+            stdout: "",
+            stderr: "permission denied while connecting to Docker",
+            exitCode: 1,
+          },
+        },
+        isError: false,
+      });
+      return {
+        agentId: "a1",
+        providerConfigId: "cfg-1",
+        status: "idle",
+        hosts: [],
+        messages: [],
+      };
+    });
+    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
+    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
+
+    await userEvent.type(screen.getByLabelText("Message agent"), "docker ps{Enter}");
+
+    const errorMessages = await screen.findAllByText(
+      "permission denied while connecting to Docker",
+    );
+    expect(errorMessages).toHaveLength(2);
+    errorMessages.forEach((message) => expect(message).toBeVisible());
+    expect(screen.getByText("failed")).toBeVisible();
+    expect(screen.getByText("error")).toBeVisible();
+  });
+
+  it("renders reasoning and text while an assistant message is streaming", async () => {
+    const client = fakeClient();
+    let emit: Parameters<AgentClient["prompt"]>[3] | undefined;
+    let completePrompt: (() => void) | undefined;
+    vi.mocked(client.prompt).mockImplementation((
+      _agentId,
+      _text,
+      _targets,
+      onEvent,
+    ) => new Promise((resolve) => {
+      emit = onEvent;
+      completePrompt = () => resolve({
+        agentId: "a1",
+        providerConfigId: "cfg-1",
+        status: "idle",
+        hosts: [],
+        messages: [],
+      });
+    }));
+    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
+    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
+
+    const submission = userEvent.type(
+      screen.getByLabelText("Message agent"),
+      "inspect containers{Enter}",
+    );
+    await waitFor(() => expect(emit).toBeDefined());
+
+    act(() => {
+      emit?.({
+        type: "messageStart",
+        message: assistantMessage([]),
+      });
+      emit?.({
+        type: "messageUpdate",
+        message: assistantMessage([
+          { type: "thinking", thinking: "1." },
+        ]),
+      });
+    });
+    expect(await screen.findByText("1.")).toBeVisible();
+
+    act(() => {
+      emit?.({
+        type: "messageUpdate",
+        message: assistantMessage([
+          { type: "thinking", thinking: "1.70" },
+          { type: "text", text: "正在检查容器" },
+        ]),
+      });
+    });
+    expect(await screen.findByText("1.70")).toBeVisible();
+    expect(screen.getByText("正在检查容器")).toBeVisible();
+
+    act(() => {
+      emit?.({
+        type: "messageEnd",
+        message: assistantMessage([
+          { type: "thinking", thinking: "1.70" },
+          { type: "text", text: "正在检查容器" },
+        ], "stop"),
+      });
+      completePrompt?.();
+    });
+    await submission;
+  });
+
+  it("renders authoritative thinking and text from the prompt snapshot", async () => {
+    const client = fakeClient();
+    vi.mocked(client.prompt).mockResolvedValue({
+      agentId: "a1",
+      providerConfigId: "cfg-1",
+      status: "idle",
+      hosts: [],
+      messages: [
+        {
+          role: "user",
+          content: "inspect containers",
+          timestamp: Date.now(),
+        },
+        assistantMessage([
+          { type: "thinking", thinking: "读取真实运行时状态" },
+          { type: "text", text: "Docker 服务运行正常" },
+        ], "stop"),
+      ],
+    });
+    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
+    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
+
+    await userEvent.type(
+      screen.getByLabelText("Message agent"),
+      "inspect containers{Enter}",
+    );
+
+    expect(await screen.findByText("读取真实运行时状态")).toBeVisible();
+    expect(screen.getByText("Docker 服务运行正常")).toBeVisible();
+  });
+
+  it("shows the concrete error when an agent request rejects", async () => {
+    const client = fakeClient();
+    vi.mocked(client.prompt).mockRejectedValue(
+      new Error("AI provider returned 429: rate limit exceeded"),
+    );
+    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
+    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
+
+    await userEvent.type(screen.getByLabelText("Message agent"), "uptime{Enter}");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "AI provider returned 429: rate limit exceeded",
     );
   });
 
@@ -208,3 +408,15 @@ describe("AgentPage", () => {
     expect(screen.queryByText("No provider configured")).toBeNull();
   });
 });
+
+function assistantMessage(
+  content: Extract<AgentMessage, { role: "assistant" }>["content"],
+  stopReason: Extract<AgentMessage, { role: "assistant" }>["stopReason"] = "pending",
+): Extract<AgentMessage, { role: "assistant" }> {
+  return {
+    role: "assistant",
+    content,
+    stopReason,
+    timestamp: Date.now(),
+  };
+}

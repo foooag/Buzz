@@ -1,100 +1,144 @@
-# Buzz
+<div align="center">
+  <a href="https://buzz.nex.show">
+    <img src="./assets/icons/icon.svg" width="96" height="96" alt="Buzz logo" />
+  </a>
 
-A secure Electron desktop client for local terminals and remote SSH, SFTP, port
-forwarding, and AI-assisted shell sessions.
+  <h1>Buzz</h1>
 
-Buzz keeps your credentials, hosts, known-host keys, AI keys, and AI history
-encrypted at rest with AES-256-GCM, runs the renderer fully sandboxed, and gates
-every AI shell action behind a risk check in the main process.
+  <p><strong>Your infrastructure. One secure workspace.</strong></p>
 
-## Features
+  <p>
+    Local terminals, SSH, SFTP, port forwarding, and an AI shell agent<br />
+    in one secure, open-source desktop app.
+  </p>
 
-- **Local terminals** — native PTY-backed shell sessions via `node-pty` and `xterm.js`.
-- **Remote SSH** — connect to servers with password or private-key auth, encrypted
-  credential vault, and explicit unknown-host trust (changed keys fail closed).
-- **SFTP** — browse remote file systems, transfer files, resolve conflicts, and open
-  files with your system's default apps.
-- **Port forwarding** — local/remote forward rules per host with start/stop control.
-- **AI-assisted shell** — ask an agent to inspect and operate a session. Every command
-  passes a main-process risk gate; high-risk actions require a short-lived, single-use
-  confirmation token bound to the exact task, session, host, CWD, and command.
-  Works with Anthropic, OpenAI, DeepSeek, Zhipu GLM, and Moonshot Kimi endpoints.
-- **Secure at rest** — inventory fields, SSH credentials, known-host keys, AI API keys,
-  and AI history are encrypted with AES-256-GCM. The 256-bit master key is protected
-  by an app-managed AES-256-GCM key; neither macOS Keychain nor `safeStorage` is used.
+  <p>
+    <a href="https://buzz.nex.show"><img src="https://img.shields.io/badge/Website-buzz.nex.show-E4F222?style=flat-square&amp;labelColor=08090A" alt="Buzz official website" /></a>
+    <a href="https://github.com/foooag/Buzz/actions/workflows/release.yml"><img src="https://github.com/foooag/Buzz/actions/workflows/release.yml/badge.svg" alt="Release build status" /></a>
+    <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-8B8FFF?style=flat-square&amp;labelColor=08090A" alt="Apache 2.0 license" /></a>
+    <img src="https://img.shields.io/badge/Platforms-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-D0D6E0?style=flat-square&amp;labelColor=08090A" alt="Supported platforms: macOS, Windows, and Linux" />
+  </p>
 
-## Security model
+  <p>
+    <a href="https://buzz.nex.show"><strong>Website</strong></a>
+    ·
+    <a href="https://github.com/foooag/Buzz/releases"><strong>Download</strong></a>
+    ·
+    <a href="./CONTRIBUTING.md"><strong>Contributing</strong></a>
+  </p>
+</div>
 
-- Renderer windows keep `sandbox`, `contextIsolation`, and `webSecurity` enabled, with
-  `nodeIntegration` disabled.
-- The renderer never receives Node access. `src/app/ipc.ts` is its only desktop command
-  seam; Electron validates every command against a static allowlist and routes it to a
-  Zod-validated domain handler.
-- Provider and transport errors are sanitized. Credentials, raw host keys, private keys,
-  decrypted vault fields, prompts, and API keys are never logged.
-- The encryption key and protected data stay in the Electron user-data directory with
-  owner-only file permissions and never cross the IPC boundary.
+<p align="center">
+  <img src="./designs/terminal-ai-mode/sftp-preview.png" alt="Buzz secure SFTP workspace preview" />
+</p>
 
-## Requirements
+## One workspace for local and remote operations
 
-- Node.js 22+
-- pnpm 10+
-- Platform support: macOS, Linux, Windows
+Buzz brings daily shell work and remote infrastructure into a single desktop workspace. Credentials, known-host keys, AI provider keys, inventory fields, and AI history stay encrypted at rest, while every AI-proposed command passes through a risk gate in the Electron main process.
+
+| | Capability | What it gives you |
+| --- | --- | --- |
+| `01` | **Local terminals** | Native PTY-backed shell sessions powered by `node-pty` and `xterm.js`. |
+| `02` | **Remote SSH** | Password or private-key authentication with explicit, fail-closed host-key trust. |
+| `03` | **SFTP** | Browse remote files, transfer data, resolve conflicts, and open files locally. |
+| `04` | **Port forwarding** | Start and stop local or remote forwarding rules for each host. |
+| `05` | **AI shell agent** | Inspect a live session and propose actions through Anthropic, OpenAI, DeepSeek, Zhipu GLM, or Moonshot Kimi endpoints. |
+| `06` | **Encrypted vault** | Protect sensitive application data at rest with AES-256-GCM. |
+
+## Ask. Inspect. Act. With a gate in the middle.
+
+The agent can work with the context of a live terminal, but it cannot silently execute a risky action.
+
+| 1 · Agent proposes | 2 · Main process checks | 3 · You stay in control |
+| --- | --- | --- |
+| Buzz prepares the exact shell command for the active task. | The Electron main process evaluates the command and its execution context. | High-risk actions require a short-lived, single-use approval bound to the task, session, host, working directory, and command. |
+
+## Security by design
+
+- **Sandboxed renderer** — `sandbox`, `contextIsolation`, and `webSecurity` stay enabled; `nodeIntegration` stays disabled.
+- **Typed IPC boundary** — `src/app/ipc.ts` is the renderer's only desktop command seam. Electron checks a static allowlist and routes commands through Zod-validated domain handlers.
+- **Fail-closed host trust** — unknown SSH hosts require explicit approval, while changed host keys stop the connection.
+- **Encrypted at rest** — inventory fields, SSH credentials, known-host keys, AI API keys, and AI history use AES-256-GCM encryption.
+- **Secrets stay out of the UI** — encryption keys and protected values remain in the Electron user-data directory with owner-only permissions and never cross the IPC boundary.
+- **Sanitized failures** — provider and transport errors do not expose credentials, private keys, raw host keys, prompts, decrypted vault fields, or API keys.
+
+The 256-bit vault master key is protected by an app-managed AES-256-GCM key. Buzz does not use macOS Keychain or Electron `safeStorage` for this vault.
+
+## Install Buzz
+
+Download a packaged build from [GitHub Releases](https://github.com/foooag/Buzz/releases), or use the platform links served by the official Buzz download service.
+
+| Platform | Package | Download |
+| --- | --- | --- |
+| macOS | Universal · DMG / ZIP | [Download for macOS](https://hazel-beta-two.vercel.app/download/darwin) |
+| Windows | x64 · NSIS installer | [Download for Windows](https://hazel-beta-two.vercel.app/download/win32) |
+| Linux | x64 · AppImage / DEB | [Download for Linux](https://hazel-beta-two.vercel.app/download/linux) |
+
+The packaged application checks for updates automatically on startup.
+
+### Build from source
+
+You will need [Node.js 22+](https://nodejs.org/) and [pnpm 10+](https://pnpm.io/).
+
+```bash
+git clone https://github.com/foooag/Buzz.git
+cd Buzz
+pnpm install
+pnpm dev
+```
 
 ## Development
 
-```bash
-pnpm install
-pnpm dev          # start Vite + Electron
-pnpm dev:web      # Vite renderer only, http://127.0.0.1:1420
-pnpm typecheck    # strict TypeScript
-pnpm test         # unit + component tests (Vitest)
-pnpm test:e2e     # deterministic browser tests (Playwright)
-pnpm test:electron# Electron integration tests
-pnpm build        # typecheck + renderer + electron build
-pnpm package      # electron-builder installers
-```
+| Command | Purpose |
+| --- | --- |
+| `pnpm dev` | Build Electron, start Vite, and launch the desktop app. |
+| `pnpm dev:web` | Start only the renderer at `http://127.0.0.1:1420`. |
+| `pnpm typecheck` | Validate strict TypeScript without emitting files. |
+| `pnpm test` | Run Vitest unit and component tests. |
+| `pnpm test:e2e --project=chromium` | Run Playwright browser scenarios. |
+| `pnpm test:electron` | Run the real Electron and preload smoke tests. |
+| `pnpm build` | Type-check and build the renderer and Electron main process. |
+| `pnpm package` | Create platform installers with electron-builder. |
 
 ## Project structure
 
+```text
+Buzz/
+├── src/                 React 19 renderer, features, stores, and xterm.js UI
+├── electron/            Electron main process, preload, and command boundary
+│   └── domains/
+│       ├── inventory/   Encrypted host inventory and vault
+│       ├── terminal/    Local PTY runtime
+│       ├── ssh/         SSH sessions, credentials, and host-key trust
+│       ├── sftp/        File transfer runtime and file associations
+│       ├── forwarding/  Local and remote port-forward rules
+│       ├── ai/          AI providers, model runtime, risk gate, and history
+│       └── agent/       Session-aware agent commands and host resolution
+├── tests/               Vitest unit and component tests
+├── e2e/                 Deterministic Playwright browser tests
+├── e2e-electron/        Real Electron integration scenarios
+└── docs/                Architecture, design, and release documentation
 ```
-src/               React 19 renderer (features, stores, xterm.js UI)
-electron/          Electron main + preload, backend domains
-  domains/
-    inventory/     encrypted host inventory & vault
-    terminal/      local PTY runtime
-    ssh/           SSH sessions, credential vault, host-key trust
-    sftp/          SFTP runtime & file associations
-    forwarding/    port-forward rules
-    ai/            AI agent, risk gate, encrypted history
-e2e/               deterministic browser tests
-e2e-electron/      real Electron tests
-docs/              architecture & design docs
-```
-
-## Installation
-
-Download the latest installer for your platform from the
-[Releases](https://github.com/foooag/Buzz/releases) page. The packaged app checks for
-updates automatically on startup.
 
 ## Releases
 
-Push a semantic-version tag to build the macOS universal, Windows x64, and
-Linux x64 installers and publish them to GitHub Releases:
+Push a semantic-version tag to build macOS universal, Windows x64, and Linux x64 installers and publish them to GitHub Releases:
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Prerelease tags such as `v0.1.0-beta.1` are supported. The workflow derives
-the packaged application version from the tag, runs the test/build gate once,
-and only creates the GitHub Release after every platform package succeeds.
+Prerelease tags such as `v0.1.0-beta.1` are supported. The release workflow derives the application version from the tag, runs the test and build gate, packages every platform, and creates the release only after all platform jobs succeed.
+
+## Contributing
+
+Contributions are welcome. Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or pull request, and keep behavior changes covered by tests.
 
 ## License
 
-[Apache-2.0](LICENSE)
+Buzz is open source under the [Apache License 2.0](./LICENSE).
 
-Built by [foooag](https://github.com/foooag). See [CONTRIBUTING.md](CONTRIBUTING.md)
-if you'd like to help.
+<div align="center">
+  <sub>Built for the shell. Designed to keep you in control.</sub>
+</div>
