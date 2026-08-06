@@ -47,7 +47,7 @@ const PREF_SECTIONS = [
   { id: "ai", label: "AI Providers", Icon: Sparkles },
 ] as const;
 
-type SectionId = (typeof PREF_SECTIONS)[number]["id"];
+export type SectionId = (typeof PREF_SECTIONS)[number]["id"];
 
 function LanguageSection() {
   const { locale, setLocale } = useI18n();
@@ -483,6 +483,7 @@ export function PreferencesWindow({
   sshApi,
   aiConfigApi,
   windowControls = windowControlsApi,
+  initialSection,
 }: {
   open: boolean;
   onClose: () => void;
@@ -495,8 +496,14 @@ export function PreferencesWindow({
   sshApi?: SshApi;
   aiConfigApi?: AiConfigApi;
   windowControls?: WindowControlsApi;
+  initialSection?: SectionId;
 }) {
-  const [section, setSection] = useState<SectionId>("language");
+  const [section, setSection] = useState<SectionId>(initialSection ?? "language");
+
+  useEffect(() => {
+    if (open && initialSection) setSection(initialSection);
+  }, [open, initialSection]);
+
   if (!open) return null;
   return (
     <div

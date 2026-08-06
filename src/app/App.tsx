@@ -43,7 +43,7 @@ import {
   recordConnectionAttempt,
   type HistoryEntry,
 } from "../features/workspace/connectionHistory";
-import { PreferencesWindow } from "../features/settings/PreferencesWindow";
+import { PreferencesWindow, type SectionId } from "../features/settings/PreferencesWindow";
 import {
   loadTerminalPreferences,
   saveTerminalPreferences,
@@ -85,6 +85,7 @@ export function App({
   const [hostKeyPrompt, setHostKeyPrompt] = useState<HostKeyPrompt | null>(null);
   const [changedHostKeySession, setChangedHostKeySession] = useState<string | null>(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [preferencesSection, setPreferencesSection] = useState<SectionId | undefined>(undefined);
   const sshSessionIds = useRef(new Set<string>());
   const [themeId, setThemeId] = useState(
     () => localStorage.getItem("terminus.terminalTheme") ?? defaultTerminalThemeId,
@@ -290,6 +291,11 @@ export function App({
     return (await api.open({ cols: 80, rows: 24 }, onEvent)).sessionId;
   }, [api, ssh]);
 
+  const openAiPreferences = useCallback(() => {
+    setPreferencesSection("ai");
+    setPreferencesOpen(true);
+  }, []);
+
   return (
     <>
     <WorkspaceShell
@@ -343,6 +349,7 @@ export function App({
           providerApi={aiConfig}
           inventoryApi={inventory}
           onConnectFromServers={() => setDestination("servers")}
+          onRequestPreferences={openAiPreferences}
         />
       ) : destination === "sftp" ? (
         <SftpPanel api={sftp} keepaliveInterval={terminalPreferences.keepaliveInterval} />
@@ -375,6 +382,7 @@ export function App({
         setTerminalPreferences(next);
         saveTerminalPreferences(next);
       }}
+      initialSection={preferencesSection}
     />
     <UpdateDialog />
     </>

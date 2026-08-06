@@ -69,20 +69,6 @@ function normalizeBaseUrl(kind: ProviderKind, supplied: string): string {
   if (url.username || url.password || url.search || url.hash || !url.hostname) {
     throw invalidEndpoint();
   }
-  const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  const isLoopback = hostname === "localhost" || hostname === "::1" ||
-    /^127(?:\.\d{1,3}){3}$/.test(hostname);
-  if (url.protocol !== "https:" && !(
-    url.protocol === "http:" &&
-    (kind === "custom" || kind === "ollama") &&
-    isLoopback
-  )) {
-    throw new DomainError(
-      "AI_CONFIG_INSECURE_ENDPOINT",
-      "Cloud providers require HTTPS; HTTP is only allowed for loopback services.",
-    );
-  }
-
   return value.replace(/\/+$/, "");
 }
 

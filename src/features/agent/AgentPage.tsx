@@ -27,7 +27,7 @@ import { aiConfigApi } from "@/features/ai/aiApi";
 import type { AiConfigApi, AiProviderConfig } from "@/features/ai/aiConfigTypes";
 import { useInventoryStore } from "@/features/inventory/inventoryStore";
 import type { InventoryApi } from "@/features/inventory/inventoryApi";
-import type { Group, Host } from "@/shared/types";
+import type { Host } from "@/shared/types";
 import { agentApi } from "./agentApi";
 import type {
   AgentClient,
@@ -81,39 +81,6 @@ type MessageItem = {
 
 type AgentItem = MessageItem | ToolCardItem;
 
-type ScenarioId = "docker" | "fleet";
-
-const EXAMPLES: Record<ScenarioId, {
-  label: string;
-  desc: string;
-  preview: string;
-  build(hosts: Host[], groups: Group[]): string;
-}> = {
-  docker: {
-    label: "Docker sync",
-    desc: "Cross-host container sync",
-    preview: "docker ps → inspect → pull → run",
-    build(hosts) {
-      const first = hosts[0];
-      const second = hosts[1];
-      return first && second
-        ? `把 @${first.name} 上的容器同样运行在 @${second.name} 上`
-        : "把容器从第一台服务器同步到第二台";
-    },
-  },
-  fleet: {
-    label: "Fleet health",
-    desc: "Group batch · risk + gaps",
-    preview: "uptime → df → risk confirm · cred missing",
-    build(_hosts, groups) {
-      const group = groups[0];
-      return group
-        ? `@${group.name} 逐台健康检查`
-        : "@Production 逐台健康检查";
-    },
-  },
-};
-
 let itemSeq = 0;
 function nextId(prefix: string): string {
   itemSeq += 1;
@@ -125,6 +92,7 @@ export type AgentPageProps = {
   providerApi?: AiConfigApi;
   inventoryApi?: InventoryApi;
   onConnectFromServers?: () => void;
+  onRequestPreferences?: () => void;
 };
 
 export function AgentPage({
@@ -132,6 +100,7 @@ export function AgentPage({
   providerApi = aiConfigApi,
   inventoryApi,
   onConnectFromServers,
+  onRequestPreferences,
 }: AgentPageProps) {
   const [providers, setProviders] = useState<AiProviderConfig[]>([]);
   const [providerId, setProviderId] = useState("");
@@ -143,7 +112,6 @@ export function AgentPage({
   const [awaitingConfirm, setAwaitingConfirm] = useState(false);
   const [error, setError] = useState<string>();
   const [confirmation, setConfirmation] = useState<AgentToolConfirmation>();
-  const [scenario, setScenario] = useState<ScenarioId>("docker");
   const agentIdRef = useRef<string | undefined>(undefined);
   const sendingRef = useRef(false);
   const abortedRef = useRef(false);
@@ -185,6 +153,7 @@ export function AgentPage({
             ? current
             : (usable.find((item) => item.isDefault)?.id ?? usable[0]?.id ?? ""),
         );
+        if (usable.length === 0) onRequestPreferences?.();
       },
       () => {
         if (active) setError("Could not load AI providers.");
@@ -193,7 +162,7 @@ export function AgentPage({
     return () => {
       active = false;
     };
-  }, [providerApi]);
+  }, [providerApi, onRequestPreferences]);
 
   const createAgent = useCallback(() => {
     if (!providerId) return;
@@ -642,23 +611,6 @@ export function AgentPage({
     createAgent();
   }, [agentClient, createAgent]);
 
-  const switchScenario = useCallback((id: ScenarioId) => {
-    if (running) handleAbort();
-    abortedRef.current = false;
-    setScenario(id);
-    setConfirmation(undefined);
-    setItems([]);
-    setHosts([]);
-    setError(undefined);
-    setDraft({
-      text: EXAMPLES[id].build(
-        Object.values(hostsRef.current),
-        groups,
-      ),
-      nonce: Date.now(),
-    });
-  }, [groups, handleAbort, running]);
-
   const toggleExpand = useCallback((id: string) => {
     setItems((current) =>
       current.map((item) =>
@@ -729,27 +681,6 @@ export function AgentPage({
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
-                <div className="flex items-center rounded-md border border-graphite bg-obsidian/60">
-                  {(Object.keys(EXAMPLES) as ScenarioId[]).map((id) => {
-                    const example = EXAMPLES[id];
-                    return (
-                      <button
-                        key={id}
-                        type="button"
-                        title={`${example.desc} — ${example.preview}`}
-                        onClick={() => switchScenario(id)}
-                        className={
-                          "rounded-[5px] px-2.5 py-1.5 text-[11.5px] transition-colors " +
-                          (scenario === id
-                            ? "bg-graphite text-mist"
-                            : "text-fog hover:text-mist")
-                        }
-                      >
-                        {example.label}
-                      </button>
-                    );
-                  })}
-                </div>
                 <button
                   type="button"
                   onClick={newTask}
