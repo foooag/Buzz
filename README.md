@@ -78,6 +78,20 @@ Download the latest installer for your platform from the
 [Releases](https://github.com/foooag/Buzz/releases) page. The packaged app checks for
 updates automatically on startup.
 
+## Releases
+
+Push a semantic-version tag to build the macOS universal, Windows x64, and
+Linux x64 installers and publish them to GitHub Releases:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Prerelease tags such as `v0.1.0-beta.1` are supported. The workflow derives
+the packaged application version from the tag, runs the test/build gate once,
+and only creates the GitHub Release after every platform package succeeds.
+
 ## License
 
 [Apache-2.0](LICENSE)

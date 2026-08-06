@@ -34,9 +34,9 @@ describe("Electron AI config repository", () => {
       new AesGcmFieldCipher(Buffer.alloc(32, 8)),
     );
     expect(() => repository.create({
-      providerKind: "custom", name: "Bad", baseUrl: "http://example.com",
+      providerKind: "custom", name: "Bad", baseUrl: "not-a-url",
       modelId: "model", apiKey: "key", isDefault: false,
-    })).toThrowError(expect.objectContaining({ code: "AI_CONFIG_INSECURE_ENDPOINT" }));
+    })).toThrowError(expect.objectContaining({ code: "AI_CONFIG_INVALID_ENDPOINT" }));
     expect(() => repository.create({
       providerKind: "openai", name: "No key", baseUrl: "", modelId: "model",
       isDefault: false,
