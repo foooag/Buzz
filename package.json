@@ -2,7 +2,10 @@
   "name": "buzz",
   "version": "0.0.1",
   "description": "A secure Electron desktop client for remote sessions",
-  "author": "Buzz Contributors",
+  "author": {
+    "name": "Buzz Contributors",
+    "email": "pomyven@gmail.com"
+  },
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
