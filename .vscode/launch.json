@@ -22,10 +22,10 @@
       "preLaunchTask": "pre-debug-main",
       "sourceMaps": true,
       "outFiles": [
-        "${workspaceFolder}/dist-electron/**/*.js"
+        "${workspaceFolder}/out/main/**/*.mjs"
       ],
       "resolveSourceMapLocations": [
-        "${workspaceFolder}/dist-electron/**"
+        "${workspaceFolder}/out/main/**"
       ],
       "skipFiles": [
         "<node_internals>/**"

@@ -1,9 +1,12 @@
-// Launches Electron and restarts it whenever dist-electron/ changes.
+// Launches Electron and restarts it whenever out/main changes.
 // Designed as the VSCode "Debug Main Process" runtime — VSCode's
 // autoAttachChildProcesses re-attaches the debugger to every respawn.
 //
-// Renderer (src/**) is handled separately by Vite HMR. Only the Electron
-// main process (compiled to dist-electron/) triggers a restart here.
+// Renderer (src/renderer/**) is handled separately by Vite HMR. Only the
+// Electron main process (bundled to out/main/) triggers a restart here.
+// For interactive rebuild-on-save, prefer `pnpm dev` (electron-vite dev);
+// this script is the auto-attach debug path: run `pnpm build` first, then it
+// respawns Electron whenever out/main/*.mjs changes.
 
 import { spawn } from "node:child_process";
 import { existsSync, watch } from "node:fs";
@@ -12,7 +15,7 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, "..");
-const distDir = path.join(projectRoot, "dist-electron");
+const distDir = path.join(projectRoot, "out", "main");
 const electronCliPath = path.join(projectRoot, "node_modules/electron/cli.js");
 
 if (!existsSync(electronCliPath)) {
@@ -21,7 +24,7 @@ if (!existsSync(electronCliPath)) {
 }
 if (!existsSync(distDir)) {
   console.error(
-    `[watch-dev] ${distDir} not found. Run "pnpm build:electron" first.`,
+    `[watch-dev] ${distDir} not found. Run "pnpm build" first.`,
   );
   process.exit(1);
 }
@@ -84,7 +87,7 @@ const watcher = watch(
   { recursive: true },
   (_event, filename) => {
     if (!filename) return;
-    if (!/\.(js|cjs)$/i.test(filename)) return;
+    if (!/\.(js|cjs|mjs)$/i.test(filename)) return;
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(
       () => triggerRestart(`${filename} changed`),
