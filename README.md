@@ -56,7 +56,7 @@ The agent can work with the context of a live terminal, but it cannot silently e
 ## Security by design
 
 - **Sandboxed renderer** — `sandbox`, `contextIsolation`, and `webSecurity` stay enabled; `nodeIntegration` stays disabled.
-- **Typed IPC boundary** — `src/app/ipc.ts` is the renderer's only desktop command seam. Electron checks a static allowlist and routes commands through Zod-validated domain handlers.
+- **Typed IPC boundary** — `src/renderer/app/ipc.ts` is the renderer's only desktop command seam. Electron checks a static allowlist and routes commands through Zod-validated domain handlers.
 - **Fail-closed host trust** — unknown SSH hosts require explicit approval, while changed host keys stop the connection.
 - **Encrypted at rest** — inventory fields, SSH credentials, known-host keys, AI API keys, and AI history use AES-256-GCM encryption.
 - **Secrets stay out of the UI** — encryption keys and protected values remain in the Electron user-data directory with owner-only permissions and never cross the IPC boundary.
@@ -91,30 +91,28 @@ pnpm dev
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm dev` | Build Electron, start Vite, and launch the desktop app. |
+| `pnpm dev` | Start electron-vite (renderer HMR + main/preload rebuild) and launch the desktop app. |
 | `pnpm dev:web` | Start only the renderer at `http://127.0.0.1:1420`. |
-| `pnpm typecheck` | Validate strict TypeScript without emitting files. |
+| `pnpm typecheck` | Validate strict TypeScript (renderer + main/preload) without emitting files. |
 | `pnpm test` | Run Vitest unit and component tests. |
 | `pnpm test:e2e --project=chromium` | Run Playwright browser scenarios. |
 | `pnpm test:electron` | Run the real Electron and preload smoke tests. |
-| `pnpm build` | Type-check and build the renderer and Electron main process. |
+| `pnpm build` | Type-check and build main, preload, and renderer into `out/` via electron-vite. |
 | `pnpm package` | Create platform installers with electron-builder. |
 
 ## Project structure
 
 ```text
 Buzz/
-├── src/                 React 19 renderer, features, stores, and xterm.js UI
-├── electron/            Electron main process, preload, and command boundary
-│   └── domains/
-│       ├── inventory/   Encrypted host inventory and vault
-│       ├── terminal/    Local PTY runtime
-│       ├── ssh/         SSH sessions, credentials, and host-key trust
-│       ├── sftp/        File transfer runtime and file associations
-│       ├── forwarding/  Local and remote port-forward rules
-│       ├── ai/          AI providers, model runtime, risk gate, and history
-│       └── agent/       Session-aware agent commands and host resolution
-├── tests/               Vitest unit and component tests
+├── src/
+│   ├── main/            Electron main process (index.ts), domains, and IPC dispatcher
+│   │   └── domains/     inventory, terminal, ssh, sftp, forwarding, ai, agent
+│   ├── preload/         Sandboxed preload bridge (contextBridge only)
+│   ├── renderer/        React 19 renderer, features, stores, and xterm.js UI
+│   └── shared/          Cross-process IPC contract (command names, result types)
+├── build/               Build tooling (electron-builder hooks, dev watcher)
+├── resources/           Packaging icons
+├── tests/               Vitest unit and component tests (renderer/, main/)
 ├── e2e/                 Deterministic Playwright browser tests
 ├── e2e-electron/        Real Electron integration scenarios
 └── docs/                Architecture, design, and release documentation

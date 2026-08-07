@@ -1,6 +1,6 @@
 # Agent 数据交互与数据处理设计
 
-> 范围：渲染进程的 [src/features/agent/AgentPage.tsx](../src/features/agent/AgentPage.tsx) 及其周边模块——整个 Agent 功能的**前端数据管道**。后端（Electron 主进程侧的 `MultiHostAgentRuntime`，见 [electron/domains/agent/agent-runtime.ts](../electron/domains/agent/agent-runtime.ts)）作为数据源头与执行体出现。
+> 范围：渲染进程的 [src/renderer/features/agent/AgentPage.tsx](../src/renderer/features/agent/AgentPage.tsx) 及其周边模块——整个 Agent 功能的**前端数据管道**。后端（Electron 主进程侧的 `MultiHostAgentRuntime`，见 [src/main/domains/agent/agent-runtime.ts](../src/main/domains/agent/agent-runtime.ts)）作为数据源头与执行体出现。
 >
 > 设计哲学：**单向数据流 + 事件驱动**。主进程以**事件流**推送实时状态，页面用一个集中式 reducer `applyEvent` 把事件翻译成三份 UI 状态（`items` 消息流、`hosts` 进度轨、运行标记），再同步到 `localStorage` 会话与 assistant-ui runtime 做渲染。状态在 renderer 侧没有第二份权威副本，`agentId` 走 ref 保证同步读写。
 
@@ -96,15 +96,15 @@ PAGE -> API: agentClient.create / close / abort
 
 | 层 | 模块（文件） | 职责 |
 | --- | --- | --- |
-| **输入 UI** | [composer/MentionComposer.tsx](../src/features/agent/composer/MentionComposer.tsx) | 捕获用户输入，`@` 提及补全（host/group），`onTextChange` 上抛 draft |
-| **核心编排** | [AgentPage.tsx](../src/features/agent/AgentPage.tsx) | 唯一的状态拥有者：`items` / `hosts` / `phase` / `sessions` / `running`；`applyEvent` reducer 把事件翻译成 UI 状态；通过 `useExternalStoreRuntime` 接 assistant-ui |
-| **IPC 客户端** | [agentApi.ts](../src/features/agent/agentApi.ts) + [app/ipc.ts](../src/app/ipc.ts) | 把 `AgentClient` 方法映射为 IPC 命令（`agent_create` / `agent_prompt` / `agent_abort` / `agent_decide_tool` / `agent_close`），`agent_prompt` 走有限事件流 |
-| **类型契约** | [agentTypes.ts](../src/features/agent/agentTypes.ts) | `AgentClient` / `AgentEvent` / `AgentSnapshot` / `AgentToolConfirmation`，前后端共享的线上协议 |
-| **数据模型** | [agentItems.ts](../src/features/agent/agentItems.ts) · [progressTypes.ts](../src/features/agent/progressTypes.ts) | `AgentItem`（消息/工具卡片）与 `HostProgress`（每台主机的命令进度轨） |
-| **持久化** | [sessionStore.ts](../src/features/agent/sessionStore.ts) | localStorage 会话快照：`load/saveSessionsFromDisk`、`normalizeRestored*`、`summarizeTitle` |
-| **辅助解析** | [directiveText.ts](../src/features/agent/directiveText.ts) | `parseDirectives` / `expandTargets` 把 `@` 提及展开成目标 hostId 列表 |
-| **外部依赖** | [features/ai/aiApi.ts](../src/features/ai/aiApi.ts)（provider 列表）· [features/inventory/inventoryStore.ts](../src/features/inventory/inventoryStore.ts)（hosts/groups） | 提供模型配置与主机/分组目录 |
-| **后端运行时** | [electron/domains/agent/agent-runtime.ts](../electron/domains/agent/agent-runtime.ts) | 主进程 `MultiHostAgentRuntime`：pi-agent-core 的 Agent 循环、工具注册（`host_exec` / `host_list`）、风险确认、SSH 执行 |
+| **输入 UI** | [composer/MentionComposer.tsx](../src/renderer/features/agent/composer/MentionComposer.tsx) | 捕获用户输入，`@` 提及补全（host/group），`onTextChange` 上抛 draft |
+| **核心编排** | [AgentPage.tsx](../src/renderer/features/agent/AgentPage.tsx) | 唯一的状态拥有者：`items` / `hosts` / `phase` / `sessions` / `running`；`applyEvent` reducer 把事件翻译成 UI 状态；通过 `useExternalStoreRuntime` 接 assistant-ui |
+| **IPC 客户端** | [agentApi.ts](../src/renderer/features/agent/agentApi.ts) + [app/ipc.ts](../src/renderer/app/ipc.ts) | 把 `AgentClient` 方法映射为 IPC 命令（`agent_create` / `agent_prompt` / `agent_abort` / `agent_decide_tool` / `agent_close`），`agent_prompt` 走有限事件流 |
+| **类型契约** | [agentTypes.ts](../src/renderer/features/agent/agentTypes.ts) | `AgentClient` / `AgentEvent` / `AgentSnapshot` / `AgentToolConfirmation`，前后端共享的线上协议 |
+| **数据模型** | [agentItems.ts](../src/renderer/features/agent/agentItems.ts) · [progressTypes.ts](../src/renderer/features/agent/progressTypes.ts) | `AgentItem`（消息/工具卡片）与 `HostProgress`（每台主机的命令进度轨） |
+| **持久化** | [sessionStore.ts](../src/renderer/features/agent/sessionStore.ts) | localStorage 会话快照：`load/saveSessionsFromDisk`、`normalizeRestored*`、`summarizeTitle` |
+| **辅助解析** | [directiveText.ts](../src/renderer/features/agent/directiveText.ts) | `parseDirectives` / `expandTargets` 把 `@` 提及展开成目标 hostId 列表 |
+| **外部依赖** | [features/ai/aiApi.ts](../src/renderer/features/ai/aiApi.ts)（provider 列表）· [features/inventory/inventoryStore.ts](../src/renderer/features/inventory/inventoryStore.ts)（hosts/groups） | 提供模型配置与主机/分组目录 |
+| **后端运行时** | [src/main/domains/agent/agent-runtime.ts](../src/main/domains/agent/agent-runtime.ts) | 主进程 `MultiHostAgentRuntime`：pi-agent-core 的 Agent 循环、工具注册（`host_exec` / `host_list`）、风险确认、SSH 执行 |
 
 ## 3. 两条主数据通路
 
@@ -130,8 +130,8 @@ PAGE -> API: agentClient.create / close / abort
 
 关键点：
 
-- `resolveMentionLabel`（[AgentPage.tsx:150-161](../src/features/agent/AgentPage.tsx#L150-L161)）先在 `hostsRef.current` 中按名字找 host，再在 `groups` 中找 group——**名字优先于分组**。
-- `groupHosts`（[AgentPage.tsx:541-548](../src/features/agent/AgentPage.tsx#L541-L548)）从 inventory 的 group→host 关系构建，供分组展开用。
+- `resolveMentionLabel`（[AgentPage.tsx:150-161](../src/renderer/features/agent/AgentPage.tsx#L150-L161)）先在 `hostsRef.current` 中按名字找 host，再在 `groups` 中找 group——**名字优先于分组**。
+- `groupHosts`（[AgentPage.tsx:541-548](../src/renderer/features/agent/AgentPage.tsx#L541-L548)）从 inventory 的 group→host 关系构建，供分组展开用。
 - 提交前有兜底：`sendingRef`（防重入）、`running`（忙碌中不重发）、`agentIdRef.current`（agent 未就绪时报错提示）。
 
 ### 3.2 输出通路：后端 → 渲染（Response）
@@ -158,7 +158,7 @@ AgentEvent（线上类型，见 agentTypes.ts）
 每个事件经 IPC 流通道 → renderer 的 applyEvent(event)
 ```
 
-`applyEvent`（[AgentPage.tsx:447-518](../src/features/agent/AgentPage.tsx#L447-L518)）就是一个 switch 型 reducer，事件进来后要么**改写状态**，要么**分发**给子处理器：
+`applyEvent`（[AgentPage.tsx:447-518](../src/renderer/features/agent/AgentPage.tsx#L447-L518)）就是一个 switch 型 reducer，事件进来后要么**改写状态**，要么**分发**给子处理器：
 
 - 文本类事件 → `pushMessageItem` / `patchAssistant`，写 `items`（assistant 消息）。
 - 工具类事件 → `handleToolStart` / `handleToolEnd`，**同时写两份状态**：
@@ -181,7 +181,7 @@ AgentEvent（线上类型，见 agentTypes.ts）
 
 三个值得注意的设计决策：
 
-1. **`sessionsRef` 与 `setSessions` 双写**（[AgentPage.tsx:638-689](../src/features/agent/AgentPage.tsx#L638-L689)）。持久化走命令式 ref（同步、可靠），`setSessions` 只负责让 React 重渲染。这样「创建 vs 更新」的判断不依赖 setState 的异步 flush。
+1. **`sessionsRef` 与 `setSessions` 双写**（[AgentPage.tsx:638-689](../src/renderer/features/agent/AgentPage.tsx#L638-L689)）。持久化走命令式 ref（同步、可靠），`setSessions` 只负责让 React 重渲染。这样「创建 vs 更新」的判断不依赖 setState 的异步 flush。
 2. **`activeIdRef` 是持久化周期中的事实来源**。它与 `setActiveId` 在同一 tick 内赋值，回调读取不会滞后。
 3. **恢复时做归一化**：`normalizeRestoredItems` / `normalizeRestoredHosts` / `normalizeRestoredPhase` 把 `streaming`/`running`/`awaiting-confirm` 等瞬时态一律归到稳定终态（`aborted` / `error`），避免重载后出现「卡在半空」的界面。
 
@@ -199,11 +199,11 @@ ThreadMessageLike[]
 AssistantRuntimeProvider → ThreadPrimitive.Messages → AgentMessageView
 ```
 
-映射规则（[AgentPage.tsx:1248-1268](../src/features/agent/AgentPage.tsx#L1248-L1268)）：
+映射规则（[AgentPage.tsx:1248-1268](../src/renderer/features/agent/AgentPage.tsx#L1248-L1268)）：
 
 - `user` 项 → `{ role: "user", content: text }`。
 - `assistant` 项 → `content: [{ type: "text", text }]`，`streaming` 时 `status: { type: "running" }`，结束为 `{ type: "complete" }`。
-- `tool` 项 → 空 content + `metadata.custom.buzz = { kind: "tool", card: item }`。渲染层在 `AgentMessageView`（[AgentPage.tsx:1027-1076](../src/features/agent/AgentPage.tsx#L1027-L1076)）里识别这个自定义元数据，转成 `AgentCommandCard` 渲染命令卡片。
+- `tool` 项 → 空 content + `metadata.custom.buzz = { kind: "tool", card: item }`。渲染层在 `AgentMessageView`（[AgentPage.tsx:1027-1076](../src/renderer/features/agent/AgentPage.tsx#L1027-L1076)）里识别这个自定义元数据，转成 `AgentCommandCard` 渲染命令卡片。
 
 runtime 的 `onNew` 回调即发送入口——assistant-ui 捕获用户发送后回调 `runPrompt`，形成闭环。`onCancel` 回调 `handleAbort`。
 
@@ -256,12 +256,12 @@ CORE  继续执行 → toolEnd
 
 ## 9. 相关文件索引
 
-- 渲染核心：[src/features/agent/AgentPage.tsx](../src/features/agent/AgentPage.tsx)
-- IPC 客户端：[src/features/agent/agentApi.ts](../src/features/agent/agentApi.ts) · [src/app/ipc.ts](../src/app/ipc.ts)
-- 类型契约：[src/features/agent/agentTypes.ts](../src/features/agent/agentTypes.ts)
-- 数据模型：[src/features/agent/agentItems.ts](../src/features/agent/agentItems.ts) · [src/features/agent/progressTypes.ts](../src/features/agent/progressTypes.ts)
-- 持久化：[src/features/agent/sessionStore.ts](../src/features/agent/sessionStore.ts)
-- 指令解析：[src/features/agent/directiveText.ts](../src/features/agent/directiveText.ts)
-- 输入 UI：[src/features/agent/composer/MentionComposer.tsx](../src/features/agent/composer/MentionComposer.tsx) · [mentionAdapter.ts](../src/features/agent/composer/mentionAdapter.ts)
-- 视图：[ConfirmCard.tsx](../src/features/agent/ConfirmCard.tsx) · [ProgressPanel.tsx](../src/features/agent/ProgressPanel.tsx) · [HistoryDropdown.tsx](../src/features/agent/HistoryDropdown.tsx) · [HostErrorBanner.tsx](../src/features/agent/HostErrorBanner.tsx)
-- 后端运行时：[electron/domains/agent/agent-runtime.ts](../electron/domains/agent/agent-runtime.ts) · [commands.ts](../electron/domains/agent/commands.ts)
+- 渲染核心：[src/renderer/features/agent/AgentPage.tsx](../src/renderer/features/agent/AgentPage.tsx)
+- IPC 客户端：[src/renderer/features/agent/agentApi.ts](../src/renderer/features/agent/agentApi.ts) · [src/renderer/app/ipc.ts](../src/renderer/app/ipc.ts)
+- 类型契约：[src/renderer/features/agent/agentTypes.ts](../src/renderer/features/agent/agentTypes.ts)
+- 数据模型：[src/renderer/features/agent/agentItems.ts](../src/renderer/features/agent/agentItems.ts) · [src/renderer/features/agent/progressTypes.ts](../src/renderer/features/agent/progressTypes.ts)
+- 持久化：[src/renderer/features/agent/sessionStore.ts](../src/renderer/features/agent/sessionStore.ts)
+- 指令解析：[src/renderer/features/agent/directiveText.ts](../src/renderer/features/agent/directiveText.ts)
+- 输入 UI：[src/renderer/features/agent/composer/MentionComposer.tsx](../src/renderer/features/agent/composer/MentionComposer.tsx) · [mentionAdapter.ts](../src/renderer/features/agent/composer/mentionAdapter.ts)
+- 视图：[ConfirmCard.tsx](../src/renderer/features/agent/ConfirmCard.tsx) · [ProgressPanel.tsx](../src/renderer/features/agent/ProgressPanel.tsx) · [HistoryDropdown.tsx](../src/renderer/features/agent/HistoryDropdown.tsx) · [HostErrorBanner.tsx](../src/renderer/features/agent/HostErrorBanner.tsx)
+- 后端运行时：[src/main/domains/agent/agent-runtime.ts](../src/main/domains/agent/agent-runtime.ts) · [commands.ts](../src/main/domains/agent/commands.ts)

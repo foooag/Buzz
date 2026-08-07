@@ -15,7 +15,7 @@ Buzz 是一款安全优先的远程会话桌面客户端（Electron + React 19 +
 
 Buzz 已具备完整的自研 AI Agent 能力：
 
-- `electron/domains/ai/agent-runtime.ts` 中 `AiAgentRuntime`（基于 `@earendil-works/pi-agent-core` 的 agent 循环）；
+- `src/main/domains/ai/agent-runtime.ts` 中 `AiAgentRuntime`（基于 `@earendil-works/pi-agent-core` 的 agent 循环）；
 - 多模型供应商支持（Anthropic / OpenAI 兼容 / GLM / Kimi / DeepSeek / 自定义 / Ollama），密钥经 AES-256-GCM 加密存储（`repository.ts`）；
 - 命令风险门控 `AiShellRiskRuntime`（拦截交互命令、对危险命令要求 60s 单次确认令牌）；
 - 会话历史加密落库（`history.ts`，512MB 淘汰）；
@@ -127,7 +127,7 @@ Buzz 已具备完整的自研 AI Agent 能力：
 
 理由优先级：**需求覆盖（`@` 提及）→ 适配成本 → 设计系统一致性**。
 
-> **使用前提（写入 Global Constraints）**：mentions/trigger-popover 相关 API 目前带 `unstable_` 前缀，接入时**必须**将库固定版本（pin 精确版本号）并封装在 `src/features/agent/composer/` 内一层薄适配器，后续库升级只动适配器。
+> **使用前提（写入 Global Constraints）**：mentions/trigger-popover 相关 API 目前带 `unstable_` 前缀，接入时**必须**将库固定版本（pin 精确版本号）并封装在 `src/renderer/features/agent/composer/` 内一层薄适配器，后续库升级只动适配器。
 >
 > 备选方案：若 `unstable_` API 在试用期不可接受，退化为**方案 B**：仅用 Assistant UI 的 `Thread`/`MessageList`/`ToolFallback` 消息渲染原语，`@` 提及自建（textarea + 弹出层）——仍优于纯手写（`@` 之外的消息流/工具卡/推理展示可复用）。
 
@@ -190,9 +190,9 @@ Buzz 已具备完整的自研 AI Agent 能力：
 ### 6.1 现状关键点（依据代码）
 
 - `AiAgentRuntime.create(ownerId, providerConfigId, sshSessionId)` **1:1 绑定一个已打开的交互式 SSH 会话**；agent 内仅注册单工具 `ssh_exec`（`agent-runtime.ts:266-305`），该工具调用 `SshRuntime.executeCommand` 在同一会话上执行。
-- `SshRuntime`（`electron/domains/ssh/runtime.ts`）持有一个 `Client`（ssh2）列表，`open()` 建立交互式 shell（PTY）；凭据来自 `SshCredentialVault`（`#credentials.get(credentialRef)`），host key 校验/确认走 `#pending` + `#knownHosts`。
-- 库存侧 `InventoryRepository` 提供 `listHosts(vaultId)` 等；渲染层 `useInventoryStore` 持有 hosts/groups；`getHostCredential(host)`（`src/features/ssh/savedCredentials.ts`）可把 `credentialRef` 解析为认证材料。
-- 所有 IPC 命令在 `electron/command-names.ts` allowlist + 各 domain `commands.ts` zod 校验；新命令必须注册 + 契约测试（`AGENTS.md`）。
+- `SshRuntime`（`src/main/domains/ssh/runtime.ts`）持有一个 `Client`（ssh2）列表，`open()` 建立交互式 shell（PTY）；凭据来自 `SshCredentialVault`（`#credentials.get(credentialRef)`），host key 校验/确认走 `#pending` + `#knownHosts`。
+- 库存侧 `InventoryRepository` 提供 `listHosts(vaultId)` 等；渲染层 `useInventoryStore` 持有 hosts/groups；`getHostCredential(host)`（`src/renderer/features/ssh/savedCredentials.ts`）可把 `credentialRef` 解析为认证材料。
+- 所有 IPC 命令在 `src/shared/ipc/command-names.ts` allowlist + 各 domain `commands.ts` zod 校验；新命令必须注册 + 契约测试（`AGENTS.md`）。
 - 现有 IPC 流式机制 `emitStreamEvent(streamId, event)` / 有限流（`ai_agent_prompt`）可直接复用。
 
 ### 6.2 新增能力：无头（headless）SSH 主机通道
@@ -239,7 +239,7 @@ Buzz 已具备完整的自研 AI Agent 能力：
 - [x] 无头主机通道可对库存主机执行命令（复用凭据、host key 校验）。
 - [x] `host_exec`/`host_list` 工具注册，经风险门控。
 - [x] `agent_prompt` 接受 `targets`。
-- [x] 主进程命令契约测试通过（`tests/electron/domains/agent/`）。
+- [x] 主进程命令契约测试通过（`tests/main/domains/agent/`）。
 
 ### M2：`@` 提及 + 面板骨架（P0）
 - [x] 左侧 `Agent` destination + 面板骨架。
@@ -262,8 +262,8 @@ Buzz 已具备完整的自研 AI Agent 能力：
 
 ## 8. 测试策略
 
-- **主进程**（`tests/electron/`）：`SshHeadlessRuntime` 建连/执行/超时/凭据错误；`host_exec` 工具风险门控与确认；`agent_prompt` targets 解析与上下文注入；命令契约测试覆盖新增 IPC schema。
-- **渲染层**（`tests/src/features/agent/`）：`@` 选择器（键入 `@` → 弹出 → 选中 → directive 文本）；消息/工具卡渲染；进度区按主机聚合；确认卡片交互；空态/错误态。沿用 `tests/src` 注入 fake 的模式。
+- **主进程**（`tests/main/`）：`SshHeadlessRuntime` 建连/执行/超时/凭据错误；`host_exec` 工具风险门控与确认；`agent_prompt` targets 解析与上下文注入；命令契约测试覆盖新增 IPC schema。
+- **渲染层**（`tests/renderer/features/agent/`）：`@` 选择器（键入 `@` → 弹出 → 选中 → directive 文本）；消息/工具卡渲染；进度区按主机聚合；确认卡片交互；空态/错误态。沿用 `tests/src` 注入 fake 的模式。
 - **e2e**：Playwright 冒烟（打开 Agent 面板、输入 `@` 弹出选择器）。
 
 ---
@@ -272,7 +272,7 @@ Buzz 已具备完整的自研 AI Agent 能力：
 
 | 包 | 用途 | 备注 |
 |---|---|---|
-| `@assistant-ui/react` | 聊天原语 + `@` 提及 | **pin 精确版本**；`unstable_` API 封装于 `src/features/agent/composer/` |
+| `@assistant-ui/react` | 聊天原语 + `@` 提及 | **pin 精确版本**；`unstable_` API 封装于 `src/renderer/features/agent/composer/` |
 | （可选）`@assistant-ui/react-lexical` | 富文本 chip 输入 | 仅在文本态 directive 体验不足时引入 |
 
 > 不引入：`ai`/`@ai-sdk/react`（无 useChat 输入端）、`@copilotkit/*`（框架绑定过重）、OpenUI（不适用）。

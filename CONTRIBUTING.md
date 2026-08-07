@@ -29,8 +29,8 @@ directly and include a repro without credentials.
 3. Every behavior change needs proportionate tests. Deterministic frontend APIs
    must stay aligned with real IPC APIs.
 4. If you add a new IPC command:
-   - add it to `electron/command-names.ts` (the allowlist),
-   - implement the Zod-validated handler in the matching `electron/domains/` domain,
+   - add it to `src/shared/ipc/command-names.ts` (the allowlist),
+   - implement the Zod-validated handler in the matching `src/main/domains/` domain,
    - add a command-contract test.
 5. Run `pnpm typecheck`, `pnpm test`, and the relevant e2e suite before opening
    a PR.

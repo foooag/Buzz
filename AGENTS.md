@@ -2,19 +2,19 @@
 
 ## Project Structure & Module Organization
 
-Buzz is an Electron desktop application. The React/TypeScript renderer lives in `src/`; the isolated Electron main/preload boundary and backend domains live in `electron/`. Backend domains are grouped under `electron/domains/` for inventory, terminal, SSH, forwarding, SFTP, and AI. All Vitest unit/component tests live in `tests/`, mirroring the source roots: `tests/src/` for renderer tests and `tests/electron/` for main-process tests; the shared setup is `tests/setup.ts`. Browser Playwright scenarios live in `e2e/`; Electron scenarios live in `e2e-electron/`. Renderer tests import app modules through the `@/` alias; main-process tests use relative imports into `electron/`.
+Buzz is an Electron desktop application built with electron-vite. Source lives under `src/`: the Electron main process in `src/main/` (entry `src/main/index.ts`, backend domains under `src/main/domains/`, IPC dispatch under `src/main/ipc/`); the sandboxed preload bridge in `src/preload/index.cjs`; and the React/TypeScript renderer in `src/renderer/` (with `app/`, `components/`, `features/`, `shared/`, and `styles/`). The cross-process IPC contract — command names and result types — lives in `src/shared/ipc/` and is the single source of truth imported by both main and renderer. Build output is `out/{main,preload,renderer}`; packaged installers go to `release/`. Build tooling scripts live in `build/`; packaging icons in `resources/`. All Vitest unit/component tests live in `tests/`, mirroring the source roots: `tests/renderer/` for renderer tests and `tests/main/` for main-process tests; the shared setup is `tests/setup.ts`. Browser Playwright scenarios live in `e2e/`; Electron scenarios live in `e2e-electron/`. Renderer tests import app modules through the `@/` alias (→ `src/renderer`); cross-process contract modules use `@shared/` (→ `src/shared`); main-process tests use relative imports into `src/main/`.
 
 ## Build, Test, and Development Commands
 
 - `pnpm install` installs dependencies.
-- `pnpm dev` builds the Electron main process, then starts Vite and launches Electron.
+- `pnpm dev` starts electron-vite (renderer HMR + main/preload rebuild) and launches Electron.
 - `pnpm dev:web` starts only the Vite renderer at `127.0.0.1:1420`.
-- `pnpm typecheck` validates TypeScript without emitting files.
+- `pnpm typecheck` validates TypeScript across `tsconfig.json` (renderer/shared/tests) and `tsconfig.node.json` (main/preload) without emitting files.
 - `pnpm test` runs all Vitest unit and component tests.
 - `pnpm test:e2e --project=chromium` runs Playwright browser tests.
-- `pnpm test:electron` runs the real Electron/preload smoke test.
-- `pnpm build` type-checks and builds the renderer and Electron main process.
-- `pnpm package` creates platform installers with electron-builder.
+- `pnpm test:electron` builds via electron-vite and runs the real Electron/preload smoke test.
+- `pnpm build` type-checks and builds main + preload + renderer into `out/` via electron-vite.
+- `pnpm package` creates platform installers with electron-builder into `release/`.
 
 ## Coding Style & Naming Conventions
 
@@ -22,11 +22,11 @@ Use two-space indentation, double quotes, semicolons, and strict TypeScript. Rea
 
 ### UI Components
 
-Prefer shadcn/ui for frontend components. Reuse the existing primitives in `src/components/ui/` (via `@/components/ui/...`) whenever one fits; when a new primitive is needed, add it with the shadcn CLI (`pnpm dlx shadcn@latest add ...`) and keep it in `src/components/ui/` with the project's new-york style. Use lucide-react icons and Tailwind theme tokens for styling rather than ad-hoc colors. Reach for hand-rolled markup only when a shadcn primitive genuinely cannot express the interaction.
+Prefer shadcn/ui for frontend components. Reuse the existing primitives in `src/renderer/components/ui/` (via `@/components/ui/...`) whenever one fits; when a new primitive is needed, add it with the shadcn CLI (`pnpm dlx shadcn@latest add ...`) and keep it in `src/renderer/components/ui/` with the project's new-york style. Use lucide-react icons and Tailwind theme tokens for styling rather than ad-hoc colors. Reach for hand-rolled markup only when a shadcn primitive genuinely cannot express the interaction.
 
 ## Testing Guidelines
 
-Add tests with every behavior change. Prefer Testing Library semantic queries over implementation details. Keep deterministic frontend APIs aligned with real IPC APIs. Desktop commands require domain and command-contract coverage; register new commands in `electron/command-names.ts`, the matching domain handler, and its contract test. No numeric coverage threshold is configured, but affected paths and regressions should be exercised.
+Add tests with every behavior change. Prefer Testing Library semantic queries over implementation details. Keep deterministic frontend APIs aligned with real IPC APIs. Desktop commands require domain and command-contract coverage; register new commands in `src/shared/ipc/command-names.ts`, the matching domain handler, and its contract test. No numeric coverage threshold is configured, but affected paths and regressions should be exercised.
 
 ## Commit & Pull Request Guidelines
 
