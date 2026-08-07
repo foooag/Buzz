@@ -72,7 +72,7 @@ one.
 | Native Pi model streaming and cancellation | `electron/domains/ai/model-runtime.ts` using `pi-ai` | OpenAI-compatible probe and native stream tests |
 | AI shell risk classifier and confirmations | `electron/domains/ai/risk.ts` plus `electron/domains/ssh/runtime.ts` command execution | risk, binding, single-use confirmation, timeout, output, and CWD tests |
 | Desktop event channel | `electron/preload.cjs`, `electron/main.cts` | renderer IPC tests and Electron sandbox smoke test |
-| Application icons | `assets/icons/` | electron-builder directory package |
+| Application icons | `resources/icons/` | electron-builder directory package |
 
 ## Development and verification
 

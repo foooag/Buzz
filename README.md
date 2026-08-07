@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://buzz.nex.show">
-    <img src="./assets/icons/icon.svg" width="96" height="96" alt="Buzz logo" />
+    <img src="./resources/icons/icon.svg" width="96" height="96" alt="Buzz logo" />
   </a>
 
   <h1>Buzz</h1>

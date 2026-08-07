@@ -99,7 +99,7 @@
       "package.json"
     ],
     "mac": {
-      "icon": "assets/icons/icon.icns",
+      "icon": "resources/icons/icon.icns",
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
       "x64ArchFiles": "**/node_modules/node-pty/{bin,prebuilds}/**/*",
@@ -109,11 +109,11 @@
       ]
     },
     "win": {
-      "icon": "assets/icons/icon.ico",
+      "icon": "resources/icons/icon.ico",
       "target": "nsis"
     },
     "linux": {
-      "icon": "assets/icons",
+      "icon": "resources/icons",
       "category": "Development",
       "target": [
         "AppImage",
