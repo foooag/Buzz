@@ -17,7 +17,7 @@
       "request": "launch",
       "cwd": "${workspaceFolder}",
       "runtimeArgs": [
-        "${workspaceFolder}/electron/watch-dev.mjs"
+        "${workspaceFolder}/build/watch-dev.mjs"
       ],
       "preLaunchTask": "pre-debug-main",
       "sourceMaps": true,
