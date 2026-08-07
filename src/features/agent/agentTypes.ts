@@ -1,6 +1,21 @@
-import type { AiAgentMessage } from "@/features/ai/aiAgentTypes";
+import type {
+  MessageStatus,
+  ThreadAssistantMessagePart,
+  ThreadUserMessagePart,
+} from "@assistant-ui/react";
 
-export type AgentMessage = AiAgentMessage;
+export type AgentMessage =
+  | {
+      id: string;
+      role: "user";
+      content: readonly ThreadUserMessagePart[];
+    }
+  | {
+      id: string;
+      role: "assistant";
+      content: readonly ThreadAssistantMessagePart[];
+      status: MessageStatus;
+    };
 
 export type AgentSnapshot = {
   agentId: string;
@@ -54,16 +69,4 @@ export type AgentClient = {
     command?: string,
   ): Promise<void>;
   close(agentId: string): Promise<void>;
-};
-
-export type AgentMentionItem = {
-  id: string;
-  type: "host" | "group";
-  label: string;
-};
-
-export type AgentMentionCategory = {
-  id: "hosts" | "groups";
-  label: string;
-  items: AgentMentionItem[];
 };

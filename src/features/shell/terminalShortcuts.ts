@@ -38,7 +38,12 @@ export function useTerminalShortcuts(actions: TerminalShortcutActions) {
       else if (command && key === "s") actions.toggleCommands(event.shiftKey);
       else if (command && !event.shiftKey && key === "k") actions.clearActive();
       else if (command && !event.shiftKey && key === "f") actions.searchActive();
-      else if (command && !event.shiftKey && key === "c") actions.copyActive();
+      else if (
+        command &&
+        !event.shiftKey &&
+        key === "c" &&
+        !window.getSelection()?.toString()
+      ) actions.copyActive();
       else if (command && !event.shiftKey && key === "v") actions.pasteActive();
       else if (command && !event.shiftKey && key === "a") actions.selectAll();
       else if (event.altKey && event.shiftKey && key === "b") actions.toggleSidebar();

@@ -8,7 +8,7 @@ import { DomainError } from "../../../../electron/ipc/domain-error.js";
 
 describe("parseDirectives", () => {
   it("parses host and group directives", () => {
-    expect(parseDirectives("把 @:host[db-primary]{name=h1} 的容器跑到 @:group[prod]{name=g1}"))
+    expect(parseDirectives("把 :host[db-primary]{name=h1} 的容器跑到 :group[prod]{name=g1}"))
       .toEqual([
         { type: "host", id: "h1", label: "db-primary" },
         { type: "group", id: "g1", label: "prod" },
@@ -32,6 +32,17 @@ describe("parseDirectives", () => {
     )).toEqual([
       { type: "host", id: "h1", label: "db-primary" },
       { type: "group", id: "g1", label: "prod" },
+    ]);
+  });
+
+  it("parses linked mentions carrying an internal id", () => {
+    expect(parseDirectives(
+      "检查 [web-prod-01](host-uuid) 的容器",
+      (label) => label === "web-prod-01"
+        ? { type: "host", id: "host-uuid" }
+        : undefined,
+    )).toEqual([
+      { type: "host", id: "host-uuid", label: "web-prod-01" },
     ]);
   });
 });

@@ -1,109 +1,88 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import {
-  unstable_useMentionAdapter,
-  type Unstable_DirectiveFormatter,
-  type Unstable_DirectiveSegment,
-  type Unstable_Mention,
+  unstable_useLiveCompletionAdapter,
+  type Unstable_TriggerItem,
 } from "@assistant-ui/react";
 import { useInventoryStore } from "@/features/inventory/inventoryStore";
 import type { Group, Host } from "@/shared/types";
-import type { AgentMentionCategory, AgentMentionItem } from "../agentTypes";
 
-export function buildMentionItems(
+export function searchAgentMentionItems(
   hosts: Host[],
   groups: Group[],
   query: string,
-): AgentMentionCategory[] {
-  const q = query.trim().toLowerCase();
-  const groupHits = groups.filter(
-    (group) => !q || group.name.toLowerCase().includes(q),
-  );
-  const hostHits = hosts.filter(
-    (host) =>
-      !q ||
-      host.name.toLowerCase().includes(q) ||
-      host.address.toLowerCase().includes(q),
-  );
-  const groupItems: AgentMentionItem[] = groupHits.map((group) => ({
-    id: group.id,
-    type: "group",
-    label: group.name,
-  }));
-  const hostItems: AgentMentionItem[] = hostHits.map((host) => ({
-    id: host.id,
-    type: "host",
-    label: host.name,
-  }));
-  return [
-    { id: "groups", label: "Groups", items: groupItems },
-    { id: "hosts", label: "Servers", items: hostItems },
-  ];
+): readonly Unstable_TriggerItem[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const matches = (...values: string[]) =>
+    !normalizedQuery ||
+    values.some((value) =>
+      value.toLocaleLowerCase().includes(normalizedQuery),
+    );
+
+  const groupItems: Unstable_TriggerItem[] = groups
+    .filter((group) => matches(group.name, group.id))
+    .map((group) => ({
+      id: group.id,
+      type: "group",
+      label: group.name,
+      description: `${hosts.filter((host) => host.groupId === group.id).length} hosts · expands to group`,
+      metadata: { icon: "Folder" },
+    }));
+  const hostItems: Unstable_TriggerItem[] = hosts
+    .filter((host) => matches(host.name, host.address, host.id))
+    .map((host) => ({
+      id: host.id,
+      type: "host",
+      label: host.name,
+      description: host.address,
+      metadata: { icon: "Server" },
+    }));
+
+  return [...groupItems, ...hostItems];
 }
 
 export function useMentionSources() {
   const hostsById = useInventoryStore((state) => state.hosts);
   const groupsById = useInventoryStore((state) => state.groups);
+  const status = useInventoryStore((state) => state.status);
   return useMemo(
     () => ({
       hosts: Object.values(hostsById),
       groups: Object.values(groupsById),
+      status,
     }),
-    [groupsById, hostsById],
+    [groupsById, hostsById, status],
   );
 }
 
-export function useAgentMentionAdapter() {
-  const { hosts, groups } = useMentionSources();
-  const items = useMemo<Unstable_Mention[]>(() => {
-    const groupItems: Unstable_Mention[] = groups.map((group) => ({
-      id: group.id,
-      type: "group",
-      label: group.name,
-      description: `${hosts.filter((host) => host.groupId === group.id).length} hosts · expands to group`,
-    }));
-    const hostItems: Unstable_Mention[] = hosts.map((host) => ({
-      id: host.id,
-      type: "host",
-      label: host.name,
-      description: host.address,
-    }));
-    return [...groupItems, ...hostItems];
-  }, [groups, hosts]);
+export function mentionSourceVersion(
+  hosts: Host[],
+  groups: Group[],
+  status: string,
+): string {
+  const groupsVersion = groups
+    .map((group) => `${group.id}:${group.name}:${group.updatedAt}`)
+    .join("|");
+  const hostsVersion = hosts
+    .map((host) =>
+      `${host.id}:${host.name}:${host.address}:${host.groupId}:${host.updatedAt}`,
+    )
+    .join("|");
+  return `${status}:${groupsVersion}:${hostsVersion}`;
+}
 
-  const formatter = useMemo<Unstable_DirectiveFormatter>(
-    () => ({
-      serialize: (item) => `@${item.label}`,
-      parse: (text) => {
-        const segments: Unstable_DirectiveSegment[] = [];
-        const mentionRe = /@([^\s@]+)/g;
-        let lastIndex = 0;
-        for (const match of text.matchAll(mentionRe)) {
-          if (match.index > lastIndex) {
-            segments.push({
-              kind: "text",
-              text: text.slice(lastIndex, match.index),
-            });
-          }
-          segments.push({
-            kind: "mention",
-            type: "host",
-            label: match[1],
-            id: match[1],
-          });
-          lastIndex = match.index + match[0].length;
-        }
-        if (lastIndex < text.length) {
-          segments.push({ kind: "text", text: text.slice(lastIndex) });
-        }
-        return segments;
-      },
-    }),
-    [],
+export function useAgentMentionCompletionAdapter({
+  hosts,
+  groups,
+  enabled,
+}: {
+  hosts: Host[];
+  groups: Group[];
+  enabled: boolean;
+}) {
+  const fetcher = useCallback(
+    async (query: string) => searchAgentMentionItems(hosts, groups, query),
+    [groups, hosts],
   );
 
-  return unstable_useMentionAdapter({
-    items,
-    includeModelContextTools: false,
-    formatter,
-  });
+  return unstable_useLiveCompletionAdapter({ fetcher, enabled });
 }

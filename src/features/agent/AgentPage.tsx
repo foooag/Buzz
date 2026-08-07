@@ -8,6 +8,7 @@ import {
 import {
   Check,
   ChevronDown,
+  Copy,
   History,
   Plus,
   Server,
@@ -17,13 +18,19 @@ import {
 } from "lucide-react";
 import {
   AssistantRuntimeProvider,
-  MessagePrimitive,
-  ThreadPrimitive,
+  generateId,
   useExternalStoreRuntime,
   type AppendMessage,
-  type MessageState,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { DirectiveText } from "@/components/assistant-ui/directive-text";
 import { aiConfigApi } from "@/features/ai/aiApi";
 import type { AiConfigApi, AiProviderConfig } from "@/features/ai/aiConfigTypes";
 import { useInventoryStore } from "@/features/inventory/inventoryStore";
@@ -42,18 +49,20 @@ import {
   MentionComposer,
   type MentionComposerDraft,
 } from "./composer/MentionComposer";
-import { expandTargets, parseDirectives } from "./directiveText";
+import {
+  expandTargets,
+  findReferencedHostIds,
+  parseDirectives,
+} from "./directiveText";
 import { HistoryDropdown } from "./HistoryDropdown";
 import { HostErrorBanner } from "./HostErrorBanner";
-import type { AgentItem, ToolCardItem, ToolStatus } from "./agentItems";
-import { nextId } from "./agentItems";
 import type { CommandStep, HostProgress } from "./progressTypes";
 import { ProgressPanel } from "./ProgressPanel";
 import {
   loadActiveIdFromDisk,
   loadSessionsFromDisk,
   normalizeRestoredHosts,
-  normalizeRestoredItems,
+  normalizeRestoredMessages,
   normalizeRestoredPhase,
   saveActiveIdToDisk,
   saveSessionsToDisk,
@@ -72,6 +81,9 @@ export type AgentPageProps = {
   providerRevision?: number;
 };
 
+type AgentMessagePart = Exclude<AgentMessage["content"], string>[number];
+type AgentToolCallPart = Extract<AgentMessagePart, { type: "tool-call" }>;
+
 export function AgentPage({
   agentClient = agentApi,
   providerApi = aiConfigApi,
@@ -83,7 +95,7 @@ export function AgentPage({
   const [providers, setProviders] = useState<AiProviderConfig[]>([]);
   const [providerId, setProviderId] = useState("");
   const promptedForProvidersRef = useRef(false);
-  const [items, setItems] = useState<AgentItem[]>([]);
+  const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [hosts, setHosts] = useState<HostProgress[]>([]);
   const [agentId, setAgentId] = useState<string>();
   const [draft, setDraft] = useState<MentionComposerDraft>();
@@ -120,7 +132,12 @@ export function AgentPage({
   });
   const activeIdRef = useRef<string | null>(activeId);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [inputText, setInputText] = useState("");
+  const inputTextRef = useRef("");
+  const [selectedChatText, setSelectedChatText] = useState("");
+
+  const handleInputTextChange = useCallback((text: string) => {
+    inputTextRef.current = text;
+  }, []);
 
   // Hydrate live conversation state from a stored session record so a reload
   // picks up exactly where the user left off.
@@ -134,9 +151,9 @@ export function AgentPage({
   );
   useEffect(() => {
     if (initialStored) {
-      setItems(normalizeRestoredItems(initialStored.items));
+      setMessages(normalizeRestoredMessages(initialStored.messages));
       setHosts(normalizeRestoredHosts(initialStored.hosts));
-      setInputText(initialStored.input);
+      inputTextRef.current = initialStored.input;
       setDraft({ text: initialStored.input, nonce: Date.now() });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -244,40 +261,27 @@ export function AgentPage({
   useEffect(() => {
     const stream = streamRef.current;
     if (stream) stream.scrollTop = stream.scrollHeight;
-  }, [items]);
+  }, [messages]);
 
-  const pushMessageItem = useCallback((message: AgentMessage) => {
-    if (message.role !== "assistant") return;
-    const { text, thinking } = assistantContent(message);
-    setItems((current) => [...current, {
-      id: nextId("msg"),
-      kind: "assistant",
-      text,
-      thinking,
-      streaming: true,
-    }]);
+  const captureChatSelection = useCallback(() => {
+    const stream = streamRef.current;
+    const selection = window.getSelection();
+    if (!stream || !selection || selection.rangeCount === 0) {
+      setSelectedChatText("");
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const selectedInsideChat = stream.contains(range.commonAncestorContainer);
+    setSelectedChatText(selectedInsideChat ? selection.toString() : "");
   }, []);
 
-  const patchAssistant = useCallback((message: AgentMessage, streaming: boolean) => {
-    if (message.role !== "assistant") return;
-    const { text, thinking } = assistantContent(message);
-    setItems((current) => {
-      const index = findLastIndex(current, (item) => item.kind === "assistant");
-      if (index === -1) {
-        return [...current, {
-          id: nextId("msg"),
-          kind: "assistant",
-          text,
-          thinking,
-          streaming,
-        }];
-      }
-      return current.map((item, itemIndex) =>
-        itemIndex === index
-          ? { ...item, text, thinking, streaming }
-          : item,
-      );
-    });
+  const copySelectedChatText = useCallback(() => {
+    if (!selectedChatText) return;
+    void copyTextToClipboard(selectedChatText);
+  }, [selectedChatText]);
+
+  const upsertMessage = useCallback((message: AgentMessage) => {
+    setMessages((current) => upsertMessages(current, [message]));
   }, []);
 
   const addHostCommand = useCallback(
@@ -327,18 +331,10 @@ export function AgentPage({
     const hostId = args.hostId ?? "unknown";
     const hostLabel = hostName(hostId);
     const command = args.command ?? "";
-    setItems((current) => [...current, {
-      id: nextId("msg"),
-      kind: "tool",
-      toolCallId: event.toolCallId,
-      cmd: command,
-      hostId,
-      hostLabel,
-      verdict: { allow: true },
-      status: "running",
-      startedAt: Date.now(),
-      expanded: false,
-    }]);
+    setMessages((current) => patchToolCall(current, event.toolCallId, (part) => ({
+      ...part,
+      timing: { startedAt: Date.now() },
+    })));
     addHostCommand(hostId, hostLabel, command, event.toolCallId);
   }, [addHostCommand, hostName]);
 
@@ -352,29 +348,15 @@ export function AgentPage({
     const failureMessage = failed
       ? toolFailureMessage(event.result, details)
       : undefined;
-    const output = commandOutput(details) ?? failureMessage;
-    setItems((current) =>
-      current.map((item) => {
-        if (item.kind !== "tool" || item.toolCallId !== event.toolCallId) {
-          return item;
-        }
-        const status: ToolStatus = failed
-          ? credentialMissing
-            ? "credential-missing"
-            : declined
-              ? "declined"
-              : "error"
-          : "done";
-        return {
-          ...item,
-          status,
-          exitCode: details?.exitCode ?? null,
-          durationMs: Date.now() - (item.startedAt ?? Date.now()),
-          output,
-          errorMessage: failureMessage,
-        };
-      }),
-    );
+    setMessages((current) => patchToolCall(current, event.toolCallId, (part) => ({
+      ...part,
+      result: event.result,
+      isError: failed,
+      timing: {
+        startedAt: part.timing?.startedAt ?? Date.now(),
+        completedAt: Date.now(),
+      },
+    })));
     setHosts((current) =>
       current.map((host) => {
         const commands = host.commands.map((command) =>
@@ -412,16 +394,19 @@ export function AgentPage({
     setConfirmation(confirmation);
     setAwaitingConfirm(true);
     setPhase("awaiting-confirm");
-    setItems((current) =>
-      current.map((item) =>
-        item.kind === "tool" &&
-        item.status === "running" &&
-        item.hostId === confirmation.hostId &&
-        item.cmd === confirmation.command
-          ? { ...item, verdict: { allow: false } }
-          : item,
-      ),
-    );
+    setMessages((current) => patchMatchingToolCall(
+      current,
+      confirmation.hostId,
+      confirmation.command,
+      (part) => ({
+        ...part,
+        approval: {
+          id: confirmation.confirmationId,
+          reason: confirmation.reason,
+          isAutomatic: false,
+        },
+      }),
+    ));
     setHosts((current) =>
       current.map((host) =>
         host.hostId === confirmation.hostId
@@ -441,40 +426,10 @@ export function AgentPage({
   const applySnapshot = useCallback((snapshot: AgentSnapshot) => {
     setRunning(snapshot.status !== "idle");
     setError(snapshot.errorMessage);
-    const latestAssistantIndex = findLastIndex(
-      snapshot.messages,
-      (message) => message.role === "assistant",
-    );
-    const latestUserIndex = findLastIndex(
-      snapshot.messages,
-      (message) => message.role === "user",
-    );
-    if (latestAssistantIndex <= latestUserIndex) return;
-    const latestAssistant = snapshot.messages[latestAssistantIndex];
-    if (latestAssistant?.role !== "assistant") return;
-    const { text, thinking } = assistantContent(latestAssistant);
-    if (!text && !thinking) return;
-    setItems((current) => {
-      const lastUserIndex = findLastIndex(current, (item) => item.kind === "user");
-      const assistantIndex = findLastIndex(
-        current,
-        (item) => item.kind === "assistant",
-      );
-      if (assistantIndex > lastUserIndex) {
-        return current.map((item, index) =>
-          index === assistantIndex
-            ? { ...item, text, thinking, streaming: false }
-            : item,
-        );
-      }
-      return [...current, {
-        id: nextId("msg"),
-        kind: "assistant",
-        text,
-        thinking,
-        streaming: false,
-      }];
-    });
+    setMessages((current) => upsertMessages(
+      current,
+      snapshot.messages.filter((message) => message.role === "assistant"),
+    ));
   }, []);
 
   const applyEvent = useCallback((event: AgentEvent) => {
@@ -486,13 +441,9 @@ export function AgentPage({
         setError(undefined);
         return;
       case "messageStart":
-        pushMessageItem(event.message);
-        return;
       case "messageUpdate":
-        patchAssistant(event.message, true);
-        return;
       case "messageEnd":
-        patchAssistant(event.message, false);
+        upsertMessage(event.message);
         return;
       case "toolStart":
         handleToolStart(event);
@@ -526,13 +477,16 @@ export function AgentPage({
           }),
         );
         if (abortedRef.current) {
-          setItems((current) =>
-            current.map((item) =>
-              item.kind === "tool" && item.status === "running"
-                ? { ...item, status: "aborted" as const }
-                : item,
-            ),
-          );
+          setMessages((current) => current.map((message) =>
+            message.role !== "assistant"
+              ? message
+              : {
+                  ...message,
+                  status: message.status?.type === "running"
+                    ? { type: "incomplete", reason: "cancelled" }
+                    : message.status,
+                },
+          ));
           abortedRef.current = false;
         }
         return;
@@ -547,8 +501,7 @@ export function AgentPage({
     handleConfirmation,
     handleToolEnd,
     handleToolStart,
-    patchAssistant,
-    pushMessageItem,
+    upsertMessage,
   ]);
 
   const runPrompt = useCallback(async (text: string) => {
@@ -564,10 +517,10 @@ export function AgentPage({
     setError(undefined);
     setAwaitingConfirm(false);
     abortedRef.current = false;
-    setItems((current) => [...current, {
-      id: nextId("msg"),
-      kind: "user",
-      text: trimmed,
+    setMessages((current) => [...current, {
+      id: generateId(),
+      role: "user",
+      content: [{ type: "text", text: trimmed }],
     }]);
     setRunning(true);
     setPhase("streaming");
@@ -580,7 +533,12 @@ export function AgentPage({
           .map((host) => host.id),
       ]),
     );
-    const targets = expandTargets(directives, groupHosts);
+    const explicitTargets = expandTargets(directives, groupHosts);
+    const referencedTargets = findReferencedHostIds(
+      trimmed,
+      Object.values(hostsRef.current),
+    );
+    const targets = [...new Set([...explicitTargets, ...referencedTargets])];
     debugAgentMessage("send", {
       agentId: activeAgentId,
       text: trimmed,
@@ -613,16 +571,11 @@ export function AgentPage({
     void agentClient.abort(agentId).catch(() => undefined);
   }, [agentClient]);
 
-  const threadMessages = useMemo<ThreadMessageLike[]>(
-    () => items.map(itemToThreadMessage),
-    [items],
-  );
-
   const runtime = useExternalStoreRuntime({
-    messages: threadMessages,
-    convertMessage: (message) => message,
+    messages,
+    convertMessage: convertAgentMessage,
     isRunning: running,
-    isDisabled: !agentId,
+    isDisabled: awaitingConfirm,
     isSendDisabled: running || awaitingConfirm || !agentId,
     onNew: async (message) => {
       await runPrompt(appendMessageText(message));
@@ -646,15 +599,16 @@ export function AgentPage({
       .decideTool(agentId, current.confirmationId, decision === "run", command)
       .catch(() => setError("The confirmation is no longer valid."));
     if (decision === "run" && command && command !== current.command) {
-      setItems((items) =>
-        items.map((item) =>
-          item.kind === "tool" &&
-          item.hostId === current.hostId &&
-          item.cmd === current.command
-            ? { ...item, cmd: command }
-            : item,
-        ),
-      );
+      setMessages((messages) => patchMatchingToolCall(
+        messages,
+        current.hostId,
+        current.command,
+        (part) => ({
+          ...part,
+          args: { ...part.args, command },
+          argsText: JSON.stringify({ ...part.args, command }),
+        }),
+      ));
       setHosts((currentHosts) =>
         currentHosts.map((host) =>
           host.hostId === current.hostId
@@ -673,18 +627,18 @@ export function AgentPage({
   }, [agentClient, confirmation]);
 
   // ----- Session lifecycle ------------------------------------------------
-  // persistLiveIntoSession writes the current live conversation (items, hosts,
+  // persistLiveIntoSession writes the current live conversation (messages, hosts,
   // composer draft, phase) into the active session record, creating one when
   // needed. It is fully imperative — mutates sessionsRef synchronously, then
   // mirrors into setSessions so React re-renders — so the "create vs update"
   // decision never waits on a setState flush.
   const persistLiveIntoSession = useCallback(
-    (overrides?: Partial<Pick<AgentSession, "items" | "hosts" | "input" | "phase">>) => {
+    (overrides?: Partial<Pick<AgentSession, "messages" | "hosts" | "input" | "phase">>) => {
       const now = new Date().toISOString();
       const snap = {
-        items: overrides?.items ?? items,
+        messages: overrides?.messages ?? messages,
         hosts: overrides?.hosts ?? hosts,
-        input: overrides?.input ?? inputText,
+        input: overrides?.input ?? inputTextRef.current,
         phase: overrides?.phase ?? phase,
       };
       const existingId = activeIdRef.current;
@@ -701,17 +655,17 @@ export function AgentPage({
                 // preserve a manual rename (or an already-derived title).
                 title:
                   session.title === "New task"
-                    ? deriveTitle(snap.items)
+                    ? deriveTitle(snap.messages)
                     : session.title,
                 updatedAt: now,
               }
             : session,
         );
       } else {
-        assignedId = nextId("agent-session");
+        assignedId = generateId();
         const first: AgentSession = {
           id: assignedId,
-          title: deriveTitle(snap.items),
+          title: deriveTitle(snap.messages),
           createdAt: now,
           updatedAt: now,
           ...snap,
@@ -728,15 +682,13 @@ export function AgentPage({
       }
       return assignedId;
     },
-    [items, hosts, inputText, phase],
+    [messages, hosts, phase],
   );
 
-  const deriveTitle = useCallback((currentItems: AgentItem[]) => {
-    const firstUser = currentItems.find(
-      (item) => item.kind === "user" && Boolean(item.text.trim()),
-    );
-    if (firstUser && firstUser.kind === "user") {
-      return summarizeTitle(firstUser.text);
+  const deriveTitle = useCallback((currentMessages: AgentMessage[]) => {
+    const firstUser = currentMessages.find((message) => message.role === "user");
+    if (firstUser) {
+      return summarizeTitle(messageText(firstUser));
     }
     return summarizeTitle("");
   }, []);
@@ -744,11 +696,11 @@ export function AgentPage({
   // Reset the live conversation without touching persisted sessions.
   const resetLiveState = useCallback(() => {
     setConfirmation(undefined);
-    setItems([]);
+    setMessages([]);
     setHosts([]);
     setError(undefined);
     setDraft({ text: "", nonce: Date.now() });
-    setInputText("");
+    inputTextRef.current = "";
     setRunning(false);
     setAwaitingConfirm(false);
     setPhase("idle");
@@ -767,7 +719,7 @@ export function AgentPage({
   // then reset to a fresh, unsaved scratch session with its own agent.
   const startNewChat = useCallback(() => {
     const leavingHasContent =
-      items.length > 0 || Boolean(inputText.trim());
+      messages.length > 0 || Boolean(inputTextRef.current.trim());
     if (activeIdRef.current || leavingHasContent) {
       persistLiveIntoSession();
     }
@@ -779,8 +731,7 @@ export function AgentPage({
     resetLiveState();
     restartAgent();
   }, [
-    items.length,
-    inputText,
+    messages.length,
     persistLiveIntoSession,
     resetLiveState,
     restartAgent,
@@ -791,7 +742,8 @@ export function AgentPage({
   const selectSession = useCallback(
     (id: string) => {
       if (id === activeIdRef.current) return;
-      const leavingHasContent = items.length > 0 || Boolean(inputText.trim());
+      const leavingHasContent =
+        messages.length > 0 || Boolean(inputTextRef.current.trim());
       if (activeIdRef.current || leavingHasContent) {
         persistLiveIntoSession();
       }
@@ -800,8 +752,8 @@ export function AgentPage({
       activeIdRef.current = id;
       setActiveId(id);
       saveActiveIdToDisk(id);
-      setInputText(target.input);
-      setItems(normalizeRestoredItems(target.items));
+      inputTextRef.current = target.input;
+      setMessages(normalizeRestoredMessages(target.messages));
       setHosts(normalizeRestoredHosts(target.hosts));
       setPhase(normalizeRestoredPhase(target.phase));
       setConfirmation(undefined);
@@ -811,8 +763,7 @@ export function AgentPage({
     },
     [
       sessions,
-      items.length,
-      inputText,
+      messages.length,
       persistLiveIntoSession,
       restartAgent,
     ],
@@ -850,29 +801,24 @@ export function AgentPage({
   // content. The very first paint (a scratch chat with no user input yet) is
   // skipped so a session record only materialises once the user engages.
   useEffect(() => {
-    if (items.length === 0) return;
+    if (messages.length === 0) return;
     persistLiveIntoSession();
-  }, [items, hosts, phase]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const toggleExpand = useCallback((id: string) => {
-    setItems((current) =>
-      current.map((item) =>
-        item.kind === "tool" && item.id === id
-          ? { ...item, expanded: !item.expanded }
-          : item,
-      ),
-    );
-  }, []);
+  }, [messages, hosts, phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const credentialHostIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const item of items) {
-      if (item.kind === "tool" && item.status === "credential-missing") {
-        ids.add(item.hostId);
+    for (const message of messages) {
+      if (message.role !== "assistant" || typeof message.content === "string") continue;
+      for (const part of message.content) {
+        if (part.type !== "tool-call" || errorCode(part.result) !== "AGENT_HOST_CREDENTIAL_MISSING") {
+          continue;
+        }
+        const hostId = toolArgs(part).hostId;
+        if (hostId) ids.add(hostId);
       }
     }
     return [...ids];
-  }, [items]);
+  }, [messages]);
 
   const selectedProvider = providers.find((provider) => provider.id === providerId);
   const providerLabel = selectedProvider
@@ -977,7 +923,7 @@ export function AgentPage({
               </div>
             </div>
 
-            {items.length === 0 ? (
+            {messages.length === 0 ? (
               <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center">
                 <div className="grid h-11 w-11 place-items-center rounded-xl border border-acid-lime/20 bg-acid-lime/10 text-acid-lime">
                   <Sparkles size={20} />
@@ -998,22 +944,31 @@ export function AgentPage({
               </div>
             ) : (
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                <div
-                  ref={streamRef}
-                  className="scroll-thin min-h-0 flex-1 overflow-y-auto bg-carbon/60 px-4 py-3"
-                >
-                  <div className="flex flex-col gap-3.5">
-                    <ThreadPrimitive.Messages>
-                      {({ message }) => (
-                        <AgentMessageView
-                          key={message.id}
-                          message={message}
-                          onToggleExpand={toggleExpand}
-                        />
-                      )}
-                    </ThreadPrimitive.Messages>
-                  </div>
-                </div>
+                <ContextMenu>
+                  <ContextMenuTrigger asChild>
+                    <div
+                      ref={streamRef}
+                      className="scroll-thin min-h-0 flex-1 select-text overflow-y-auto bg-carbon/60 px-4 py-3"
+                      onContextMenu={captureChatSelection}
+                    >
+                      <div className="flex flex-col gap-3.5">
+                        {messages.map((message) => (
+                          <AgentMessageView key={message.id} message={message} />
+                        ))}
+                      </div>
+                    </div>
+                  </ContextMenuTrigger>
+                  <ContextMenuContent className="w-40">
+                    <ContextMenuItem
+                      disabled={!selectedChatText}
+                      onSelect={copySelectedChatText}
+                    >
+                      <Copy size={14} />
+                      Copy
+                      <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
                 {credentialHostIds.length > 0 ? (
                   <div className="shrink-0 px-4 pb-3">
                     {credentialHostIds.map((hostId) => (
@@ -1037,12 +992,10 @@ export function AgentPage({
             )}
 
             <MentionComposer
-              key={`${providerId || "unconfigured"}:${agentId ?? "creating"}`}
               onAbort={handleAbort}
-              onTextChange={setInputText}
+              onTextChange={handleInputTextChange}
               busy={running}
               awaitingConfirm={awaitingConfirm}
-              disabled={!agentId}
               providerLabel={providerLabel}
               draft={draft}
             />
@@ -1069,71 +1022,93 @@ export function AgentPage({
 
 function AgentMessageView({
   message,
-  onToggleExpand,
 }: {
-  message: MessageState;
-  onToggleExpand: (id: string) => void;
+  message: AgentMessage;
 }) {
-  const buzz = message.metadata?.custom?.buzz as
-    | { kind?: string; card?: ToolCardItem; thinking?: string }
-    | undefined;
-  if (buzz?.kind === "tool" && buzz.card) {
-    return <AgentCommandCard card={buzz.card} onToggleExpand={onToggleExpand} />;
-  }
   if (message.role === "user") {
-    const text = threadMessageText(message.content);
+    const text = messageText(message);
     return (
-      <MessagePrimitive.Root className="rise-in flex gap-2.5">
+      <div className="rise-in flex gap-2.5">
         <AgentAvatar label="U" />
         <div className="min-w-0 flex-1 pt-0.5">
           <div className="text-[11px] font-medium text-fog">You</div>
           <div className="mt-0.5 whitespace-pre-wrap text-[13px] leading-relaxed text-mist">
-            {text}
+            <DirectiveText
+              type="text"
+              text={text}
+              status={{ type: "complete" }}
+            />
           </div>
         </div>
-      </MessagePrimitive.Root>
+      </div>
     );
   }
   if (message.role === "assistant") {
-    const text = threadMessageText(message.content);
-    const thinking = buzz?.kind === "assistant" ? buzz.thinking ?? "" : "";
-    if (!text && !thinking) return null;
-    const streaming = message.status?.type === "running";
     return (
-      <MessagePrimitive.Root className="rise-in flex gap-2.5">
+      <div className="rise-in flex gap-2.5">
         <AgentAvatar tone="ai" />
         <div className="min-w-0 flex-1 pt-0.5">
           <div className="text-[11px] font-medium text-acid-lime/90">Agent</div>
-          {thinking ? (
-            <AgentThinkingBlock
-              text={thinking}
-              streaming={streaming && !text}
-            />
-          ) : null}
-          {text ? (
-            <div
-              className={
-                "mt-0.5 whitespace-pre-wrap text-[13px] leading-relaxed text-mist " +
-                (streaming ? "stream-caret" : "")
-              }
-            >
-              {text}
-            </div>
-          ) : null}
+          {message.content.map((part, index) => {
+            if (part.type === "text") {
+              // Remount growing stream parts so Chromium commits every cumulative
+              // token update instead of occasionally retaining the first text node.
+              return (
+                <AgentTextPart
+                  key={`${index}:text:${part.text.length}`}
+                  text={part.text}
+                  status={part.status}
+                />
+              );
+            }
+            if (part.type === "reasoning") {
+              return (
+                <AgentReasoningPart
+                  key={`${index}:reasoning:${part.text.length}`}
+                  text={part.text}
+                  status={part.status}
+                />
+              );
+            }
+            if (part.type === "tool-call") {
+              return (
+                <AgentToolCallPart
+                  key={part.toolCallId}
+                  part={part}
+                  messageStatus={message.status}
+                />
+              );
+            }
+            return null;
+          })}
         </div>
-      </MessagePrimitive.Root>
+      </div>
     );
   }
   return null;
 }
 
-function AgentThinkingBlock({
+function AgentTextPart({
   text,
-  streaming,
-}: {
-  text: string;
-  streaming: boolean;
-}) {
+  status,
+}: Pick<Extract<AgentMessagePart, { type: "text" }>, "text" | "status">) {
+  if (!text) return null;
+  return (
+    <div
+      className={
+        "mt-0.5 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-mist " +
+        (status?.type === "running" ? "stream-caret" : "")
+      }
+    >
+      {text}
+    </div>
+  );
+}
+
+function AgentReasoningPart({
+  text,
+  status,
+}: Pick<Extract<AgentMessagePart, { type: "reasoning" }>, "text" | "status">) {
   const ref = useRef<HTMLDetailsElement>(null);
 
   useEffect(() => {
@@ -1148,7 +1123,7 @@ function AgentThinkingBlock({
       <div
         className={
           "mt-1 whitespace-pre-wrap break-words border-l border-graphite pl-3 text-[12px] leading-relaxed " +
-          (streaming ? "stream-caret" : "")
+          (status?.type === "running" ? "stream-caret" : "")
         }
       >
         {text}
@@ -1186,11 +1161,22 @@ function VerdictChip({ allow }: { allow: boolean }) {
   );
 }
 
-function AgentStatusBadge({ card }: { card: ToolCardItem }) {
-  if (card.status === "pending") {
-    return <span className="text-[11px] text-fog">queued</span>;
-  }
-  if (card.status === "running") {
+type AgentToolViewStatus =
+  | "running"
+  | "done"
+  | "error"
+  | "credential-missing"
+  | "declined"
+  | "aborted";
+
+function AgentStatusBadge({
+  status,
+  exitCode,
+}: {
+  status: AgentToolViewStatus;
+  exitCode?: number | null;
+}) {
+  if (status === "running") {
     return (
       <span className="inline-flex items-center gap-1.5 text-[11px] text-mist">
         <span className="spin h-3 w-3 rounded-full border-[1.5px] border-graphite border-t-acid-lime" />
@@ -1198,28 +1184,28 @@ function AgentStatusBadge({ card }: { card: ToolCardItem }) {
       </span>
     );
   }
-  if (card.status === "credential-missing") {
+  if (status === "credential-missing") {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-yellow-500/12 px-2 py-0.5 text-[11px] text-yellow-400">
         needs credential
       </span>
     );
   }
-  if (card.status === "declined") {
+  if (status === "declined") {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-yellow-500/12 px-2 py-0.5 text-[11px] text-yellow-400">
         declined
       </span>
     );
   }
-  if (card.status === "aborted") {
+  if (status === "aborted") {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-graphite px-2 py-0.5 text-[11px] text-fog">
         aborted
       </span>
     );
   }
-  const ok = card.status === "done" && card.exitCode === 0;
+  const ok = status === "done" && (exitCode === 0 || exitCode == null);
   return (
     <span
       className={
@@ -1230,50 +1216,75 @@ function AgentStatusBadge({ card }: { card: ToolCardItem }) {
       }
     >
       {ok ? <Check size={12} /> : <X size={12} />}
-      {card.status === "done"
-        ? `exit ${card.exitCode ?? "—"}`
+      {status === "done"
+        ? `exit ${exitCode ?? "—"}`
         : "failed"}
     </span>
   );
 }
 
-function AgentCommandCard({
-  card,
-  onToggleExpand,
+function AgentToolCallPart({
+  part,
+  messageStatus,
 }: {
-  card: ToolCardItem;
-  onToggleExpand: (id: string) => void;
+  part: AgentToolCallPart;
+  messageStatus: Extract<AgentMessage, { role: "assistant" }>["status"];
 }) {
-  const hasOutput = card.status === "done" || card.status === "error";
-  const lines = card.output ? card.output.split("\n").filter(Boolean) : [];
+  const { toolName, args, result, isError, timing, approval } = part;
+  const [expanded, setExpanded] = useState(false);
+  const parsedArgs = toolArgs({ args });
+  const hostId = parsedArgs.hostId ?? "unknown";
+  const hostLabel = useInventoryStore(
+    (state) => state.hosts[hostId]?.name ?? hostId,
+  );
+  const details = resultDetails(result);
+  const code = errorCode(result);
+  const failed = Boolean(isError) || isNonZeroExit(details?.exitCode);
+  const status: AgentToolViewStatus = code === "AGENT_HOST_CREDENTIAL_MISSING"
+    ? "credential-missing"
+    : code === "AGENT_DECLINED"
+      ? "declined"
+      : messageStatus.type === "incomplete" && messageStatus.reason === "cancelled"
+        ? "aborted"
+        : result === undefined
+          ? "running"
+          : failed
+            ? "error"
+            : "done";
+  const failureMessage = failed ? toolFailureMessage(result, details) : undefined;
+  const output = commandOutput(details) ?? failureMessage;
+  const lines = output ? output.split("\n").filter(Boolean) : [];
   const excerpt = 5;
   const showExpand = lines.length > excerpt;
-  const visible = card.expanded ? lines : lines.slice(0, excerpt);
+  const visible = expanded ? lines : lines.slice(0, excerpt);
+  const durationMs = timing?.completedAt === undefined
+    ? undefined
+    : timing.completedAt - timing.startedAt;
   return (
     <div className="rise-in overflow-hidden rounded-xl border border-graphite bg-obsidian/50">
       <div className="flex items-center justify-between gap-2 px-3 py-2">
-        <VerdictChip allow={card.verdict.allow} />
-        <AgentStatusBadge card={card} />
+        <VerdictChip allow={!approval || approval.isAutomatic === true} />
+        <AgentStatusBadge status={status} exitCode={details?.exitCode} />
       </div>
 
       <div className="px-3 pb-2">
         <div className="flex items-start gap-2 font-mono text-[12.5px] leading-relaxed text-mist">
           <span className="select-none text-fog">$</span>
           <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
-            {card.cmd}
+            {parsedArgs.command ?? toolName}
           </span>
         </div>
       </div>
 
-      {card.status === "running" ? (
+      {status === "running" ? (
         <div className="mx-3 mb-2.5 rounded-md border border-graphite/70 bg-black/40 px-2.5 py-2 font-mono text-[12px] text-fog">
           <span className="c-dim">capturing output…</span>
         </div>
-      ) : hasOutput && lines.length > 0 ? (
+      ) : lines.length > 0 ? (
         <div
           className={
             "mx-3 mb-2.5 rounded-md border border-graphite/70 bg-black/40 px-2.5 py-2 font-mono text-[12px] leading-relaxed " +
-            (card.status === "error" ? "text-coral-red/90" : "text-mist/90")
+            (failed ? "text-coral-red/90" : "text-mist/90")
           }
         >
           {visible.map((line, index) => (
@@ -1286,22 +1297,22 @@ function AgentCommandCard({
 
       <div className="flex items-center justify-between gap-2 border-t border-graphite/70 px-3 py-1.5 text-[11px] text-fog">
         <div className="flex min-w-0 items-center gap-2">
-          {card.durationMs !== undefined && card.status === "done" ? (
-            <span className="shrink-0">{formatDuration(card.durationMs)}</span>
+          {durationMs !== undefined && status === "done" ? (
+            <span className="shrink-0">{formatDuration(durationMs)}</span>
           ) : null}
           <span className="inline-flex min-w-0 items-center gap-1">
             <Server size={11} className="shrink-0" />
-            <span className="truncate">{card.hostLabel}</span>
+            <span className="truncate">{hostLabel}</span>
           </span>
         </div>
         {showExpand ? (
           <button
             type="button"
-            onClick={() => onToggleExpand(card.id)}
+            onClick={() => setExpanded((value) => !value)}
             className="inline-flex shrink-0 items-center gap-1 rounded text-fog transition-colors hover:text-mist"
           >
-            <ChevronDown size={12} className={card.expanded ? "rotate-180" : ""} />
-            {card.expanded
+            <ChevronDown size={12} className={expanded ? "rotate-180" : ""} />
+            {expanded
               ? "Show less"
               : `Expand (${lines.length - excerpt} more)`}
           </button>
@@ -1309,14 +1320,6 @@ function AgentCommandCard({
       </div>
     </div>
   );
-}
-
-function threadMessageText(content: ThreadMessageLike["content"]): string {
-  if (typeof content === "string") return content;
-  return content
-    .filter((part) => part.type === "text")
-    .map((part) => part.text)
-    .join("");
 }
 
 function appendMessageText(message: AppendMessage): string {
@@ -1327,75 +1330,101 @@ function appendMessageText(message: AppendMessage): string {
     .join("");
 }
 
-function itemToThreadMessage(item: AgentItem): ThreadMessageLike {
-  if (item.kind === "user") {
-    return { role: "user", id: item.id, content: item.text };
-  }
-  if (item.kind === "assistant") {
-    return {
-      role: "assistant",
-      id: item.id,
-      content: item.text ? [{ type: "text", text: item.text }] : [],
-      status: item.streaming
-        ? { type: "running" }
-        : { type: "complete", reason: "stop" },
-      metadata: {
-        custom: {
-          buzz: {
-            kind: "assistant",
-            thinking: item.thinking ?? "",
-          },
-        },
-      },
-    };
-  }
-  return {
-    role: "assistant",
-    id: item.id,
-    content: [],
-    metadata: { custom: { buzz: { kind: "tool", card: item } } },
-  };
+function convertAgentMessage(message: AgentMessage): ThreadMessageLike {
+  return message;
 }
 
-function assistantContent(message: Extract<AgentMessage, { role: "assistant" }>): {
-  text: string;
-  thinking: string;
+function upsertMessages(
+  current: AgentMessage[],
+  incoming: AgentMessage[],
+): AgentMessage[] {
+  if (incoming.length === 0) return current;
+  const byId = new Map(incoming.map((message) => [message.id, message]));
+  const existingIds = new Set(current.map((message) => message.id));
+  return [
+    ...current.map((message) => byId.get(message.id) ?? message),
+    ...incoming.filter((message) => !existingIds.has(message.id)),
+  ];
+}
+
+function patchToolCall(
+  messages: AgentMessage[],
+  toolCallId: string,
+  patch: (part: AgentToolCallPart) => AgentToolCallPart,
+): AgentMessage[] {
+  return messages.map((message) => {
+    if (message.role !== "assistant" || typeof message.content === "string") {
+      return message;
+    }
+    let changed = false;
+    const content = message.content.map((part) => {
+      if (part.type !== "tool-call" || part.toolCallId !== toolCallId) return part;
+      changed = true;
+      return patch(part);
+    });
+    return changed ? { ...message, content } : message;
+  });
+}
+
+function patchMatchingToolCall(
+  messages: AgentMessage[],
+  hostId: string | undefined,
+  command: string | undefined,
+  patch: (part: AgentToolCallPart) => AgentToolCallPart,
+): AgentMessage[] {
+  return messages.map((message) => {
+    if (message.role !== "assistant" || typeof message.content === "string") {
+      return message;
+    }
+    let changed = false;
+    const content = message.content.map((part) => {
+      if (part.type !== "tool-call") return part;
+      const args = toolArgs(part);
+      if (args.hostId !== hostId || args.command !== command) return part;
+      changed = true;
+      return patch(part);
+    });
+    return changed ? { ...message, content } : message;
+  });
+}
+
+function toolArgs(part: { args?: unknown }): {
+  hostId?: string;
+  command?: string;
 } {
+  if (!part.args || typeof part.args !== "object") return {};
+  const args = part.args as Record<string, unknown>;
   return {
-    text: message.content
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("")
-      .trim(),
-    thinking: message.content
-      .filter((part) => part.type === "thinking")
-      .map((part) => part.thinking)
-      .join("")
-      .trim(),
+    hostId: typeof args.hostId === "string" ? args.hostId : undefined,
+    command: typeof args.command === "string" ? args.command : undefined,
   };
 }
 
-function findLastIndex<T>(
-  values: T[],
-  predicate: (value: T) => boolean,
-): number {
-  for (let index = values.length - 1; index >= 0; index -= 1) {
-    if (predicate(values[index])) return index;
-  }
-  return -1;
+function messageText(message: Pick<ThreadMessageLike, "content">): string {
+  if (typeof message.content === "string") return message.content;
+  return message.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("");
 }
 
 function resultDetails(
   result: unknown,
 ): { stdout?: string; stderr?: string; exitCode?: number | null } | undefined {
   if (!result || typeof result !== "object") return undefined;
-  const details = (result as { details?: unknown }).details;
-  if (!details || typeof details !== "object") return undefined;
-  const value = details as {
+  const wrapped = (result as { details?: unknown }).details;
+  const value = (wrapped && typeof wrapped === "object" ? wrapped : result) as {
     stdout?: unknown;
     stderr?: unknown;
     exitCode?: unknown;
   };
+  if (
+    typeof value.stdout !== "string" &&
+    typeof value.stderr !== "string" &&
+    typeof value.exitCode !== "number"
+  ) {
+    return undefined;
+  }
   return {
     stdout: typeof value.stdout === "string" ? value.stdout : undefined,
     stderr: typeof value.stderr === "string" ? value.stderr : undefined,
@@ -1450,6 +1479,22 @@ function formatDuration(ms: number): string {
   if (ms < 1_000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1_000).toFixed(1)}s`;
   return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1_000)}s`;
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
+  }
 }
 
 function debugAgentMessage(

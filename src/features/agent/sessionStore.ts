@@ -1,4 +1,4 @@
-import type { AgentItem, ToolCardItem } from "./agentItems";
+import type { AgentMessage } from "./agentTypes";
 import type { CommandStep, HostProgress } from "./progressTypes";
 
 /**
@@ -18,7 +18,7 @@ export type AgentSession = {
   id: string;
   title: string;
   input: string;
-  items: AgentItem[];
+  messages: AgentMessage[];
   hosts: HostProgress[];
   phase: AgentSessionPhase;
   createdAt: string;
@@ -37,11 +37,11 @@ export function loadSessionsFromDisk(): AgentSession[] {
     const list = JSON.parse(raw) as unknown;
     if (!Array.isArray(list)) return [];
     return list.filter(
-      (session): session is AgentSession =>
+      (session): session is Record<string, unknown> =>
         Boolean(session) &&
         typeof session === "object" &&
         typeof (session as AgentSession).id === "string",
-    );
+    ).map(normalizeStoredSession);
   } catch {
     return [];
   }
@@ -79,6 +79,7 @@ export function summarizeTitle(text: string): string {
   // Strip @-mention directives like :host[foo]{name=…} and :group[…]{…} so
   // the title reads naturally.
   const cleaned = firstLine
+    .replace(/\[([^\]\n]+)\]\([^)\s]+\)/g, "@$1")
     .replace(/:(?:host|group)\[([^\]]+)\]\{[^}]*\}/g, "@$1")
     .replace(/\s+/g, " ")
     .trim();
@@ -129,18 +130,15 @@ export function sortSessionsByRecent(sessions: AgentSession[]): AgentSession[] {
  * tool cards) are normalised to a stable end-state so a reloaded conversation
  * doesn't appear to be mid-flight.
  */
-export function normalizeRestoredItems(items: AgentItem[]): AgentItem[] {
-  return (Array.isArray(items) ? items : []).map((item) => {
-    if (item.kind === "assistant" && item.streaming) {
-      return { ...item, streaming: false };
+export function normalizeRestoredMessages(messages: AgentMessage[]): AgentMessage[] {
+  return (Array.isArray(messages) ? messages : []).map((message) => {
+    if (message.role !== "assistant" || message.status?.type !== "running") {
+      return message;
     }
-    if (
-      item.kind === "tool" &&
-      (item.status === "pending" || item.status === "running")
-    ) {
-      return { ...item, status: "aborted" } as ToolCardItem;
-    }
-    return item;
+    return {
+      ...message,
+      status: { type: "incomplete", reason: "cancelled" },
+    };
   });
 }
 
@@ -168,4 +166,54 @@ export function normalizeRestoredPhase(
 ): AgentSessionPhase {
   if (phase === "streaming" || phase === "awaiting-confirm") return "aborted";
   return phase ?? "idle";
+}
+
+function normalizeStoredSession(value: Record<string, unknown>): AgentSession {
+  const legacyItems = Array.isArray(value.items) ? value.items : [];
+  return {
+    id: String(value.id),
+    title: typeof value.title === "string" ? value.title : DEFAULT_SESSION_TITLE,
+    input: typeof value.input === "string" ? value.input : "",
+    messages: Array.isArray(value.messages)
+      ? value.messages as AgentMessage[]
+      : migrateLegacyItems(legacyItems),
+    hosts: Array.isArray(value.hosts) ? value.hosts as HostProgress[] : [],
+    phase: normalizeRestoredPhase(value.phase as AgentSessionPhase | undefined),
+    createdAt: typeof value.createdAt === "string" ? value.createdAt : "",
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : "",
+  };
+}
+
+function migrateLegacyItems(items: unknown[]): AgentMessage[] {
+  const messages: AgentMessage[] = [];
+  for (const value of items) {
+    if (!value || typeof value !== "object") continue;
+    const item = value as Record<string, unknown>;
+    const id = typeof item.id === "string" ? item.id : `legacy-${Date.now()}`;
+    if (item.kind === "user" && typeof item.text === "string") {
+      messages.push({
+        id,
+        role: "user",
+        content: [{ type: "text", text: item.text }],
+      });
+      continue;
+    }
+    if (item.kind === "assistant") {
+      const content: Extract<AgentMessage, { role: "assistant" }>["content"] = [
+        ...(typeof item.thinking === "string" && item.thinking
+          ? [{ type: "reasoning" as const, text: item.thinking }]
+          : []),
+        ...(typeof item.text === "string" && item.text
+          ? [{ type: "text" as const, text: item.text }]
+          : []),
+      ];
+      messages.push({
+        id,
+        role: "assistant",
+        content,
+        status: { type: "complete", reason: "stop" },
+      });
+    }
+  }
+  return messages;
 }

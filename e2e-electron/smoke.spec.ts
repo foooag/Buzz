@@ -8,7 +8,7 @@ test("boots Electron and reaches the isolated desktop services", async () => {
   const dataDirectory = await mkdtemp(path.join(tmpdir(), "terminus-electron-e2e-"));
   const application = await electron.launch({
     executablePath: electronExecutable as unknown as string,
-    args: [process.cwd()],
+    args: [process.cwd(), `--user-data-dir=${dataDirectory}`],
     env: {
       ...process.env,
       TERMINUS_ISOLATED_E2E: "1",
@@ -21,7 +21,7 @@ test("boots Electron and reaches the isolated desktop services", async () => {
     const health = await window.evaluate(() => window.terminus?.invoke("app_health", undefined));
     expect(health).toEqual({
       ok: true,
-      data: { name: "terminus", version: "0.1.0" },
+      data: { name: "buzz", version: "0.0.1" },
     });
     const desktopRoundTrip = await window.evaluate(async () => {
       const bridge = window.terminus;
@@ -69,6 +69,56 @@ test("boots Electron and reaches the isolated desktop services", async () => {
     });
     expect(desktopRoundTrip.output).toContain("electron-rpc");
     expect(await window.evaluate(() => typeof process)).toBe("undefined");
+  } finally {
+    await application.close();
+  }
+});
+
+test("keeps the Agent composer cursor stable during sequential typing", async () => {
+  const dataDirectory = await mkdtemp(path.join(tmpdir(), "buzz-agent-e2e-"));
+  const application = await electron.launch({
+    executablePath: electronExecutable as unknown as string,
+    args: [process.cwd(), `--user-data-dir=${dataDirectory}`],
+    env: {
+      ...process.env,
+      TERMINUS_ISOLATED_E2E: "1",
+      TERMINUS_E2E_DATA_DIR: dataDirectory,
+    },
+  });
+  try {
+    const window = await application.firstWindow();
+    const created = await window.evaluate(() => window.terminus?.invoke(
+      "ai_create_provider_config",
+      {
+        input: {
+          providerKind: "ollama",
+          name: "Electron E2E Ollama",
+          baseUrl: "http://127.0.0.1:9",
+          modelId: "e2e-model",
+          isDefault: true,
+        },
+      },
+    ));
+    expect(created).toMatchObject({ ok: true });
+
+    await window.getByRole("link", { name: "Agent" }).click();
+    const composer = window.getByRole("textbox", { name: "Message agent" });
+    await expect(composer).toBeEnabled();
+    await composer.pressSequentially("whoami", { delay: 50 });
+
+    await expect(composer).toHaveValue("whoami");
+    expect(await composer.evaluate((element) => {
+      const input = element as HTMLTextAreaElement;
+      return {
+        active: document.activeElement === element,
+        anchorOffset: input.selectionStart,
+        focusOffset: input.selectionEnd,
+      };
+    })).toEqual({
+      active: true,
+      anchorOffset: 6,
+      focusOffset: 6,
+    });
   } finally {
     await application.close();
   }

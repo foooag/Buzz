@@ -88,7 +88,7 @@ export function HistoryDropdown({
           sessions.map((session) => {
             const active = session.id === activeId;
             const renaming = renamingId === session.id;
-            const msgCount = session.items?.length ?? 0;
+            const msgCount = session.messages.length;
             return (
               <div
                 key={session.id}

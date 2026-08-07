@@ -79,6 +79,7 @@ export function App({
   resizeObserverFactory,
 }: AppProps = {}) {
   const [destination, setDestination] = useState<Destination>("servers");
+  const [agentMounted, setAgentMounted] = useState(false);
   const [commandDrawerOpen, setCommandDrawerOpen] = useState(false);
   const [focusCommandSearch, setFocusCommandSearch] = useState(false);
   const [terminalSearchOpen, setTerminalSearchOpen] = useState(false);
@@ -107,6 +108,11 @@ export function App({
   const activateSession = useTerminalStore((state) => state.activateSession);
   const activateRelative = useTerminalStore((state) => state.activateRelative);
   const setSidebarCompact = useTerminalStore((state) => state.setSidebarCompact);
+
+  const changeDestination = useCallback((next: Destination) => {
+    if (next === "agent") setAgentMounted(true);
+    setDestination(next);
+  }, []);
 
   const openLocal = useCallback(async () => {
     try {
@@ -301,7 +307,7 @@ export function App({
     <>
     <WorkspaceShell
       destination={destination}
-      onDestinationChange={setDestination}
+      onDestinationChange={changeDestination}
       onSessionActivate={(sessionId) => {
         activateSession(sessionId);
         setDestination("terminal");
@@ -310,7 +316,25 @@ export function App({
       sidebarCompact={sidebarCompact}
       onPreferences={() => setPreferencesOpen(true)}
     >
-      {destination === "terminal" && activeSessionId && sessions[activeSessionId] ? (
+      {agentMounted ? (
+        <div
+          className={destination === "agent" ? "h-full min-h-0" : "hidden"}
+          data-testid="agent-workspace"
+          hidden={destination !== "agent"}
+        >
+          <AgentPage
+            agentClient={agent}
+            providerApi={aiConfig}
+            inventoryApi={inventory}
+            providerRevision={providerRevision}
+            onConnectFromServers={() => setDestination("servers")}
+            onRequestPreferences={openAiPreferences}
+          />
+        </div>
+      ) : null}
+      {destination === "agent"
+        ? null
+        : destination === "terminal" && activeSessionId && sessions[activeSessionId] ? (
         <TerminalWorkspace
           api={api}
           eventBus={terminalEventBus}
@@ -343,15 +367,6 @@ export function App({
             const payload = new TextEncoder().encode(`${commands.join("\n")}\n`);
             await api.write(sessionId, payload);
           }}
-        />
-      ) : destination === "agent" ? (
-        <AgentPage
-          agentClient={agent}
-          providerApi={aiConfig}
-          inventoryApi={inventory}
-          providerRevision={providerRevision}
-          onConnectFromServers={() => setDestination("servers")}
-          onRequestPreferences={openAiPreferences}
         />
       ) : destination === "sftp" ? (
         <SftpPanel api={sftp} keepaliveInterval={terminalPreferences.keepaliveInterval} />

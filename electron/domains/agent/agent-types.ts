@@ -1,39 +1,67 @@
-export type AgentTextContent = { type: "text"; text: string };
-export type AgentThinkingContent = {
-  type: "thinking";
-  thinking: string;
-  thinkingSignature?: string;
+export type AgentTextPartWire = {
+  type: "text";
+  text: string;
+  status?: AgentPartStatusWire;
 };
-export type AgentToolCallContent = {
-  type: "toolCall";
-  id: string;
-  name: string;
-  arguments: unknown;
-  thoughtSignature?: string;
+
+export type AgentReasoningPartWire = {
+  type: "reasoning";
+  text: string;
+  status?: AgentPartStatusWire;
 };
-export type AgentImageContent = { type: "image"; data: string; mimeType: string };
+
+export type AgentPartStatusWire =
+  | { type: "running" }
+  | { type: "complete" }
+  | {
+      type: "incomplete";
+      reason: "cancelled" | "length" | "content-filter" | "other" | "error";
+    };
+
+export type AgentToolCallPartWire = {
+  type: "tool-call";
+  toolCallId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  argsText: string;
+  result?: unknown;
+  isError?: boolean;
+  timing?: {
+    startedAt: number;
+    completedAt?: number;
+  };
+  approval?: {
+    id: string;
+    approved?: boolean;
+    reason?: string;
+    isAutomatic?: boolean;
+    resolution?: "cancelled" | "expired";
+  };
+};
+
+export type AgentMessageStatusWire =
+  | { type: "running" }
+  | { type: "requires-action"; reason: "tool-calls" | "interrupt" }
+  | { type: "complete"; reason: "stop" | "unknown" }
+  | {
+      type: "incomplete";
+      reason: "cancelled" | "tool-calls" | "length" | "other" | "error";
+      error?: string;
+    };
 
 export type AgentMessageWire =
   | {
+      id: string;
       role: "user";
-      content: string | Array<AgentTextContent | AgentImageContent>;
-      timestamp: number;
+      content: AgentTextPartWire[];
     }
   | {
+      id: string;
       role: "assistant";
-      content: Array<AgentTextContent | AgentThinkingContent | AgentToolCallContent>;
-      stopReason: "pending" | "stop" | "length" | "toolUse" | "error" | "aborted";
-      timestamp: number;
-      errorMessage?: string;
-      [key: string]: unknown;
-    }
-  | {
-      role: "toolResult";
-      toolCallId: string;
-      toolName: string;
-      content: Array<AgentTextContent | AgentImageContent>;
-      isError: boolean;
-      timestamp: number;
+      content: Array<
+        AgentTextPartWire | AgentReasoningPartWire | AgentToolCallPartWire
+      >;
+      status: AgentMessageStatusWire;
     };
 
 export type AgentSnapshotWire = {

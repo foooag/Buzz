@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentPage } from "@/features/agent/AgentPage";
-import type { AgentClient, AgentMessage } from "@/features/agent/agentTypes";
+import type {
+  AgentClient,
+  AgentMessage,
+  AgentSnapshot,
+} from "@/features/agent/agentTypes";
 import { createDeterministicAiConfigApi } from "@/features/ai/deterministicAiApi";
 import type { AiConfigApi, AiProviderConfig } from "@/features/ai/aiConfigTypes";
 import { useInventoryStore } from "@/features/inventory/inventoryStore";
@@ -113,6 +117,32 @@ describe("AgentPage", () => {
     expect(screen.queryByText("No provider configured")).toBeNull();
   });
 
+  it("preserves the composer while asynchronous agent creation completes", async () => {
+    const client = fakeClient();
+    let resolveCreate!: (snapshot: AgentSnapshot) => void;
+    vi.mocked(client.create).mockImplementation(() => new Promise((resolve) => {
+      resolveCreate = resolve;
+    }));
+    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
+    await waitFor(() => expect(client.create).toHaveBeenCalled());
+    const input = screen.getByLabelText("Message agent");
+    await typeComposer(input, "w");
+
+    await act(async () => {
+      resolveCreate({
+        agentId: "a1",
+        providerConfigId: "cfg-1",
+        status: "idle",
+        hosts: [],
+        messages: [],
+      });
+    });
+
+    expect(screen.getByLabelText("Message agent")).toBe(input);
+    await typeComposer(input, "h");
+    expect(input).toHaveValue("wh");
+  });
+
   it("sends a prompt with parsed targets on submit", async () => {
     const client = fakeClient();
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
@@ -120,7 +150,7 @@ describe("AgentPage", () => {
       expect(screen.getByLabelText("Message agent")).toBeEnabled();
     });
     const input = screen.getByLabelText("Message agent");
-    await userEvent.type(input, "uptime{Enter}");
+    await typeComposer(input, "uptime{Enter}");
     expect(client.prompt).toHaveBeenCalledWith(
       "a1",
       "uptime",
@@ -151,7 +181,7 @@ describe("AgentPage", () => {
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
     await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
 
-    await userEvent.type(screen.getByLabelText("Message agent"), "uptime{Enter}");
+    await typeComposer(screen.getByLabelText("Message agent"), "uptime{Enter}");
 
     await waitFor(() => expect(debug).toHaveBeenCalledWith(
       "[agent-page:complete]",
@@ -170,6 +200,15 @@ describe("AgentPage", () => {
       _targets,
       onEvent,
     ) => {
+      const toolMessage = assistantMessage([{
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "host_exec",
+        args: { hostId: "h1", command: "docker ps" },
+        argsText: JSON.stringify({ hostId: "h1", command: "docker ps" }),
+      }]);
+      onEvent({ type: "messageStart", message: toolMessage });
+      onEvent({ type: "messageEnd", message: toolMessage });
       onEvent({
         type: "toolStart",
         toolCallId: "call-1",
@@ -200,7 +239,7 @@ describe("AgentPage", () => {
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
     await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
 
-    await userEvent.type(screen.getByLabelText("Message agent"), "docker ps{Enter}");
+    await typeComposer(screen.getByLabelText("Message agent"), "docker ps{Enter}");
 
     const errorMessages = await screen.findAllByText(
       "permission denied while connecting to Docker",
@@ -233,7 +272,7 @@ describe("AgentPage", () => {
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
     await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
 
-    const submission = userEvent.type(
+    const submission = typeComposer(
       screen.getByLabelText("Message agent"),
       "inspect containers{Enter}",
     );
@@ -247,7 +286,7 @@ describe("AgentPage", () => {
       emit?.({
         type: "messageUpdate",
         message: assistantMessage([
-          { type: "thinking", thinking: "1." },
+          { type: "reasoning", text: "1." },
         ]),
       });
     });
@@ -257,7 +296,7 @@ describe("AgentPage", () => {
       emit?.({
         type: "messageUpdate",
         message: assistantMessage([
-          { type: "thinking", thinking: "1.70" },
+          { type: "reasoning", text: "1.70" },
           { type: "text", text: "正在检查容器" },
         ]),
       });
@@ -269,13 +308,61 @@ describe("AgentPage", () => {
       emit?.({
         type: "messageEnd",
         message: assistantMessage([
-          { type: "thinking", thinking: "1.70" },
+          { type: "reasoning", text: "1.70" },
           { type: "text", text: "正在检查容器" },
         ], "stop"),
       });
       completePrompt?.();
     });
     await submission;
+  });
+
+  it("copies selected chat text from the context menu", async () => {
+    const client = fakeClient();
+    const clipboard = { writeText: vi.fn(async () => undefined) };
+    const originalClipboard = Object.getOwnPropertyDescriptor(
+      navigator,
+      "clipboard",
+    );
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: clipboard,
+    });
+    vi.mocked(client.prompt).mockResolvedValue({
+      agentId: "a1",
+      providerConfigId: "cfg-1",
+      status: "idle",
+      hosts: [],
+      messages: [assistantMessage([
+        { type: "text", text: "Docker service is healthy" },
+      ], "stop")],
+    });
+
+    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
+    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
+    await typeComposer(screen.getByLabelText("Message agent"), "status{Enter}");
+
+    const response = await screen.findByText("Docker service is healthy");
+    const range = document.createRange();
+    range.selectNodeContents(response);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    fireEvent.contextMenu(response);
+    await userEvent.click(await screen.findByRole("menuitem", { name: /Copy/ }));
+
+    await waitFor(() => {
+      expect(clipboard.writeText).toHaveBeenCalledWith(
+        "Docker service is healthy",
+      );
+    });
+    selection?.removeAllRanges();
+    if (originalClipboard) {
+      Object.defineProperty(navigator, "clipboard", originalClipboard);
+    } else {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
   });
 
   it("renders authoritative thinking and text from the prompt snapshot", async () => {
@@ -287,12 +374,12 @@ describe("AgentPage", () => {
       hosts: [],
       messages: [
         {
+          id: "user-snapshot",
           role: "user",
-          content: "inspect containers",
-          timestamp: Date.now(),
+          content: [{ type: "text", text: "inspect containers" }],
         },
         assistantMessage([
-          { type: "thinking", thinking: "读取真实运行时状态" },
+          { type: "reasoning", text: "读取真实运行时状态" },
           { type: "text", text: "Docker 服务运行正常" },
         ], "stop"),
       ],
@@ -300,7 +387,7 @@ describe("AgentPage", () => {
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
     await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
 
-    await userEvent.type(
+    await typeComposer(
       screen.getByLabelText("Message agent"),
       "inspect containers{Enter}",
     );
@@ -317,14 +404,14 @@ describe("AgentPage", () => {
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
     await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
 
-    await userEvent.type(screen.getByLabelText("Message agent"), "uptime{Enter}");
+    await typeComposer(screen.getByLabelText("Message agent"), "uptime{Enter}");
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "AI provider returned 429: rate limit exceeded",
     );
   });
 
-  it("resolves a friendly @ mention into prompt targets", async () => {
+  it("resolves an official host directive into prompt targets", async () => {
     seedInventory();
     const client = fakeClient();
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
@@ -332,14 +419,70 @@ describe("AgentPage", () => {
       expect(screen.getByLabelText("Message agent")).toBeEnabled();
     });
     const input = screen.getByLabelText("Message agent");
-    await userEvent.type(input, "run @");
+    await typeComposer(input, "run @");
     await userEvent.click(
       await screen.findByRole("option", { name: /web-prod-01/ }),
     );
-    await userEvent.type(input, "uptime{Enter}");
+    await userEvent.click(screen.getByLabelText("Message agent"));
+    await userEvent.keyboard("{Enter}");
     await waitFor(() => expect(client.prompt).toHaveBeenCalledWith(
       "a1",
-      "run @web-prod-01 uptime",
+      "run :host[web-prod-01]{name=h1}",
+      ["h1"],
+      expect.any(Function),
+    ));
+    const chip = screen.getByLabelText("host: web-prod-01");
+    expect(chip).toHaveTextContent("web-prod-01");
+    expect(chip).toHaveAttribute("data-directive-id", "h1");
+    expect(chip).not.toHaveTextContent("@web-prod-01");
+    expect(screen.queryByText(
+      "run :host[web-prod-01]{name=h1}",
+      { exact: true },
+    )).toBeNull();
+  });
+
+  it("expands an official group directive into its host targets", async () => {
+    seedInventory();
+    const client = fakeClient();
+    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
+    await waitFor(() => {
+      expect(screen.getByLabelText("Message agent")).toBeEnabled();
+    });
+    const input = screen.getByLabelText("Message agent");
+    await typeComposer(input, "run @Prod");
+    await userEvent.click(
+      await screen.findByRole("option", { name: /Production/ }),
+    );
+    await userEvent.click(screen.getByLabelText("Message agent"));
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => expect(client.prompt).toHaveBeenCalledWith(
+      "a1",
+      "run :group[Production]{name=g1}",
+      ["h1"],
+      expect.any(Function),
+    ));
+    expect(screen.getByLabelText("group: Production")).toHaveTextContent(
+      "Production",
+    );
+  });
+
+  it("resolves a host address in natural-language text into prompt targets", async () => {
+    seedInventory();
+    const client = fakeClient();
+    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
+    await waitFor(() => {
+      expect(screen.getByLabelText("Message agent")).toBeEnabled();
+    });
+
+    await typeComposer(
+      screen.getByLabelText("Message agent"),
+      "查看 10.0.0.10 的容器状态{Enter}",
+    );
+
+    await waitFor(() => expect(client.prompt).toHaveBeenCalledWith(
+      "a1",
+      "查看 10.0.0.10 的容器状态",
       ["h1"],
       expect.any(Function),
     ));
@@ -349,6 +492,8 @@ describe("AgentPage", () => {
     const client = fakeClient();
     render(<AgentPage agentClient={client} providerApi={providerApi([])} />);
     expect(await screen.findByText("Agent standing by")).toBeVisible();
+    expect(screen.getByLabelText("Message agent")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
     expect(client.create).not.toHaveBeenCalled();
   });
 
@@ -409,14 +554,31 @@ describe("AgentPage", () => {
   });
 });
 
+async function typeComposer(input: HTMLElement, text: string): Promise<void> {
+  await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
+  input = screen.getByLabelText("Message agent");
+  const submit = text.endsWith("{Enter}");
+  const content = submit ? text.slice(0, -"{Enter}".length) : text;
+  await userEvent.click(input);
+  fireEvent.keyDown(input, { key: "End" });
+  if (content) {
+    const previousValue = (input as HTMLTextAreaElement).value;
+    await userEvent.paste(content);
+    await waitFor(() => expect(input).toHaveValue(previousValue + content));
+  }
+  if (submit) await userEvent.keyboard("{Enter}");
+}
+
 function assistantMessage(
   content: Extract<AgentMessage, { role: "assistant" }>["content"],
-  stopReason: Extract<AgentMessage, { role: "assistant" }>["stopReason"] = "pending",
+  stopReason: "pending" | "stop" = "pending",
 ): Extract<AgentMessage, { role: "assistant" }> {
   return {
+    id: "assistant-stream",
     role: "assistant",
     content,
-    stopReason,
-    timestamp: Date.now(),
+    status: stopReason === "pending"
+      ? { type: "running" }
+      : { type: "complete", reason: "stop" },
   };
 }

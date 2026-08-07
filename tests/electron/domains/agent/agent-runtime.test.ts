@@ -61,18 +61,31 @@ describe("MultiHostAgentRuntime", () => {
       (event) => events.push(event),
     );
 
+    const reasoningUpdates = events
+      .filter((event) => event.type === "messageUpdate")
+      .map((event) => {
+        const message = event.message as { content: Array<Record<string, unknown>> };
+        const reasoning = message.content.find((part) => part.type === "reasoning");
+        return reasoning?.text;
+      })
+      .filter(Boolean);
+    expect(reasoningUpdates).toContain("1.");
+    expect(reasoningUpdates).toContain("1.70");
+    expect(reasoningUpdates).not.toContain("1.1.70");
     expect(events.filter((event) => event.type === "messageUpdate").at(-1))
       .toMatchObject({
         message: {
+          role: "assistant",
           content: [
-            { type: "thinking", thinking: "1.70" },
+            { type: "reasoning", text: "1.70" },
             { type: "text", text: "Done" },
           ],
+          status: { type: "complete", reason: "stop" },
         },
       });
     expect(completed.messages.at(-1)).toMatchObject({
       content: [
-        { type: "thinking", thinking: "1.70" },
+        { type: "reasoning", text: "1.70" },
         { type: "text", text: "Done" },
       ],
     });

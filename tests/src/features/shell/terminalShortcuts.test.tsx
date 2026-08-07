@@ -61,6 +61,24 @@ describe("terminal shortcuts", () => {
     expect(shortcutActions.pasteActive).toHaveBeenCalledOnce();
   });
 
+  it("leaves copy available when browser text is selected", () => {
+    const shortcutActions = actions();
+    const getSelection = vi.spyOn(window, "getSelection").mockReturnValue({
+      toString: () => "selected chat text",
+    } as Selection);
+    render(<Harness shortcutActions={shortcutActions} />);
+
+    expect(
+      fireEvent.keyDown(screen.getByRole("button", { name: "Terminal surface" }), {
+        key: "c",
+        metaKey: true,
+      }),
+    ).toBe(true);
+    expect(shortcutActions.copyActive).not.toHaveBeenCalled();
+
+    getSelection.mockRestore();
+  });
+
   it("navigates to Servers and Port Forwarding with the documented shortcuts", () => {
     const shortcutActions = actions();
     render(<Harness shortcutActions={shortcutActions} />);

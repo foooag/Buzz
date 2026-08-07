@@ -11,6 +11,7 @@ export type MentionResolver = (
 ) => { type: "host" | "group"; id: string } | undefined;
 
 const DIRECTIVE_RE = /:(host|group)\[([^\]]*)\]\{name=([^}]+)\}/g;
+const LINKED_MENTION_RE = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
 const FRIENDLY_MENTION_RE = /@([^\s@]+)/g;
 
 export function parseDirectives(
@@ -25,6 +26,17 @@ export function parseDirectives(
         type: match[1] as "host" | "group",
         label: match[2],
         id: match[3],
+      },
+    });
+  }
+  for (const match of text.matchAll(LINKED_MENTION_RE)) {
+    const resolved = resolveMention?.(match[1]);
+    matches.push({
+      index: match.index ?? 0,
+      target: {
+        type: resolved?.type ?? "host",
+        label: match[1],
+        id: match[2],
       },
     });
   }

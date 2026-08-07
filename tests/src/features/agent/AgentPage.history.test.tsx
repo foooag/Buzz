@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentPage } from "@/features/agent/AgentPage";
 import type { AgentClient, AgentEvent } from "@/features/agent/agentTypes";
@@ -60,19 +60,19 @@ function fakeClient(): AgentClient {
         onEvent?.({
           type: "messageStart",
           message: {
+            id: "assistant-1",
             role: "assistant",
             content: [],
-            stopReason: "stop",
-            timestamp: Date.now(),
+            status: { type: "running" },
           },
         });
         onEvent?.({
           type: "messageEnd",
           message: {
+            id: "assistant-1",
             role: "assistant",
             content: [{ type: "text", text: "On it." }],
-            stopReason: "stop",
-            timestamp: Date.now(),
+            status: { type: "complete", reason: "stop" },
           },
         });
         onEvent?.({
@@ -106,16 +106,17 @@ function storedSession(overrides: Partial<AgentSession>): AgentSession {
     id: "s1",
     title: "Stored task",
     input: "",
-    items: [
+    messages: [
       {
         id: "u1",
-        kind: "user",
-        text: "check @web-prod-01",
+        role: "user",
+        content: [{ type: "text", text: "check @web-prod-01" }],
       },
       {
         id: "m1",
-        kind: "assistant",
-        text: "On it.",
+        role: "assistant",
+        content: [{ type: "text", text: "On it." }],
+        status: { type: "complete", reason: "stop" },
       },
     ],
     hosts: [],
@@ -166,7 +167,7 @@ describe("AgentPage chat history", () => {
       expect(screen.getByLabelText("Message agent")).toBeEnabled();
     });
     const input = screen.getByLabelText("Message agent");
-    await userEvent.type(input, "run @web-prod-01 uptime{Enter}");
+    await typeComposer(input, "run @web-prod-01 uptime{Enter}");
     await screen.findByText("On it.");
     await waitFor(() => {
       const raw = window.localStorage.getItem(AGENT_SESSIONS_KEY);
@@ -174,7 +175,7 @@ describe("AgentPage chat history", () => {
       const sessions = JSON.parse(raw ?? "[]");
       expect(sessions).toHaveLength(1);
       expect(sessions[0].title).toBe("run @web-prod-01 uptime");
-      expect(sessions[0].items.some((item: { kind: string }) => item.kind === "user")).toBe(true);
+      expect(sessions[0].messages.some((message: { role: string }) => message.role === "user")).toBe(true);
     });
   });
 
@@ -184,17 +185,17 @@ describe("AgentPage chat history", () => {
         id: "s1",
         title: "Stored task",
         input: "restored draft @web-prod-01",
-        items: [
-          { id: "u1", kind: "user", text: "check @web-prod-01" },
-          { id: "m1", kind: "assistant", text: "On it." },
+        messages: [
+          { id: "u1", role: "user", content: [{ type: "text", text: "check @web-prod-01" }] },
+          { id: "m1", role: "assistant", content: [{ type: "text", text: "On it." }], status: { type: "complete", reason: "stop" } },
         ],
       }),
       storedSession({
         id: "s2",
         title: "Another task",
-        items: [
-          { id: "u2", kind: "user", text: "another request" },
-          { id: "m2", kind: "assistant", text: "Got it." },
+        messages: [
+          { id: "u2", role: "user", content: [{ type: "text", text: "another request" }] },
+          { id: "m2", role: "assistant", content: [{ type: "text", text: "Got it." }], status: { type: "complete", reason: "stop" } },
         ],
       }),
     ]);
@@ -204,9 +205,9 @@ describe("AgentPage chat history", () => {
     // Hydrated conversation renders, including the composer draft.
     expect(await screen.findByText("check @web-prod-01")).toBeVisible();
     expect(screen.getByText("On it.")).toBeVisible();
-    expect(
-      (screen.getByLabelText("Message agent") as HTMLTextAreaElement).value,
-    ).toBe("restored draft @web-prod-01");
+    expect(screen.getByLabelText("Message agent")).toHaveTextContent(
+      "restored draft @web-prod-01",
+    );
 
     // Open history and switch to the other session.
     await userEvent.click(screen.getByRole("button", { name: "Chat history" }));
@@ -227,7 +228,7 @@ describe("AgentPage chat history", () => {
       expect(screen.getByLabelText("Message agent")).toBeEnabled();
     });
     const input = screen.getByLabelText("Message agent");
-    await userEvent.type(input, "uptime{Enter}");
+    await typeComposer(input, "uptime{Enter}");
     await screen.findByText("On it.");
     await waitFor(() => expect(window.localStorage.getItem(AGENT_SESSIONS_KEY)).not.toBeNull());
 
@@ -240,7 +241,7 @@ describe("AgentPage chat history", () => {
     await userEvent.keyboard("{Enter}");
 
     // A new message triggers auto-persist; the rename must survive.
-    await userEvent.type(input, "disk{Enter}");
+    await typeComposer(input, "disk{Enter}");
     await waitFor(() => {
       const sessions = JSON.parse(
         window.localStorage.getItem(AGENT_SESSIONS_KEY) ?? "[]",
@@ -248,8 +249,10 @@ describe("AgentPage chat history", () => {
       expect(sessions).toHaveLength(1);
       expect(sessions[0].title).toBe("Deploy check");
       expect(
-        sessions[0].items.some(
-          (item) => item.kind === "user" && item.text.includes("disk"),
+        sessions[0].messages.some(
+          (message) => message.role === "user" && message.content.some(
+            (part) => part.type === "text" && part.text.includes("disk"),
+          ),
         ),
       ).toBe(true);
     });
@@ -262,7 +265,7 @@ describe("AgentPage chat history", () => {
       expect(screen.getByLabelText("Message agent")).toBeEnabled();
     });
     const input = screen.getByLabelText("Message agent");
-    await userEvent.type(input, "uptime{Enter}");
+    await typeComposer(input, "uptime{Enter}");
     await screen.findByText("On it.");
     await waitFor(() => expect(window.localStorage.getItem(AGENT_SESSIONS_KEY)).not.toBeNull());
 
@@ -289,3 +292,18 @@ describe("AgentPage chat history", () => {
     });
   });
 });
+
+async function typeComposer(input: HTMLElement, text: string): Promise<void> {
+  await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
+  input = screen.getByLabelText("Message agent");
+  const submit = text.endsWith("{Enter}");
+  const content = submit ? text.slice(0, -"{Enter}".length) : text;
+  await userEvent.click(input);
+  fireEvent.keyDown(input, { key: "End" });
+  if (content) {
+    const previousValue = (input as HTMLTextAreaElement).value;
+    await userEvent.paste(content);
+    await waitFor(() => expect(input).toHaveValue(previousValue + content));
+  }
+  if (submit) await userEvent.keyboard("{Enter}");
+}

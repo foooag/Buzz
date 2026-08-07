@@ -31,6 +31,7 @@ type TimelineSegment =
 
 const agents = new Map<string, DeterministicState>();
 let agentSeq = 0;
+let messageSeq = 0;
 
 export function createDeterministicAgentApi(): AgentClient {
   return {
@@ -55,12 +56,6 @@ export function createDeterministicAgentApi(): AgentClient {
       state.cancelled = false;
       const providerConfigId = "";
       onEvent({ type: "agentStart" });
-      const userMessage: AgentMessage = {
-        role: "user",
-        content: text,
-        timestamp: Date.now(),
-      };
-      onEvent({ type: "messageStart", message: userMessage });
       const timeline = buildTimeline(text, targets);
       for (const segment of timeline) {
         if (state.cancelled) break;
@@ -114,12 +109,12 @@ async function streamAssistant(
   onEvent: (event: AgentEvent) => void,
   text: string,
 ): Promise<void> {
-  const timestamp = Date.now();
-  const base: AgentMessage = {
+  const id = `message-${++messageSeq}`;
+  const base: Extract<AgentMessage, { role: "assistant" }> = {
+    id,
     role: "assistant",
     content: [],
-    stopReason: "stop",
-    timestamp,
+    status: { type: "running" },
   };
   onEvent({ type: "messageStart", message: base });
   const words = text.split(" ");
@@ -141,6 +136,9 @@ async function streamAssistant(
     message: {
       ...base,
       content: [{ type: "text", text: acc }],
+      status: state.cancelled
+        ? { type: "incomplete", reason: "cancelled" }
+        : { type: "complete", reason: "stop" },
     },
   });
 }
@@ -151,15 +149,30 @@ async function runExec(
   segment: Extract<TimelineSegment, { kind: "exec" }>,
 ): Promise<void> {
   const toolCallId = `call-${segment.hostId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const args = {
+    hostId: segment.hostId,
+    command: segment.command,
+    cwd: "$HOME",
+  };
+  const toolMessage: Extract<AgentMessage, { role: "assistant" }> = {
+    id: `message-${++messageSeq}`,
+    role: "assistant",
+    content: [{
+      type: "tool-call",
+      toolCallId,
+      toolName: "host_exec",
+      args,
+      argsText: JSON.stringify(args),
+    }],
+    status: { type: "requires-action", reason: "tool-calls" },
+  };
+  onEvent({ type: "messageStart", message: toolMessage });
+  onEvent({ type: "messageEnd", message: toolMessage });
   onEvent({
     type: "toolStart",
     toolCallId,
     toolName: "host_exec",
-    args: {
-      hostId: segment.hostId,
-      command: segment.command,
-      cwd: "$HOME",
-    },
+    args,
   });
   await sleep(state, 360);
   if (state.cancelled) return;

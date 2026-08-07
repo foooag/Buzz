@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
-import { Type, type AssistantMessage, type AssistantMessageEvent } from "@earendil-works/pi-ai";
+import { Type, type AssistantMessage, type ToolResultMessage } from "@earendil-works/pi-ai";
 import { DomainError } from "../../ipc/domain-error.js";
 import type { AiHistoryRepository } from "../ai/history.js";
 import type { AiModelRuntime } from "../ai/model-runtime.js";
@@ -15,11 +15,12 @@ import type { AgentHostResolver } from "./host-resolution.js";
 import type {
   AgentEventWire,
   AgentMessageWire,
+  AgentMessageStatusWire,
   AgentSnapshotWire,
 } from "./agent-types.js";
 
 const SYSTEM_PROMPT =
-  "You are the Buzz multi-host ops agent. You may only operate on the hosts explicitly mentioned in the user's request. Use host_exec to run commands on one target host and host_list to enumerate hosts in a group. Always pass cwd. Explain risky actions before requesting confirmation.";
+  "You are the Buzz multi-host ops agent. You may only operate on the hosts explicitly mentioned in the user's request. Targets use assistant-ui directives: :host[label]{name=id} for a host and :group[label]{name=id} for a group. Pass the directive's name value (the internal id), not its label, to tools. Use host_exec to run commands on one target host and host_list to enumerate hosts in a group. Always pass cwd. Explain risky actions before requesting confirmation.";
 const CONFIRMATION_TTL_MS = 60_000;
 const HISTORY_SSH_SESSION_ID = "headless";
 
@@ -51,7 +52,8 @@ type AgentEntry = {
   emit?: Emit;
   sessionId?: string;
   pending?: PendingConfirmation;
-  streamingAssistant?: AssistantMessage;
+  streamingAssistantId?: string;
+  messageIds: WeakMap<object, string>;
   closed: boolean;
 };
 
@@ -94,6 +96,7 @@ export class MultiHostAgentRuntime {
       allowedHosts,
       agent: undefined as unknown as Agent,
       unsubscribe: () => undefined,
+      messageIds: new WeakMap(),
       closed: false,
     };
     const agent = new Agent({
@@ -308,33 +311,39 @@ export class MultiHostAgentRuntime {
     if (entry.closed) return;
     switch (event.type) {
       case "agent_start":
-        entry.streamingAssistant = undefined;
+        entry.streamingAssistantId = undefined;
         entry.emit?.({ type: "agentStart" });
         return;
-      case "message_start":
+      case "message_start": {
+        const id = messageId(entry, event.message);
         if (event.message.role === "assistant") {
-          entry.streamingAssistant = serializable(event.message);
+          entry.streamingAssistantId = id;
+          entry.emit?.({
+            type: "messageStart",
+            message: wireAssistantMessage(event.message, id),
+          });
         }
-        entry.emit?.({ type: "messageStart", message: wireMessage(event.message) });
         return;
+      }
       case "message_update": {
         if (event.message.role !== "assistant") return;
-        const message = mergeAssistantStream(
-          entry.streamingAssistant,
-          event.message,
-          event.assistantMessageEvent,
-        );
-        entry.streamingAssistant = message;
-        entry.emit?.({ type: "messageUpdate", message: wireMessage(message) });
+        const id = entry.streamingAssistantId ?? messageId(entry, event.message);
+        entry.emit?.({
+          type: "messageUpdate",
+          message: wireAssistantMessage(event.message, id),
+        });
         return;
       }
       case "message_end": {
-        if (event.message.role === "assistant" && entry.streamingAssistant) {
-          const message = mergeAssistantStream(entry.streamingAssistant, event.message);
-          event.message.content = message.content;
+        if (event.message.role === "assistant") {
+          const id = entry.streamingAssistantId ?? messageId(entry, event.message);
+          entry.messageIds.set(event.message, id);
+          entry.emit?.({
+            type: "messageEnd",
+            message: wireAssistantMessage(event.message, id),
+          });
         }
-        entry.streamingAssistant = undefined;
-        entry.emit?.({ type: "messageEnd", message: wireMessage(event.message) });
+        entry.streamingAssistantId = undefined;
         return;
       }
       case "tool_execution_start":
@@ -441,7 +450,7 @@ export class MultiHostAgentRuntime {
     await entry.agent.waitForIdle();
     entry.unsubscribe();
     entry.emit = undefined;
-    entry.streamingAssistant = undefined;
+    entry.streamingAssistantId = undefined;
   }
 
   #entry(ownerId: string, agentId: string): AgentEntry {
@@ -461,130 +470,130 @@ function snapshot(entry: AgentEntry): AgentSnapshotWire {
         ? "running"
         : "idle",
     hosts: entry.hosts,
-    messages: wireMessages(entry.agent.state.messages),
+    messages: wireMessages(entry, entry.agent.state.messages),
     ...(entry.agent.state.errorMessage
       ? { errorMessage: entry.agent.state.errorMessage.slice(0, 1_000) }
       : {}),
   };
 }
 
-function wireMessages(messages: AgentMessage[]): AgentMessageWire[] {
-  return messages.map(wireMessage);
+function wireMessages(entry: AgentEntry, messages: AgentMessage[]): AgentMessageWire[] {
+  const output: AgentMessageWire[] = [];
+  const toolParts = new Map<string, { messageIndex: number; partIndex: number }>();
+  for (const message of messages) {
+    if (message.role === "user") {
+      output.push(wireUserMessage(messageId(entry, message), message.content));
+      continue;
+    }
+    if (message.role === "assistant") {
+      const wire = wireAssistantMessage(message, messageId(entry, message));
+      const messageIndex = output.push(wire) - 1;
+      wire.content.forEach((part, partIndex) => {
+        if (part.type === "tool-call") {
+          toolParts.set(part.toolCallId, { messageIndex, partIndex });
+        }
+      });
+      continue;
+    }
+    if (message.role === "toolResult") {
+      mergeToolResult(output, toolParts, message);
+    }
+  }
+  return output;
 }
 
-function wireMessage(message: AgentMessage): AgentMessageWire {
-  switch (message.role) {
-    case "user":
+function messageId(entry: AgentEntry, message: object): string {
+  const existing = entry.messageIds.get(message);
+  if (existing) return existing;
+  const id = randomUUID();
+  entry.messageIds.set(message, id);
+  return id;
+}
+
+function wireUserMessage(
+  id: string,
+  content: Extract<AgentMessage, { role: "user" }>["content"],
+): AgentMessageWire {
+  const parts = typeof content === "string" ? [{ type: "text" as const, text: content }] :
+    content.flatMap((part) => part.type === "text"
+      ? [{ type: "text" as const, text: part.text }]
+      : []);
+  return { id, role: "user", content: parts };
+}
+
+function wireAssistantMessage(message: AssistantMessage, id: string): AgentMessageWire {
+  const partStatus = message.stopReason === "pending"
+    ? { type: "running" as const }
+    : { type: "complete" as const };
+  return {
+    id,
+    role: "assistant",
+    content: message.content.map((part) => {
+      if (part.type === "text") {
+        return { type: "text", text: part.text, status: partStatus };
+      }
+      if (part.type === "thinking") {
+        return { type: "reasoning", text: part.thinking, status: partStatus };
+      }
       return {
-        role: "user",
-        content: serializable(message.content),
-        timestamp: message.timestamp,
+        type: "tool-call",
+        toolCallId: part.id,
+        toolName: part.name,
+        args: serializable(part.arguments) as Record<string, unknown>,
+        argsText: JSON.stringify(part.arguments),
       };
-    case "assistant":
+    }),
+    status: assistantStatus(message),
+  };
+}
+
+function assistantStatus(message: AssistantMessage): AgentMessageStatusWire {
+  switch (message.stopReason) {
+    case "pending":
+      return { type: "running" as const };
+    case "stop":
+      return { type: "complete" as const, reason: "stop" as const };
+    case "toolUse":
+      return { type: "requires-action" as const, reason: "tool-calls" as const };
+    case "length":
+      return { type: "incomplete" as const, reason: "length" as const };
+    case "aborted":
+      return { type: "incomplete" as const, reason: "cancelled" as const };
+    case "error":
       return {
-        role: "assistant",
-        content: serializable(message.content),
-        stopReason: message.stopReason,
-        timestamp: message.timestamp,
+        type: "incomplete" as const,
+        reason: "error" as const,
         ...(message.errorMessage
-          ? { errorMessage: message.errorMessage.slice(0, 1_000) }
+          ? { error: message.errorMessage.slice(0, 1_000) }
           : {}),
       };
-    case "toolResult":
-      return {
-        role: "toolResult",
-        toolCallId: message.toolCallId,
-        toolName: message.toolName,
-        content: serializable(message.content),
-        isError: message.isError,
-        timestamp: message.timestamp,
-      };
-    default:
-      return {
-        role: "user",
-        content: "[Unsupported agent message]",
-        timestamp: Date.now(),
-      };
   }
+}
+
+function mergeToolResult(
+  messages: AgentMessageWire[],
+  toolParts: Map<string, { messageIndex: number; partIndex: number }>,
+  result: ToolResultMessage,
+): void {
+  const location = toolParts.get(result.toolCallId);
+  if (!location) return;
+  const message = messages[location.messageIndex];
+  if (message?.role !== "assistant") return;
+  const part = message.content[location.partIndex];
+  if (part?.type !== "tool-call") return;
+  message.content[location.partIndex] = {
+    ...part,
+    result: result.details ?? result.content,
+    isError: result.isError,
+    timing: {
+      startedAt: part.timing?.startedAt ?? result.timestamp,
+      completedAt: result.timestamp,
+    },
+  };
 }
 
 function serializable<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function mergeAssistantStream(
-  previous: AssistantMessage | undefined,
-  incoming: AssistantMessage,
-  update?: AssistantMessageEvent,
-): AssistantMessage {
-  const message = serializable(incoming);
-  if (!previous) return message;
-  const previousContent = previous.content;
-  const incomingContent = message.content;
-  const content = Array.from(
-    { length: Math.max(previousContent.length, incomingContent.length) },
-    (_, index) => mergeContentBlock(previousContent[index], incomingContent[index]),
-  ).filter((part): part is AssistantMessage["content"][number] => Boolean(part));
-  message.content = content;
-  if (!update || !(update.type === "text_delta" || update.type === "thinking_delta")) {
-    return message;
-  }
-  const previousPart = previousContent[update.contentIndex];
-  const incomingPart = incomingContent[update.contentIndex];
-  const mergedPart = content[update.contentIndex];
-  if (update.type === "text_delta") {
-    const previousText = previousPart?.type === "text" ? previousPart.text : "";
-    const incomingText = incomingPart?.type === "text" ? incomingPart.text : "";
-    const incomingIncludesDelta = incomingText.startsWith(previousText) &&
-      incomingText.length > previousText.length;
-    if (!incomingIncludesDelta) {
-      content[update.contentIndex] = {
-        type: "text",
-        text: `${previousText}${update.delta}`,
-      };
-    } else if (mergedPart?.type !== "text") {
-      content[update.contentIndex] = { type: "text", text: incomingText };
-    }
-  } else {
-    const previousThinking = previousPart?.type === "thinking" ? previousPart.thinking : "";
-    const incomingThinking = incomingPart?.type === "thinking" ? incomingPart.thinking : "";
-    const incomingIncludesDelta = incomingThinking.startsWith(previousThinking) &&
-      incomingThinking.length > previousThinking.length;
-    if (!incomingIncludesDelta) {
-      content[update.contentIndex] = {
-        type: "thinking",
-        thinking: `${previousThinking}${update.delta}`,
-      };
-    } else if (mergedPart?.type !== "thinking") {
-      content[update.contentIndex] = {
-        type: "thinking",
-        thinking: incomingThinking,
-      };
-    }
-  }
-  return message;
-}
-
-function mergeContentBlock(
-  previous: AssistantMessage["content"][number] | undefined,
-  incoming: AssistantMessage["content"][number] | undefined,
-): AssistantMessage["content"][number] | undefined {
-  if (!previous) return incoming;
-  if (!incoming) return previous;
-  if (previous.type !== incoming.type) return incoming;
-  if (previous.type === "text" && incoming.type === "text") {
-    const text = incoming.text.length >= previous.text.length
-      ? incoming.text
-      : `${previous.text}${incoming.text}`;
-    return { type: "text", text };
-  }
-  if (previous.type === "thinking" && incoming.type === "thinking") {
-    const thinking = incoming.thinking.length >= previous.thinking.length
-      ? incoming.thinking
-      : `${previous.thinking}${incoming.thinking}`;
-    return { type: "thinking", thinking };
-  }
-  return incoming;
 }
 
 function busy(): DomainError {
