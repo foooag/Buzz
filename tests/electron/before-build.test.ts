@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 // @ts-expect-error The electron-builder hook is an untyped JavaScript module.
-import beforeBuild from "../../electron/before-build.mjs";
+import beforeBuild from "../../build/before-build.mjs";
 
 const temporaryDirectories: string[] = [];
 

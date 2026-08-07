@@ -6,7 +6,8 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
+      "@": fileURLToPath(new URL("./src/renderer", import.meta.url)),
+      "@shared": fileURLToPath(new URL("./src/shared", import.meta.url)),
     },
   },
   test: {
@@ -14,6 +15,6 @@ export default defineConfig({
     setupFiles: ["./tests/setup.ts"],
     css: true,
     include: ["tests/**/*.test.{ts,tsx}"],
-    exclude: ["node_modules/**", "dist/**", "dist-electron/**", "e2e/**", "e2e-electron/**"],
+    exclude: ["node_modules/**", "out/**", "release/**", "e2e/**", "e2e-electron/**"],
   },
 });
