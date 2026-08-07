@@ -8,20 +8,18 @@
   },
   "private": true,
   "type": "module",
-  "main": "dist-electron/main.cjs",
+  "main": "./out/main/index.mjs",
   "scripts": {
-    "dev": "pnpm build:electron && concurrently -k \"pnpm dev:web\" \"wait-on http://127.0.0.1:1420 && electron .\"",
+    "dev": "electron-vite dev",
     "dev:web": "vite",
-    "build": "pnpm typecheck && pnpm build:renderer && pnpm build:electron",
-    "build:renderer": "vite build",
-    "build:electron": "node build/clean-output.mjs && tsc -p tsconfig.node.json",
+    "build": "pnpm typecheck && electron-vite build",
     "package": "pnpm build && electron-builder",
-    "preview": "vite preview",
+    "preview": "electron-vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:electron": "pnpm build:electron && playwright test --config playwright.electron.config.ts",
-    "typecheck": "tsc --noEmit --pretty false"
+    "test:electron": "electron-vite build && playwright test --config playwright.electron.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false && tsc -p tsconfig.node.json --noEmit --pretty false"
   },
   "dependencies": {
     "@assistant-ui/react": "0.15.4",
@@ -68,6 +66,7 @@
     "concurrently": "^10.0.4",
     "electron": "^43.3.0",
     "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
     "jsdom": "^25.0.0",
     "postcss": "^8.5.16",
     "tailwindcss": "3.4.17",
@@ -93,9 +92,7 @@
       "output": "release"
     },
     "files": [
-      "dist/**/*",
-      "dist-electron/**/*",
-      "electron/preload.cjs",
+      "out/**/*",
       "package.json"
     ],
     "mac": {

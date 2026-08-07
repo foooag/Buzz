@@ -16,7 +16,7 @@ describe("desktop updater configuration", () => {
         };
       };
     };
-    const mainProcess = readFileSync(`${root}/src/main/index.cts`, "utf8");
+    const mainProcess = readFileSync(`${root}/src/main/index.ts`, "utf8");
 
     expect(packageJson.build?.publish).toEqual({
       provider: "github",

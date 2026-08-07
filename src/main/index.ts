@@ -14,7 +14,6 @@ import type { AiService } from "./domains/ai/service.js";
 import type { MultiHostAgentRuntime } from "./domains/agent/agent-runtime.js";
 import type { SshHeadlessRuntime } from "./domains/ssh/headless.js";
 
-const projectRoot = path.resolve(__dirname, "..");
 const streamOwners = new Map<string, WebContents>();
 let commandDispatcher: ElectronCommandDispatcher | undefined;
 let inventoryRepository: InventoryRepository | undefined;
@@ -41,7 +40,7 @@ function createWindow(): BrowserWindow {
     minHeight: 640,
     show: false,
     webPreferences: {
-      preload: path.join(projectRoot, "electron", "preload.cjs"),
+      preload: path.join(import.meta.dirname, "..", "preload", "index.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -61,7 +60,7 @@ function createWindow(): BrowserWindow {
     if (!allowed) event.preventDefault();
   });
   window.once("ready-to-show", () => window.show());
-  if (app.isPackaged) void window.loadFile(path.join(projectRoot, "dist", "index.html"));
+  if (app.isPackaged) void window.loadFile(path.join(import.meta.dirname, "..", "renderer", "index.html"));
   else void window.loadURL("http://127.0.0.1:1420");
   return window;
 }
