@@ -2,11 +2,15 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
 
+// Renderer-only Vite config. Powers `pnpm dev:web` and the Playwright webServer.
+// The unified main+preload+renderer build lives in electron.vite.config.ts (added in Task 7).
 export default defineConfig({
+  root: fileURLToPath(new URL("./src/renderer", import.meta.url)),
   plugins: [react()],
   resolve: {
     alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
+      "@": fileURLToPath(new URL("./src/renderer", import.meta.url)),
+      "@shared": fileURLToPath(new URL("./src/shared", import.meta.url)),
     },
   },
   build: {

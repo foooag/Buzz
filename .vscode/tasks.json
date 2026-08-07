@@ -35,7 +35,7 @@
       "label": "build:electron",
       "type": "shell",
       "command": "pnpm",
-      "args": ["build:electron"],
+      "args": ["build"],
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -52,10 +52,8 @@
       "command": "pnpm",
       "args": [
         "exec",
-        "tsc",
-        "-p",
-        "electron/tsconfig.json",
-        "--watch"
+        "electron-vite",
+        "build"
       ],
       "options": {
         "cwd": "${workspaceFolder}"

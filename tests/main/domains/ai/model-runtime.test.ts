@@ -1,0 +1,109 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AiModelRuntime } from "../../../../src/main/domains/ai/model-runtime";
+import type { AiConfigRepository } from "../../../../src/main/domains/ai/repository";
+import type { ResolvedAiProviderConfig } from "../../../../src/main/domains/ai/types";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
+
+describe("Electron AI model runtime", () => {
+  it("probes an OpenAI-compatible endpoint through the approved Pi runtime", async () => {
+    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => response(["OK"]));
+    vi.stubGlobal("fetch", fetch);
+    const runtime = new AiModelRuntime({} as AiConfigRepository);
+
+    await expect(runtime.probe(config())).resolves.toMatchObject({
+      status: "connected",
+      capabilities: { streaming: "supported", toolCalling: "supported" },
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(String(fetch.mock.calls[0][0])).toBe("http://127.0.0.1:11434/v1/chat/completions");
+  });
+
+  it("returns the native Pi stream for an Electron Agent", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => response(["hello", " world"])));
+    const resolved = config();
+    const repository = { getResolved: vi.fn(() => resolved) } as unknown as AiConfigRepository;
+    const runtime = new AiModelRuntime(repository);
+    const events = [];
+    const stream = runtime.stream(resolved.public.id, {
+      messages: [{ role: "user", content: "say hello", timestamp: Date.now() }],
+    });
+    for await (const event of stream) events.push(event);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "text_delta", delta: "hello" }),
+      expect.objectContaining({ type: "text_delta", delta: " world" }),
+      expect.objectContaining({ type: "done", reason: "stop" }),
+    ]));
+    expect(runtime.model(resolved.public.id)).toMatchObject({
+      id: "model-test",
+      provider: "terminus:provider-1",
+    });
+  });
+
+  it("prints redacted model input and streamed output when debugging is enabled", async () => {
+    vi.stubEnv("BUZZ_AGENT_DEBUG", "1");
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn(async () => response(["hello"])));
+    const resolved = config();
+    const repository = { getResolved: vi.fn(() => resolved) } as unknown as AiConfigRepository;
+    const runtime = new AiModelRuntime(repository);
+    const stream = runtime.stream(resolved.public.id, {
+      messages: [{
+        role: "user",
+        content: "apiKey=sk-must-not-be-logged",
+        timestamp: Date.now(),
+      }],
+    });
+
+    for await (const _event of stream) {
+      // Consume the complete stream so every model output event is logged.
+    }
+
+    expect(debug).toHaveBeenCalledWith(
+      "[agent-runtime:model:input]",
+      expect.any(Object),
+    );
+    expect(debug).toHaveBeenCalledWith(
+      "[agent-runtime:model:output]",
+      expect.any(Object),
+    );
+    expect(JSON.stringify(debug.mock.calls)).not.toContain("sk-must-not-be-logged");
+    expect(JSON.stringify(debug.mock.calls)).toContain("apiKey=[redacted]");
+  });
+});
+
+function config(): ResolvedAiProviderConfig {
+  const timestamp = new Date().toISOString();
+  return {
+    public: {
+      id: "provider-1", providerKind: "ollama", name: "Local", modelId: "model-test",
+      baseUrl: "http://127.0.0.1:11434/v1", credentialConfigured: false,
+      isDefault: true, connectionStatus: "untested",
+      capabilities: {
+        streaming: "untested", toolCalling: "untested",
+        structuredOutput: "untested", reasoning: "untested",
+      },
+      createdAt: timestamp, updatedAt: timestamp,
+    },
+  };
+}
+
+function response(deltas: string[]): Response {
+  const chunks = deltas.map((content) => `data: ${JSON.stringify({
+    id: "chatcmpl-test", object: "chat.completion.chunk", created: 1,
+    model: "model-test", choices: [{ index: 0, delta: { content }, finish_reason: null }],
+  })}\n\n`);
+  chunks.push(`data: ${JSON.stringify({
+    id: "chatcmpl-test", object: "chat.completion.chunk", created: 1,
+    model: "model-test", choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+    usage: { prompt_tokens: 2, completion_tokens: deltas.length, total_tokens: deltas.length + 2 },
+  })}\n\ndata: [DONE]\n\n`);
+  return new Response(chunks.join(""), {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
+}

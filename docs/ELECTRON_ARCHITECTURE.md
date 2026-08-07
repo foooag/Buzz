@@ -23,9 +23,9 @@ flowchart LR
 
 - Renderer windows use `sandbox: true`, `contextIsolation: true`,
   `nodeIntegration: false`, and `webSecurity: true`.
-- `electron/preload.cjs` exposes only allowlisted command invocation, event
+- `src/preload/index.cjs` exposes only allowlisted command invocation, event
   streams, window controls, and updater operations.
-- `electron/command-names.ts` is the main-process command allowlist. Each domain
+- `src/shared/ipc/command-names.ts` is the main-process command allowlist. Each domain
   registers validated Zod handlers; an unregistered command fails closed.
 - Sensitive inventory fields, SSH credentials, known-host keys, AI API keys,
   and AI history use AES-256-GCM envelopes bound to record-specific authenticated
@@ -59,20 +59,20 @@ one.
 
 | Former Rust responsibility | Electron implementation | Verification |
 | --- | --- | --- |
-| Application commands and RPC dispatcher | `electron/main.cts`, `electron/command-names.ts`, `electron/ipc/dispatcher.ts`, `electron/domains/app.ts` | command allowlist and dispatcher tests; Electron smoke test |
-| AES-GCM vault crypto and app-local key protection | `electron/domains/inventory/field-cipher.ts`, `master-key.ts`, `app-encryption.ts` | envelope, tamper, context, local-key permissions, reopen, and fail-closed tests |
-| Inventory database, repositories, and manager | `electron/domains/inventory/database.ts`, `repository.ts`, `service.ts`, `commands.ts` | migration, CRUD, encryption, service, and command tests |
-| Local PTY and session routing | `electron/domains/terminal/runtime.ts`, `commands.ts` | runtime/command tests and real Electron terminal round trip |
-| SSH profiles, credentials, known hosts, sessions, and manager | `electron/domains/ssh/runtime.ts`, `credential-vault.ts`, `known-hosts.ts`, `service.ts`, `commands.ts` | unit tests plus real in-process SSH handshake and PTY test |
-| Port-forward repository and local, remote, SOCKS runtimes | `electron/domains/forwarding/repository.ts`, `runtime.ts`, `commands.ts` | repository and command/runtime tests |
-| SFTP sessions, paths, transfers, conflicts, associations, and Open-With | `electron/domains/sftp/runtime.ts`, `path-safety.ts`, `local-files.ts`, `conflicts.ts`, `associations.ts`, `commands.ts` | transfer, path, association, runtime, command, component, and E2E tests |
-| AI provider config, validation, and encrypted repository | `electron/domains/ai/types.ts`, `validation.ts`, `repository.ts`, `service.ts`, `commands.ts` | config validation, encrypted persistence, future-schema, and command tests |
-| AI encrypted session history and eviction | `electron/domains/ai/history.ts` | encryption, CRUD, validation, and capacity tests |
-| Pi Agent state, steering, compaction, tool dispatch, and automatic history | `electron/domains/ai/agent-runtime.ts` using `pi-agent-core` | prompt, tool, owner, abort, compaction, and full-transcript tests |
-| Native Pi model streaming and cancellation | `electron/domains/ai/model-runtime.ts` using `pi-ai` | OpenAI-compatible probe and native stream tests |
-| AI shell risk classifier and confirmations | `electron/domains/ai/risk.ts` plus `electron/domains/ssh/runtime.ts` command execution | risk, binding, single-use confirmation, timeout, output, and CWD tests |
-| Desktop event channel | `electron/preload.cjs`, `electron/main.cts` | renderer IPC tests and Electron sandbox smoke test |
-| Application icons | `assets/icons/` | electron-builder directory package |
+| Application commands and RPC dispatcher | `src/main/index.ts`, `src/shared/ipc/command-names.ts`, `src/main/ipc/dispatcher.ts`, `src/main/domains/app.ts` | command allowlist and dispatcher tests; Electron smoke test |
+| AES-GCM vault crypto and app-local key protection | `src/main/domains/inventory/field-cipher.ts`, `master-key.ts`, `app-encryption.ts` | envelope, tamper, context, local-key permissions, reopen, and fail-closed tests |
+| Inventory database, repositories, and manager | `src/main/domains/inventory/database.ts`, `repository.ts`, `service.ts`, `commands.ts` | migration, CRUD, encryption, service, and command tests |
+| Local PTY and session routing | `src/main/domains/terminal/runtime.ts`, `commands.ts` | runtime/command tests and real Electron terminal round trip |
+| SSH profiles, credentials, known hosts, sessions, and manager | `src/main/domains/ssh/runtime.ts`, `credential-vault.ts`, `known-hosts.ts`, `service.ts`, `commands.ts` | unit tests plus real in-process SSH handshake and PTY test |
+| Port-forward repository and local, remote, SOCKS runtimes | `src/main/domains/forwarding/repository.ts`, `runtime.ts`, `commands.ts` | repository and command/runtime tests |
+| SFTP sessions, paths, transfers, conflicts, associations, and Open-With | `src/main/domains/sftp/runtime.ts`, `path-safety.ts`, `local-files.ts`, `conflicts.ts`, `associations.ts`, `commands.ts` | transfer, path, association, runtime, command, component, and E2E tests |
+| AI provider config, validation, and encrypted repository | `src/main/domains/ai/types.ts`, `validation.ts`, `repository.ts`, `service.ts`, `commands.ts` | config validation, encrypted persistence, future-schema, and command tests |
+| AI encrypted session history and eviction | `src/main/domains/ai/history.ts` | encryption, CRUD, validation, and capacity tests |
+| Pi Agent state, steering, compaction, tool dispatch, and automatic history | `src/main/domains/ai/agent-runtime.ts` using `pi-agent-core` | prompt, tool, owner, abort, compaction, and full-transcript tests |
+| Native Pi model streaming and cancellation | `src/main/domains/ai/model-runtime.ts` using `pi-ai` | OpenAI-compatible probe and native stream tests |
+| AI shell risk classifier and confirmations | `src/main/domains/ai/risk.ts` plus `src/main/domains/ssh/runtime.ts` command execution | risk, binding, single-use confirmation, timeout, output, and CWD tests |
+| Desktop event channel | `src/preload/index.cjs`, `src/main/index.ts` | renderer IPC tests and Electron sandbox smoke test |
+| Application icons | `resources/icons/` | electron-builder directory package |
 
 ## Development and verification
 

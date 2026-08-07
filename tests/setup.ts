@@ -41,4 +41,19 @@ if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => undefined;
 }
 
+// Lexical distinguishes clipboard insertion from plain input with instanceof.
+// jsdom has clipboardData on synthetic paste events but no ClipboardEvent class.
+if (!("ClipboardEvent" in globalThis)) {
+  Object.defineProperty(globalThis, "ClipboardEvent", {
+    configurable: true,
+    value: Event,
+  });
+}
+if (!Range.prototype.getBoundingClientRect) {
+  Range.prototype.getBoundingClientRect = () => new DOMRect();
+}
+if (!Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+}
+
 afterEach(() => cleanup());
