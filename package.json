@@ -14,7 +14,7 @@
     "dev:web": "vite",
     "build": "pnpm typecheck && pnpm build:renderer && pnpm build:electron",
     "build:renderer": "vite build",
-    "build:electron": "node build/clean-output.mjs && tsc -p electron/tsconfig.json",
+    "build:electron": "node build/clean-output.mjs && tsc -p tsconfig.node.json",
     "package": "pnpm build && electron-builder",
     "preview": "vite preview",
     "test": "vitest run",

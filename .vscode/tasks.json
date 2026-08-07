@@ -54,7 +54,7 @@
         "exec",
         "tsc",
         "-p",
-        "electron/tsconfig.json",
+        "tsconfig.node.json",
         "--watch"
       ],
       "options": {
