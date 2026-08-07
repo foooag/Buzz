@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AppError } from "../../shared/result";
+import type { AppError } from "@shared/ipc/result";
 export type { CreateSshProfile } from "../ssh/sshTypes";
 
 /**

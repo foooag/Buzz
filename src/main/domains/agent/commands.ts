@@ -1,7 +1,7 @@
 import { z, ZodError, type ZodType } from "zod";
 import { DomainError } from "../../ipc/domain-error.js";
 import type { CommandContext, CommandHandler, CommandHandlers } from "../../ipc/dispatcher.js";
-import { failure, success } from "../../ipc/result.js";
+import { failure, success } from "../../../shared/ipc/result.js";
 import type { MultiHostAgentRuntime } from "./agent-runtime.js";
 
 const id = z.string().trim().min(1);

@@ -1,3 +1,4 @@
+import { COMMANDS } from "@shared/ipc/command-names";
 import { callCommand, callFiniteStreamingCommand } from "@/app/ipc";
 import type { AiAgentEvent, AiAgentSnapshot } from "./aiAgentTypes";
 
@@ -15,7 +16,7 @@ export const aiAgentApi: AiAgentClient = {
     const result = await callCommand<
       typeof input,
       { agentId: string; snapshot: AiAgentSnapshot }
-    >("ai_agent_create", input);
+    >(COMMANDS.aiAgentCreate, input);
     return result.snapshot;
   },
   prompt: (agentId, text, onEvent) =>
@@ -23,16 +24,16 @@ export const aiAgentApi: AiAgentClient = {
       { agentId: string; text: string },
       AiAgentEvent,
       AiAgentSnapshot
-    >("ai_agent_prompt", { agentId, text }, onEvent),
+    >(COMMANDS.aiAgentPrompt, { agentId, text }, onEvent),
   steer: (agentId, text) =>
-    callCommand<{ agentId: string; text: string }, void>("ai_agent_steer", { agentId, text }),
+    callCommand<{ agentId: string; text: string }, void>(COMMANDS.aiAgentSteer, { agentId, text }),
   abort: (agentId) =>
-    callCommand<{ agentId: string }, void>("ai_agent_abort", { agentId }),
+    callCommand<{ agentId: string }, void>(COMMANDS.aiAgentAbort, { agentId }),
   decideTool: (agentId, confirmationId, approved) =>
     callCommand<{ agentId: string; confirmationId: string; approved: boolean }, void>(
-      "ai_agent_decide_tool",
+      COMMANDS.aiAgentDecideTool,
       { agentId, confirmationId, approved },
     ),
   close: (agentId) =>
-    callCommand<{ agentId: string }, void>("ai_agent_close", { agentId }),
+    callCommand<{ agentId: string }, void>(COMMANDS.aiAgentClose, { agentId }),
 };

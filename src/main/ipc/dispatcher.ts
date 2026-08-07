@@ -1,5 +1,5 @@
-import type { CommandName } from "../command-names.js";
-import { failure, type IpcResult } from "./result.js";
+import type { CommandName } from "../../shared/ipc/command-names.js";
+import { failure, type IpcResult } from "../../shared/ipc/result.js";
 
 export type CommandContext = {
   streamId?: string;

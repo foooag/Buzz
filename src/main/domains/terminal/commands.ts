@@ -1,7 +1,7 @@
 import { z, ZodError, type ZodType } from "zod";
 import { DomainError } from "../../ipc/domain-error.js";
 import type { CommandContext, CommandHandler, CommandHandlers } from "../../ipc/dispatcher.js";
-import { failure, success, type IpcResult } from "../../ipc/result.js";
+import { failure, success, type IpcResult } from "../../../shared/ipc/result.js";
 import { TerminalRuntime } from "./runtime.js";
 
 export type RoutedTerminalRuntime = {

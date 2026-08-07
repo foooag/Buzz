@@ -1,3 +1,4 @@
+import { COMMANDS } from "@shared/ipc/command-names";
 import { callCommand, callStreamingCommand } from "../../app/ipc";
 import type { CreateSshProfile } from "../ssh/sshTypes";
 import {
@@ -69,40 +70,40 @@ export type SftpApi = {
 export const sftpApi: SftpApi = {
   open: (profile, onEvent) =>
     callStreamingCommand<unknown, SftpSessionEvent, SftpSessionId>(
-      "sftp_open",
+      COMMANDS.sftpOpen,
       { profile },
       (event) => {
         if (isSftpSessionEvent(event)) onEvent(event);
       },
     ),
   decideHostKey: (sessionId, trust) =>
-    callCommand("sftp_decide_host_key", { sessionId, trust }),
-  reconnect: (sessionId) => callCommand("sftp_reconnect", { sessionId }),
+    callCommand(COMMANDS.sftpDecideHostKey, { sessionId, trust }),
+  reconnect: (sessionId) => callCommand(COMMANDS.sftpReconnect, { sessionId }),
   listRemote: (sessionId, path, showHidden) =>
-    callCommand("sftp_list_remote", { sessionId, path, showHidden }),
-  listLocal: (path, showHidden) => callCommand("sftp_list_local", { path, showHidden }),
+    callCommand(COMMANDS.sftpListRemote, { sessionId, path, showHidden }),
+  listLocal: (path, showHidden) => callCommand(COMMANDS.sftpListLocal, { path, showHidden }),
   enqueueUpload: (sessionId, items, remoteDir, policy) =>
-    callCommand("sftp_enqueue_upload", { sessionId, items, remoteDir, policy }),
+    callCommand(COMMANDS.sftpEnqueueUpload, { sessionId, items, remoteDir, policy }),
   enqueueDownload: (sessionId, items, localDir, policy) =>
-    callCommand("sftp_enqueue_download", { sessionId, items, localDir, policy }),
+    callCommand(COMMANDS.sftpEnqueueDownload, { sessionId, items, localDir, policy }),
   resolveConflict: (transferId, itemId, resolution) =>
-    callCommand("sftp_resolve_conflict", { transferId, itemId, resolution }),
-  cancelTransfer: (transferId) => callCommand("sftp_cancel_transfer", { transferId }),
+    callCommand(COMMANDS.sftpResolveConflict, { transferId, itemId, resolution }),
+  cancelTransfer: (transferId) => callCommand(COMMANDS.sftpCancelTransfer, { transferId }),
   deleteRemote: (sessionId, path) =>
-    callCommand("sftp_delete_remote", { sessionId, path }),
+    callCommand(COMMANDS.sftpDeleteRemote, { sessionId, path }),
   renameRemote: (sessionId, oldPath, newPath) =>
-    callCommand("sftp_rename_remote", { sessionId, oldPath, newPath }),
-  mkdirRemote: (sessionId, path) => callCommand("sftp_mkdir_remote", { sessionId, path }),
+    callCommand(COMMANDS.sftpRenameRemote, { sessionId, oldPath, newPath }),
+  mkdirRemote: (sessionId, path) => callCommand(COMMANDS.sftpMkdirRemote, { sessionId, path }),
   openWith: (sessionId, remotePath, application) =>
-    callCommand("sftp_open_with", { sessionId, remotePath, application }),
+    callCommand(COMMANDS.sftpOpenWith, { sessionId, remotePath, application }),
   resolveOpenWithConflict: (watcherId, resolution) =>
-    callCommand("sftp_resolve_open_with_conflict", { watcherId, resolution }),
-  closeOpenWith: (watcherId) => callCommand("sftp_close_open_with", { watcherId }),
-  listAssociations: () => callCommand("sftp_list_associations", {}),
+    callCommand(COMMANDS.sftpResolveOpenWithConflict, { watcherId, resolution }),
+  closeOpenWith: (watcherId) => callCommand(COMMANDS.sftpCloseOpenWith, { watcherId }),
+  listAssociations: () => callCommand(COMMANDS.sftpListAssociations, {}),
   setAssociation: (extension, appPath, appName) =>
-    callCommand("sftp_set_association", { extension, appPath, appName }),
-  deleteAssociation: (extension) => callCommand("sftp_delete_association", { extension }),
-  close: (sessionId) => callCommand("sftp_close", { sessionId }),
+    callCommand(COMMANDS.sftpSetAssociation, { extension, appPath, appName }),
+  deleteAssociation: (extension) => callCommand(COMMANDS.sftpDeleteAssociation, { extension }),
+  close: (sessionId) => callCommand(COMMANDS.sftpClose, { sessionId }),
 };
 
 /** Re-exported for store/panel typing convenience. */

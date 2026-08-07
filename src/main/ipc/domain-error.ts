@@ -1,4 +1,4 @@
-import { failure, type IpcResult } from "./result.js";
+import { failure, type IpcResult } from "../../shared/ipc/result.js";
 
 export class DomainError extends Error {
   readonly code: string;

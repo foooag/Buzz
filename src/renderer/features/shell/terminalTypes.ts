@@ -1,4 +1,4 @@
-import type { AppError } from "../../shared/result";
+import type { AppError } from "@shared/ipc/result";
 
 export type SessionId = string;
 export type PaneId = string;

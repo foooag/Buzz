@@ -1,3 +1,4 @@
+import { COMMANDS } from "@shared/ipc/command-names";
 import { callCommand } from "../../app/ipc";
 import type {
   AiConfigApi,
@@ -9,26 +10,26 @@ import type {
 } from "./aiConfigTypes";
 
 export const aiConfigApi: AiConfigApi = {
-  list: () => callCommand<null, AiProviderConfig[]>("ai_list_provider_configs", null),
+  list: () => callCommand<null, AiProviderConfig[]>(COMMANDS.aiListProviderConfigs, null),
   create: (input: CreateAiProviderConfig) =>
     callCommand<{ input: CreateAiProviderConfig }, AiProviderConfig>(
-      "ai_create_provider_config",
+      COMMANDS.aiCreateProviderConfig,
       { input },
     ),
   update: (input: UpdateAiProviderConfig) =>
     callCommand<{ input: UpdateAiProviderConfig }, AiProviderConfig>(
-      "ai_update_provider_config",
+      COMMANDS.aiUpdateProviderConfig,
       { input },
     ),
   delete: (id: string) =>
-    callCommand<{ id: string }, void>("ai_delete_provider_config", { id }),
+    callCommand<{ id: string }, void>(COMMANDS.aiDeleteProviderConfig, { id }),
   test: (id: string) =>
-    callCommand<{ id: string }, AiProviderConfig>("ai_test_provider_config", {
+    callCommand<{ id: string }, AiProviderConfig>(COMMANDS.aiTestProviderConfig, {
       id,
     }),
   probe: (input: ProbeAiProviderInput) =>
     callCommand<{ input: ProbeAiProviderInput }, ProviderTestResult>(
-      "ai_probe_provider_config",
+      COMMANDS.aiProbeProviderConfig,
       { input },
     ),
 };

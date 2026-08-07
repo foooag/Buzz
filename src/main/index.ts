@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, type WebContents } from "electron";
 import path from "node:path";
-import type { CommandName } from "./command-names.js";
+import type { CommandName } from "../shared/ipc/command-names.js";
 import type { CommandDispatcher as ElectronCommandDispatcher } from "./ipc/dispatcher.js";
 import type { InventoryRepository } from "./domains/inventory/repository.js";
 import type { TerminalRuntime as ElectronTerminalRuntime } from "./domains/terminal/runtime.js";
@@ -160,7 +160,7 @@ function installIpcHandlers(): void {
 }
 
 async function isAllowedCommand(value: unknown): Promise<boolean> {
-  const commands = await import("./command-names.js");
+  const commands = await import("../shared/ipc/command-names.js");
   return commands.isCommandName(value);
 }
 

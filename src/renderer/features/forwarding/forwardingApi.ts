@@ -1,3 +1,4 @@
+import { COMMANDS } from "@shared/ipc/command-names";
 import { callCommand, callStreamingCommand } from "../../app/ipc";
 import type { TerminalEvent } from "../shell/terminalTypes";
 import { isTerminalEvent } from "../shell/terminalTypes";
@@ -46,10 +47,10 @@ async function parsed<T>(
 
 export const forwardingApi: ForwardingApi = {
   listRules: (hostId) =>
-    parsed("port_forward_list_rules", { hostId }, portForwardRuleListSchema),
+    parsed(COMMANDS.portForwardListRules, { hostId }, portForwardRuleListSchema),
   createRule: (rule) =>
     parsed(
-      "port_forward_create_rule",
+      COMMANDS.portForwardCreateRule,
       {
         rule: {
           id: rule.id ?? "",
@@ -67,14 +68,14 @@ export const forwardingApi: ForwardingApi = {
       portForwardRuleSchema,
     ),
   updateRule: (rule) =>
-    parsed("port_forward_update_rule", { rule }, portForwardRuleSchema),
+    parsed(COMMANDS.portForwardUpdateRule, { rule }, portForwardRuleSchema),
   deleteRule: (ruleId) =>
-    callCommand("port_forward_delete_rule", { ruleId }),
+    callCommand(COMMANDS.portForwardDeleteRule, { ruleId }),
   listActive: () =>
-    parsed("port_forward_list_active", {}, activeForwardIdListSchema),
+    parsed(COMMANDS.portForwardListActive, {}, activeForwardIdListSchema),
   start: (profile, rule, onEvent) =>
     callStreamingCommand<unknown, TerminalEvent, void>(
-      "port_forward_start",
+      COMMANDS.portForwardStart,
       {
         profile,
         rule: {
@@ -89,6 +90,6 @@ export const forwardingApi: ForwardingApi = {
       },
     ),
   decideHostKey: (ruleId, trust) =>
-    callCommand("port_forward_decide_host_key", { ruleId, trust }),
-  stop: (ruleId) => callCommand("port_forward_stop", { ruleId }),
+    callCommand(COMMANDS.portForwardDecideHostKey, { ruleId, trust }),
+  stop: (ruleId) => callCommand(COMMANDS.portForwardStop, { ruleId }),
 };

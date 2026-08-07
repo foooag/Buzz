@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isCommandName } from "../../../../src/main/command-names.js";
+import { isCommandName } from "../../../../src/shared/ipc/command-names.js";
 import { createAgentCommandHandlers } from "../../../../src/main/domains/agent/commands.js";
 import type { MultiHostAgentRuntime } from "../../../../src/main/domains/agent/agent-runtime.js";
 

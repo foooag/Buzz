@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { COMMAND_NAMES, isCommandName } from "../../src/main/command-names";
+import { COMMAND_NAMES, isCommandName } from "../../src/shared/ipc/command-names";
 
 const root = process.cwd();
 

@@ -1,3 +1,4 @@
+import { COMMANDS } from "@shared/ipc/command-names";
 import { callCommand } from "../../app/ipc";
 import {
   groupListSchema, hostListSchema, hostSchema, identityListSchema, identitySchema,
@@ -30,18 +31,18 @@ async function parsed<T>(command: string, args: object, schema: { parse(value: u
 }
 
 export const inventoryApi: InventoryApi = {
-  listVaults: () => parsed("inventory_list_vaults", {}, vaultListSchema),
-  createVault: (input) => parsed("inventory_create_vault", { input }, vaultSchema),
-  updateVault: (input) => parsed("inventory_update_vault", { input }, vaultSchema),
-  deleteVault: (id) => callCommand("inventory_delete_vault", { id }),
-  listGroups: (vaultId) => parsed("inventory_list_groups", { vaultId }, groupListSchema),
-  createGroup: (input) => parsed("inventory_create_group", { input }, groupSchema),
-  listHosts: (vaultId) => parsed("inventory_list_hosts", { vaultId }, hostListSchema),
-  createHost: (input) => parsed("inventory_create_host", { input }, hostSchema),
-  updateHost: (input) => parsed("inventory_update_host", { input }, hostSchema),
-  deleteHost: (id) => callCommand("inventory_delete_host", { id }),
-  listIdentities: (vaultId) => parsed("inventory_list_identities", { vaultId }, identityListSchema),
-  createIdentity: (input) => parsed("inventory_create_identity", { input }, identitySchema),
-  updateIdentity: (input) => parsed("inventory_update_identity", { input }, identitySchema),
-  deleteIdentity: (id) => callCommand("inventory_delete_identity", { id }),
+  listVaults: () => parsed(COMMANDS.inventoryListVaults, {}, vaultListSchema),
+  createVault: (input) => parsed(COMMANDS.inventoryCreateVault, { input }, vaultSchema),
+  updateVault: (input) => parsed(COMMANDS.inventoryUpdateVault, { input }, vaultSchema),
+  deleteVault: (id) => callCommand(COMMANDS.inventoryDeleteVault, { id }),
+  listGroups: (vaultId) => parsed(COMMANDS.inventoryListGroups, { vaultId }, groupListSchema),
+  createGroup: (input) => parsed(COMMANDS.inventoryCreateGroup, { input }, groupSchema),
+  listHosts: (vaultId) => parsed(COMMANDS.inventoryListHosts, { vaultId }, hostListSchema),
+  createHost: (input) => parsed(COMMANDS.inventoryCreateHost, { input }, hostSchema),
+  updateHost: (input) => parsed(COMMANDS.inventoryUpdateHost, { input }, hostSchema),
+  deleteHost: (id) => callCommand(COMMANDS.inventoryDeleteHost, { id }),
+  listIdentities: (vaultId) => parsed(COMMANDS.inventoryListIdentities, { vaultId }, identityListSchema),
+  createIdentity: (input) => parsed(COMMANDS.inventoryCreateIdentity, { input }, identitySchema),
+  updateIdentity: (input) => parsed(COMMANDS.inventoryUpdateIdentity, { input }, identitySchema),
+  deleteIdentity: (id) => callCommand(COMMANDS.inventoryDeleteIdentity, { id }),
 };

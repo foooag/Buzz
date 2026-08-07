@@ -1,3 +1,4 @@
+import { COMMANDS } from "@shared/ipc/command-names";
 import { callCommand, callStreamingCommand } from "../../app/ipc";
 import {
   isTerminalEvent,
@@ -23,24 +24,24 @@ export const terminalApi: TerminalApi = {
       { size: TerminalSize },
       unknown,
       OpenedTerminal
-    >("terminal_open", { size }, (event) => {
+    >(COMMANDS.terminalOpen, { size }, (event) => {
       if (isTerminalEvent(event)) onEvent(event);
     }),
 
   write: (sessionId, data) =>
     callCommand<{ sessionId: SessionId; data: number[] }, void>(
-      "terminal_write",
+      COMMANDS.terminalWrite,
       { sessionId, data: Array.from(data) },
     ),
 
   resize: (sessionId, size) =>
     callCommand<{ sessionId: SessionId; size: TerminalSize }, void>(
-      "terminal_resize",
+      COMMANDS.terminalResize,
       { sessionId, size },
     ),
 
   close: (sessionId) =>
-    callCommand<{ sessionId: SessionId }, void>("terminal_close", {
+    callCommand<{ sessionId: SessionId }, void>(COMMANDS.terminalClose, {
       sessionId,
     }),
 };

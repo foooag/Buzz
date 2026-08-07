@@ -1,4 +1,4 @@
-import type { IpcResult } from "../shared/result";
+import type { IpcResult } from "@shared/ipc/result";
 
 export type ElectronUpdateDownloadEvent =
   | { event: "Started"; data: { contentLength?: number } }

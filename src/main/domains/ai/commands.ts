@@ -1,7 +1,7 @@
 import { z, ZodError, type ZodType } from "zod";
 import { DomainError } from "../../ipc/domain-error.js";
 import type { CommandContext, CommandHandler, CommandHandlers } from "../../ipc/dispatcher.js";
-import { failure, success } from "../../ipc/result.js";
+import { failure, success } from "../../../shared/ipc/result.js";
 import type { AiService } from "./service.js";
 import type {
   CreateAiProviderConfig,

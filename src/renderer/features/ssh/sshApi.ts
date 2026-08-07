@@ -1,3 +1,4 @@
+import { COMMANDS } from "@shared/ipc/command-names";
 import { callCommand, callStreamingCommand } from "../../app/ipc";
 import { isTerminalEvent, type OpenedTerminal, type TerminalEvent, type TerminalSize } from "../shell/terminalTypes";
 import type { CreateSshProfile, SshCredentialInput } from "./sshTypes";
@@ -21,14 +22,14 @@ export type SshApi = {
 };
 
 export const sshApi: SshApi = {
-  storeCredential: (credential) => callCommand("ssh_store_credential", { credential }),
+  storeCredential: (credential) => callCommand(COMMANDS.sshStoreCredential, { credential }),
   open: (profile, size, onEvent) =>
-    callStreamingCommand("ssh_open", { profile, size }, (event) => {
+    callStreamingCommand(COMMANDS.sshOpen, { profile, size }, (event) => {
       if (isTerminalEvent(event)) onEvent(event);
     }),
-  decideHostKey: (sessionId, trust) => callCommand("ssh_decide_host_key", { sessionId, trust }),
-  reconnect: (sessionId) => callCommand("ssh_reconnect", { sessionId }),
-  listKnownHosts: () => callCommand("ssh_list_known_hosts", {}),
+  decideHostKey: (sessionId, trust) => callCommand(COMMANDS.sshDecideHostKey, { sessionId, trust }),
+  reconnect: (sessionId) => callCommand(COMMANDS.sshReconnect, { sessionId }),
+  listKnownHosts: () => callCommand(COMMANDS.sshListKnownHosts, {}),
   deleteKnownHost: (hostname, port) =>
-    callCommand("ssh_delete_known_host", { hostname, port }),
+    callCommand(COMMANDS.sshDeleteKnownHost, { hostname, port }),
 };

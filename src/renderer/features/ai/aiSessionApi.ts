@@ -1,3 +1,4 @@
+import { COMMANDS } from "@shared/ipc/command-names";
 import { callCommand } from "@/app/ipc";
 import type { AiAgentMessage } from "./aiAgentTypes";
 
@@ -25,14 +26,14 @@ export type AiSessionClient = {
 };
 
 export const aiSessionApi: AiSessionClient = {
-  list: () => callCommand<null, AiSessionSummary[]>("ai_list_sessions", null),
+  list: () => callCommand<null, AiSessionSummary[]>(COMMANDS.aiListSessions, null),
   load: (id) =>
-    callCommand<{ id: string }, AiSessionRecord>("ai_load_session", { id }),
+    callCommand<{ id: string }, AiSessionRecord>(COMMANDS.aiLoadSession, { id }),
   delete: (id) =>
-    callCommand<{ id: string }, void>("ai_delete_session", { id }),
+    callCommand<{ id: string }, void>(COMMANDS.aiDeleteSession, { id }),
   rename: (id, title) =>
     callCommand<{ id: string; title: string }, AiSessionSummary>(
-      "ai_rename_session",
+      COMMANDS.aiRenameSession,
       { id, title },
     ),
 };

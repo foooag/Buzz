@@ -1,5 +1,5 @@
 import type { CommandHandlers } from "../ipc/dispatcher.js";
-import { success } from "../ipc/result.js";
+import { success } from "../../shared/ipc/result.js";
 
 export type AppHealth = {
   name: "buzz";

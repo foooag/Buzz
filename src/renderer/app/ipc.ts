@@ -1,4 +1,4 @@
-import type { AppError, IpcResult } from "../shared/result";
+import type { AppError, IpcResult } from "@shared/ipc/result";
 
 export type InvokeTransport = <T>(
   command: string,
