@@ -14,6 +14,7 @@ export type MentionComposerProps = {
   busy: boolean;
   awaitingConfirm: boolean;
   disabled?: boolean;
+  sendDisabled?: boolean;
   providerLabel?: string;
   draftNonce?: number;
   hosts: Host[];
@@ -22,7 +23,7 @@ export type MentionComposerProps = {
 };
 
 export function MentionComposer({
-  value, onValueChange, onSend, onAbort, busy, awaitingConfirm, disabled, providerLabel, draftNonce, hosts, groups, mentionEnabled,
+  value, onValueChange, onSend, onAbort, busy, awaitingConfirm, disabled, sendDisabled, providerLabel, draftNonce, hosts, groups, mentionEnabled,
 }: MentionComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const appliedDraftNonce = useRef<number | undefined>(undefined);
@@ -51,7 +52,7 @@ export function MentionComposer({
     if (event.key === "Escape" && busy) { event.preventDefault(); onAbort(); return; }
     if (event.key === "Enter" && !event.shiftKey && !trigger.open) {
       event.preventDefault();
-      if (!busy && !awaitingConfirm && !disabled) onSend();
+      if (!busy && !awaitingConfirm && !disabled && !sendDisabled) onSend();
     }
   };
 
@@ -90,7 +91,7 @@ export function MentionComposer({
                 <Square size={13} /> Abort
               </button>
             ) : (
-              <button type="button" aria-label="Send" onClick={onSend} disabled={disabled || awaitingConfirm} className="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-semibold transition-colors disabled:bg-graphite disabled:text-fog enabled:bg-acid-lime enabled:text-void enabled:hover:brightness-105">
+              <button type="button" aria-label="Send" onClick={onSend} disabled={disabled || awaitingConfirm || sendDisabled} className="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-semibold transition-colors disabled:bg-graphite disabled:text-fog enabled:bg-acid-lime enabled:text-void enabled:hover:brightness-105">
                 <span>Send</span><Send size={13} />
               </button>
             )}

@@ -161,7 +161,14 @@ export function mergeAuthoritative(
 ): UIMessage[] {
   const byId = new Map(snapshotAssistant.map((m) => [m.id, wireMessageToUi(m)]));
   if (byId.size === 0) return messages;
-  return messages.map((m) => (m.role === "assistant" && byId.has(m.id) ? byId.get(m.id)! : m));
+  const existingIds = new Set(messages.map((m) => m.id));
+  const replaced = messages.map((m) =>
+    m.role === "assistant" && byId.has(m.id) ? byId.get(m.id)! : m,
+  );
+  // Append authoritative assistant messages that weren't present in the
+  // live transcript (e.g. when the prompt resolved without streaming events).
+  const appended = [...byId.values()].filter((m) => !existingIds.has(m.id));
+  return appended.length > 0 ? [...replaced, ...appended] : replaced;
 }
 
 function errorMessage(result: unknown): string | undefined {

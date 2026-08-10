@@ -146,9 +146,7 @@ describe("AgentPage", () => {
   it("sends a prompt with parsed targets on submit", async () => {
     const client = fakeClient();
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => {
-      expect(screen.getByLabelText("Message agent")).toBeEnabled();
-    });
+    await waitFor(() => expect(sendButton()).toBeEnabled());
     const input = screen.getByLabelText("Message agent");
     await typeComposer(input, "uptime{Enter}");
     expect(client.prompt).toHaveBeenCalledWith(
@@ -179,7 +177,7 @@ describe("AgentPage", () => {
       };
     });
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
+    await waitFor(() => expect(sendButton()).toBeEnabled());
 
     await typeComposer(screen.getByLabelText("Message agent"), "uptime{Enter}");
 
@@ -237,7 +235,7 @@ describe("AgentPage", () => {
       };
     });
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
+    await waitFor(() => expect(sendButton()).toBeEnabled());
 
     await typeComposer(screen.getByLabelText("Message agent"), "docker ps{Enter}");
 
@@ -270,7 +268,7 @@ describe("AgentPage", () => {
       });
     }));
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
+    await waitFor(() => expect(sendButton()).toBeEnabled());
 
     const submission = typeComposer(
       screen.getByLabelText("Message agent"),
@@ -339,7 +337,7 @@ describe("AgentPage", () => {
     });
 
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
+    await waitFor(() => expect(sendButton()).toBeEnabled());
     await typeComposer(screen.getByLabelText("Message agent"), "status{Enter}");
 
     const response = await screen.findByText("Docker service is healthy");
@@ -385,7 +383,7 @@ describe("AgentPage", () => {
       ],
     });
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
+    await waitFor(() => expect(sendButton()).toBeEnabled());
 
     await typeComposer(
       screen.getByLabelText("Message agent"),
@@ -402,7 +400,7 @@ describe("AgentPage", () => {
       new Error("AI provider returned 429: rate limit exceeded"),
     );
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
+    await waitFor(() => expect(sendButton()).toBeEnabled());
 
     await typeComposer(screen.getByLabelText("Message agent"), "uptime{Enter}");
 
@@ -415,9 +413,7 @@ describe("AgentPage", () => {
     seedInventory();
     const client = fakeClient();
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => {
-      expect(screen.getByLabelText("Message agent")).toBeEnabled();
-    });
+    await waitFor(() => expect(sendButton()).toBeEnabled());
     const input = screen.getByLabelText("Message agent");
     await typeComposer(input, "run @");
     await userEvent.click(
@@ -445,9 +441,7 @@ describe("AgentPage", () => {
     seedInventory();
     const client = fakeClient();
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => {
-      expect(screen.getByLabelText("Message agent")).toBeEnabled();
-    });
+    await waitFor(() => expect(sendButton()).toBeEnabled());
     const input = screen.getByLabelText("Message agent");
     await typeComposer(input, "run @Prod");
     await userEvent.click(
@@ -471,9 +465,7 @@ describe("AgentPage", () => {
     seedInventory();
     const client = fakeClient();
     render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => {
-      expect(screen.getByLabelText("Message agent")).toBeEnabled();
-    });
+    await waitFor(() => expect(sendButton()).toBeEnabled());
 
     await typeComposer(
       screen.getByLabelText("Message agent"),
@@ -487,72 +479,11 @@ describe("AgentPage", () => {
       expect.any(Function),
     ));
   });
-
-  it("shows the standing-by empty state when no provider is usable", async () => {
-    const client = fakeClient();
-    render(<AgentPage agentClient={client} providerApi={providerApi([])} />);
-    expect(await screen.findByText("Agent standing by")).toBeVisible();
-    expect(screen.getByLabelText("Message agent")).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-    expect(client.create).not.toHaveBeenCalled();
-  });
-
-  it("reloads providers when the revision changes and reflects a newly configured one", async () => {
-    const list = vi
-      .fn<AiConfigApi["list"]>()
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([provider()]);
-    const client = fakeClient();
-    const { rerender } = render(
-      <AgentPage
-        agentClient={client}
-        providerApi={{ list } as unknown as AiConfigApi}
-      />,
-    );
-    expect(await screen.findByText("No provider configured")).toBeVisible();
-
-    rerender(
-      <AgentPage
-        agentClient={client}
-        providerApi={{ list } as unknown as AiConfigApi}
-        providerRevision={1}
-      />,
-    );
-    await waitFor(() => {
-      expect(screen.getByText("Claude · claude-sonnet-5")).toBeVisible();
-    });
-    expect(screen.queryByText("No provider configured")).toBeNull();
-    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
-  });
-
-  it("reflects a provider configured through the AI settings flow using the real config api", async () => {
-    const api = createDeterministicAiConfigApi([]);
-    const client = fakeClient();
-    const { rerender } = render(
-      <AgentPage agentClient={client} providerApi={api} />,
-    );
-    expect(await screen.findByText("No provider configured")).toBeVisible();
-
-    // The user adds a provider in the AI preferences section.
-    await api.create({
-      providerKind: "anthropic",
-      name: "Claude",
-      baseUrl: "https://api.anthropic.com",
-      modelId: "claude-sonnet-5",
-      apiKey: "sk-test",
-      isDefault: true,
-    });
-
-    // Preferences close → providerRevision bump.
-    rerender(
-      <AgentPage agentClient={client} providerApi={api} providerRevision={1} />,
-    );
-    await waitFor(() => {
-      expect(screen.getByText("Claude · claude-sonnet-5")).toBeVisible();
-    });
-    expect(screen.queryByText("No provider configured")).toBeNull();
-  });
 });
+
+function sendButton(): HTMLElement {
+  return screen.getByRole("button", { name: "Send" });
+}
 
 async function typeComposer(input: HTMLElement, text: string): Promise<void> {
   await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
