@@ -407,6 +407,9 @@ describe("AgentPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "AI provider returned 429: rate limit exceeded",
     );
+    // Phase must not be stuck "streaming" — the Send button re-appears
+    // (not the Abort button) once chat.status settles to "error".
+    expect(await sendButton()).toBeEnabled();
   });
 
   it("resolves an official host directive into prompt targets", async () => {

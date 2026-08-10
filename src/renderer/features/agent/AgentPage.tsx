@@ -309,6 +309,18 @@ export function AgentPage({
     }
   }, [chat.error, chat.status]);
 
+  // ----- Sync phase from chat.status ---------------------------------------
+  // handleSend sets phase to "streaming". The agentEnd side-event normally
+  // finalizes it, but when a prompt resolves/rejects without an agentEnd
+  // (e.g. immediate snapshot return or rejection), phase would be stuck.
+  // This effect complements agentEnd: when the SDK transitions to ready/error,
+  // finalize the top-level phase.
+  useEffect(() => {
+    if (chat.status === "ready" || chat.status === "error") {
+      setPhase((p) => (p === "streaming" ? "done" : p));
+    }
+  }, [chat.status]);
+
   // Load the usable providers once on mount, and again whenever the provider
   // revision changes.
   useEffect(() => {
