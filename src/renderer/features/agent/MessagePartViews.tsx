@@ -25,9 +25,7 @@ type ToolPart = AnyPart & {
 
 /**
  * Renders text with inline `:host[...]{name=...}` / `:group[...]{name=...}`
- * directive chips. Mirrors the semantics of `createDirectiveText` from
- * `@/components/assistant-ui/directive-text` but uses an inline styled span
- * (no Badge import) so this module stays free of assistant-ui dependencies.
+ * directive chips as inline styled spans (no Badge dependency).
  *
  * Each chip exposes `aria-label` (formatted as `${type}: ${label}`) plus the
  * `data-directive-type` / `data-directive-id` attributes consumed by e2e and
