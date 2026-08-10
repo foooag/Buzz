@@ -11,6 +11,7 @@ import { createDeterministicAiConfigApi } from "@/features/ai/deterministicAiApi
 import type { AiConfigApi, AiProviderConfig } from "@/features/ai/aiConfigTypes";
 import { useInventoryStore } from "@/features/inventory/inventoryStore";
 import type { Group, Host, Identity } from "@/shared/types";
+import { AGENT_SESSIONS_KEY } from "@/features/agent/sessionStore";
 
 const timestamp = "2026-08-05T00:00:00.000Z";
 
@@ -407,9 +408,17 @@ describe("AgentPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "AI provider returned 429: rate limit exceeded",
     );
-    // Phase must not be stuck "streaming" — the Send button re-appears
-    // (not the Abort button) once chat.status settles to "error".
-    expect(await sendButton()).toBeEnabled();
+    // The auto-persist path writes the session phase to localStorage.
+    // Without the phase-sync effect, phase stays "streaming" because no
+    // agentEnd side-event fires on rejection. Assert the persisted phase
+    // settled to "done" — this fails on pre-fix code.
+    await waitFor(() => {
+      const raw = window.localStorage.getItem(AGENT_SESSIONS_KEY);
+      expect(raw).not.toBeNull();
+      const sessions = JSON.parse(raw ?? "[]");
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].phase).toBe("done");
+    });
   });
 
   it("resolves an official host directive into prompt targets", async () => {
