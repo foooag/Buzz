@@ -1,21 +1,48 @@
-import type {
-  MessageStatus,
-  ThreadAssistantMessagePart,
-  ThreadUserMessagePart,
-} from "@assistant-ui/react";
+// Local JSON value types, structurally identical to assistant-stream's
+// ReadonlyJSONObject/ReadonlyJSONValue, so AgentToolCallPart.args remains
+// assignable to ThreadMessageLike's tool-call variant (whose args field is
+// typed as ReadonlyJSONObject) once the assistant-ui react import is dropped
+// from this file.
+type AgentJsonValue =
+  | null
+  | string
+  | number
+  | boolean
+  | AgentJsonObject
+  | readonly AgentJsonValue[];
+type AgentJsonObject = { readonly [key: string]: AgentJsonValue };
+
+export type AgentPartStatus =
+  | { type: "running" }
+  | { type: "complete" }
+  | { type: "incomplete"; reason: "cancelled" | "length" | "content-filter" | "other" | "error" };
+
+export type AgentMessageStatus =
+  | { type: "running" }
+  | { type: "requires-action"; reason: "tool-calls" | "interrupt" }
+  | { type: "complete"; reason: "stop" | "unknown" }
+  | { type: "incomplete"; reason: "cancelled" | "tool-calls" | "length" | "other" | "error"; error?: string };
+
+export type AgentTextPart = { type: "text"; text: string; status?: AgentPartStatus };
+export type AgentReasoningPart = { type: "reasoning"; text: string; status?: AgentPartStatus };
+export type AgentToolCallPart = {
+  type: "tool-call";
+  toolCallId: string;
+  toolName: string;
+  args: AgentJsonObject;
+  argsText: string;
+  result?: unknown;
+  isError?: boolean;
+  timing?: { startedAt: number; completedAt?: number };
+  approval?: { id: string; approved?: boolean; reason?: string; isAutomatic?: boolean; resolution?: "cancelled" | "expired" };
+};
+
+export type AgentAssistantPart = AgentTextPart | AgentReasoningPart | AgentToolCallPart;
+export type AgentUserPart = AgentTextPart;
 
 export type AgentMessage =
-  | {
-      id: string;
-      role: "user";
-      content: readonly ThreadUserMessagePart[];
-    }
-  | {
-      id: string;
-      role: "assistant";
-      content: readonly ThreadAssistantMessagePart[];
-      status: MessageStatus;
-    };
+  | { id: string; role: "user"; content: readonly AgentUserPart[] }
+  | { id: string; role: "assistant"; content: readonly AgentAssistantPart[]; status: AgentMessageStatus };
 
 export type AgentSnapshot = {
   agentId: string;
