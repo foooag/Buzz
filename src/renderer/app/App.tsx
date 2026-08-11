@@ -51,9 +51,6 @@ import {
 import { UpdateDialog } from "../features/updater/UpdateDialog";
 import { aiConfigApi } from "../features/ai/aiApi";
 import type { AiConfigApi } from "../features/ai/aiConfigTypes";
-import { AgentPage } from "../features/agent/AgentPage";
-import { agentApi } from "../features/agent/agentApi";
-import type { AgentClient } from "../features/agent/agentTypes";
 
 type AppProps = {
   api?: TerminalApi;
@@ -62,7 +59,6 @@ type AppProps = {
   ssh?: SshApi;
   sftp?: SftpApi;
   aiConfig?: AiConfigApi;
-  agent?: AgentClient;
   runtimeFactory?: TerminalRuntimeFactory;
   resizeObserverFactory?: ResizeObserverFactory;
 };
@@ -74,12 +70,10 @@ export function App({
   ssh = sshApi,
   sftp = sftpApi,
   aiConfig = aiConfigApi,
-  agent = agentApi,
   runtimeFactory,
   resizeObserverFactory,
 }: AppProps = {}) {
   const [destination, setDestination] = useState<Destination>("servers");
-  const [agentMounted, setAgentMounted] = useState(false);
   const [commandDrawerOpen, setCommandDrawerOpen] = useState(false);
   const [focusCommandSearch, setFocusCommandSearch] = useState(false);
   const [terminalSearchOpen, setTerminalSearchOpen] = useState(false);
@@ -87,7 +81,6 @@ export function App({
   const [changedHostKeySession, setChangedHostKeySession] = useState<string | null>(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [preferencesSection, setPreferencesSection] = useState<SectionId | undefined>(undefined);
-  const [providerRevision, setProviderRevision] = useState(0);
   const sshSessionIds = useRef(new Set<string>());
   const [themeId, setThemeId] = useState(
     () => localStorage.getItem("terminus.terminalTheme") ?? defaultTerminalThemeId,
@@ -110,7 +103,6 @@ export function App({
   const setSidebarCompact = useTerminalStore((state) => state.setSidebarCompact);
 
   const changeDestination = useCallback((next: Destination) => {
-    if (next === "agent") setAgentMounted(true);
     setDestination(next);
   }, []);
 
@@ -298,11 +290,6 @@ export function App({
     return (await api.open({ cols: 80, rows: 24 }, onEvent)).sessionId;
   }, [api, ssh]);
 
-  const openAiPreferences = useCallback(() => {
-    setPreferencesSection("ai");
-    setPreferencesOpen(true);
-  }, []);
-
   return (
     <>
     <WorkspaceShell
@@ -316,25 +303,7 @@ export function App({
       sidebarCompact={sidebarCompact}
       onPreferences={() => setPreferencesOpen(true)}
     >
-      {agentMounted ? (
-        <div
-          className={destination === "agent" ? "h-full min-h-0" : "hidden"}
-          data-testid="agent-workspace"
-          hidden={destination !== "agent"}
-        >
-          <AgentPage
-            agentClient={agent}
-            providerApi={aiConfig}
-            inventoryApi={inventory}
-            providerRevision={providerRevision}
-            onConnectFromServers={() => setDestination("servers")}
-            onRequestPreferences={openAiPreferences}
-          />
-        </div>
-      ) : null}
-      {destination === "agent"
-        ? null
-        : destination === "terminal" && activeSessionId && sessions[activeSessionId] ? (
+      {destination === "terminal" && activeSessionId && sessions[activeSessionId] ? (
         <TerminalWorkspace
           api={api}
           eventBus={terminalEventBus}
@@ -389,9 +358,6 @@ export function App({
       open={preferencesOpen}
       onClose={() => {
         setPreferencesOpen(false);
-        // Bump so AgentPage re-fetches the provider list — it may have changed
-        // while preferences were open (e.g. a provider was just configured).
-        setProviderRevision((value) => value + 1);
       }}
       inventoryApi={inventory}
       sftpApi={sftp}

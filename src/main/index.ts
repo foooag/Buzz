@@ -11,8 +11,6 @@ import type { ForwardingRepository } from "./domains/forwarding/repository.js";
 import type { SftpRuntime as ElectronSftpRuntime } from "./domains/sftp/runtime.js";
 import type { SftpAssociations } from "./domains/sftp/associations.js";
 import type { AiService } from "./domains/ai/service.js";
-import type { MultiHostAgentRuntime } from "./domains/agent/agent-runtime.js";
-import type { SshHeadlessRuntime } from "./domains/ssh/headless.js";
 
 const streamOwners = new Map<string, WebContents>();
 let commandDispatcher: ElectronCommandDispatcher | undefined;
@@ -25,8 +23,6 @@ let forwardingRepository: ForwardingRepository | undefined;
 let sftpRuntime: ElectronSftpRuntime | undefined;
 let sftpAssociations: SftpAssociations | undefined;
 let aiService: AiService | undefined;
-let headlessRuntime: SshHeadlessRuntime | undefined;
-let agentRuntime: MultiHostAgentRuntime | undefined;
 let mainWindow: BrowserWindow | undefined;
 let allowQuit = false;
 let shutdownStarted = false;
@@ -51,7 +47,6 @@ function createWindow(): BrowserWindow {
   const ownerId = String(window.webContents.id);
   window.webContents.once("destroyed", () => {
     void aiService?.agents.closeOwner(ownerId);
-    void agentRuntime?.closeOwner(ownerId);
   });
   window.webContents.on("will-navigate", (event, url) => {
     const allowed = app.isPackaged
@@ -196,10 +191,6 @@ async function start(): Promise<void> {
     { SftpAssociations },
     { createAiCommandHandlers },
     { openAiService },
-    { createAgentCommandHandlers },
-    { MultiHostAgentRuntime },
-    { SshHeadlessRuntime },
-    { createAgentHostResolver },
     { CommandDispatcher },
   ] = await Promise.all([
     import("./domains/app.js"),
@@ -218,10 +209,6 @@ async function start(): Promise<void> {
     import("./domains/sftp/associations.js"),
     import("./domains/ai/commands.js"),
     import("./domains/ai/service.js"),
-    import("./domains/agent/commands.js"),
-    import("./domains/agent/agent-runtime.js"),
-    import("./domains/ssh/headless.js"),
-    import("./domains/agent/host-resolution.js"),
     import("./ipc/dispatcher.js"),
   ]);
   const dataDirectory = configuredTestData ?? app.getPath("userData");
@@ -253,14 +240,6 @@ async function start(): Promise<void> {
   ));
   terminalRuntime = new TerminalRuntime(emitStreamEvent);
   aiService = await openAiService(dataDirectory, isolatedE2e, sshRuntime);
-  headlessRuntime = new SshHeadlessRuntime(sshRuntime);
-  agentRuntime = new MultiHostAgentRuntime(
-    aiService.models,
-    aiService.history,
-    aiService.risk,
-    headlessRuntime,
-    createAgentHostResolver(inventoryRepository, sshPersistence.credentials),
-  );
   commandDispatcher = new CommandDispatcher(
     {
       ...createAppCommandHandlers(app.getVersion()),
@@ -270,7 +249,6 @@ async function start(): Promise<void> {
       ...createForwardingCommandHandlers(portForwardingRuntime, forwardingRepository),
       ...createSftpCommandHandlers(sftpRuntime, sftpAssociations),
       ...createAiCommandHandlers(aiService, emitStreamEvent),
-      ...createAgentCommandHandlers(agentRuntime, emitStreamEvent),
     },
     async () => ({
       ok: false,
@@ -297,10 +275,6 @@ async function start(): Promise<void> {
     void (async () => {
       await aiService?.close();
       aiService = undefined;
-      await agentRuntime?.closeAll();
-      agentRuntime = undefined;
-      await headlessRuntime?.closeAll();
-      headlessRuntime = undefined;
       terminalRuntime?.closeAll();
       terminalRuntime = undefined;
       portForwardingRuntime?.closeAll();

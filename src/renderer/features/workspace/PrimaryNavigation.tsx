@@ -1,4 +1,4 @@
-import { FolderOpen, History, Network, Server, Sparkles } from "lucide-react";
+import { FolderOpen, History, Network, Server } from "lucide-react";
 import type { Destination } from "./WorkspaceShell";
 
 type PrimaryNavigationProps = {
@@ -8,7 +8,6 @@ type PrimaryNavigationProps = {
 
 const destinations = [
   { id: "servers", label: "Servers", icon: Server },
-  { id: "agent", label: "Agent", icon: Sparkles },
   { id: "sftp", label: "SFTP", icon: FolderOpen },
   { id: "forwarding", label: "Port Forwarding", icon: Network },
   { id: "history", label: "History", icon: History },

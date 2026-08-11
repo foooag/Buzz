@@ -69,7 +69,6 @@ export class SshRuntime {
   readonly #emit: (streamId: string | undefined, event: TerminalEvent) => void;
   readonly #bindings: SshBindings;
   readonly #sessions = new Map<string, Session>();
-  readonly #headlessClients = new Map<string, Client>();
   readonly #pending = new Map<string, PendingDecision>();
 
   constructor(
@@ -264,53 +263,6 @@ export class SshRuntime {
     return this.#sessions.has(sessionId);
   }
 
-  async openHeadless(
-    input: CreateSshProfile,
-    connectionId: string,
-    streamId?: string,
-  ): Promise<string> {
-    const profile = normalizeProfile(input);
-    const client = await this.connectClient(profile, connectionId, streamId);
-    this.#headlessClients.set(connectionId, client);
-    client.once("close", () => {
-      if (this.#headlessClients.get(connectionId) === client) {
-        this.#headlessClients.delete(connectionId);
-      }
-    });
-    return connectionId;
-  }
-
-  hasHeadless(connectionId: string): boolean {
-    return this.#headlessClients.has(connectionId);
-  }
-
-  async executeHeadless(
-    connectionId: string,
-    cwd: string,
-    command: string,
-    timeoutMs: number,
-    signal?: AbortSignal,
-  ): Promise<SshCommandResult> {
-    const client = this.#headlessClients.get(connectionId);
-    if (!client) throw sessionNotFound();
-    return this.#executeOnClient(
-      client,
-      cwd,
-      command,
-      timeoutMs,
-      signal,
-      () => undefined,
-      () => undefined,
-    );
-  }
-
-  async closeHeadless(connectionId: string): Promise<void> {
-    const client = this.#headlessClients.get(connectionId);
-    if (!client) return;
-    this.#headlessClients.delete(connectionId);
-    client.end();
-  }
-
   host(sessionId: string): string {
     return this.#session(sessionId).profile.hostname;
   }
@@ -465,9 +417,6 @@ export class SshRuntime {
   async closeAll(): Promise<void> {
     for (const sessionId of [...this.#pending.keys()]) this.#clearPending(sessionId, false);
     await Promise.all([...this.#sessions.keys()].map((sessionId) => this.close(sessionId)));
-    for (const connectionId of [...this.#headlessClients.keys()]) {
-      await this.closeHeadless(connectionId);
-    }
   }
 
   #authentication(
