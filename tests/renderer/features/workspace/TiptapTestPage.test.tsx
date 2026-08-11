@@ -9,6 +9,5 @@ describe("TiptapTestPage", () => {
     expect(
       await screen.findByRole("textbox", { name: "Tiptap test input" }),
     ).toBeVisible();
-    expect(screen.getByLabelText("Tiptap test input event log")).toBeVisible();
   });
 });

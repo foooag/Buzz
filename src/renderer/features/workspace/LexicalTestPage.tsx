@@ -5,7 +5,6 @@ import {
 } from "@assistant-ui/react";
 import { LexicalComposerInput } from "@assistant-ui/react-lexical";
 import { useCallback } from "react";
-import { InputEventRecorder } from "./InputEventRecorder";
 
 const testModel: ChatModelAdapter = {
   async *run() {
@@ -22,15 +21,13 @@ export function LexicalTestPage() {
   }, []);
 
   return (
-    <InputEventRecorder targetLabel="Lexical test input">
-      <AssistantRuntimeProvider runtime={runtime}>
-        <LexicalComposerInput
-          ref={labelEditor}
-          autoFocus
-          placeholder="Type here…"
-          className="m-6 min-h-32 rounded-xl border border-graphite bg-carbon px-4 py-3 text-[15px] leading-relaxed text-paper outline-hidden focus-within:border-acid-lime/45 [&_.aui-lexical-input]:min-h-24 [&_.aui-lexical-input]:outline-hidden [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:text-fog"
-        />
-      </AssistantRuntimeProvider>
-    </InputEventRecorder>
+    <AssistantRuntimeProvider runtime={runtime}>
+      <LexicalComposerInput
+        ref={labelEditor}
+        autoFocus
+        placeholder="Type here…"
+        className="m-6 min-h-32 rounded-xl border border-graphite bg-carbon px-4 py-3 text-[15px] leading-relaxed text-paper outline-hidden focus-within:border-acid-lime/45 [&_.aui-lexical-input]:min-h-24 [&_.aui-lexical-input]:outline-hidden [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:text-fog"
+      />
+    </AssistantRuntimeProvider>
   );
 }

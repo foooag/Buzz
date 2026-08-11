@@ -384,8 +384,17 @@ export function useI18n(): I18nContextValue {
 const originalText = new WeakMap<Text, string>();
 const translatedAttributes = ["aria-label", "title", "placeholder"] as const;
 const originalAttributes = new WeakMap<Element, Map<string, string>>();
+const editableSelector =
+  'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
+
+function findEditableRegion(node: Node): Element | null {
+  const element = node instanceof Element ? node : node.parentElement;
+  return element?.closest(editableSelector) ?? null;
+}
 
 function translateTree(root: Node, locale: Locale) {
+  const editableRegion = findEditableRegion(root);
+  if (editableRegion && editableRegion !== root) return;
   if (root.nodeType === Node.TEXT_NODE) {
     const node = root as Text;
     if (!originalText.has(node)) originalText.set(node, node.data);
@@ -410,6 +419,7 @@ function translateTree(root: Node, locale: Locale) {
       if (current !== next) root.setAttribute(name, next);
     }
   }
+  if (editableRegion) return;
   for (const child of root.childNodes) translateTree(child, locale);
 }
 

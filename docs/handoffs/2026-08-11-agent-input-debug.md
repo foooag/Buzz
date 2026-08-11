@@ -1,64 +1,40 @@
 # Buzz Agent input debugging handoff
 
-## Repository state
+## Status
 
-- Branch: `codex/debug-agent-input`
-- Snapshot commit: `cd037fc` (`feat(agent): add sidebar workflow and input diagnostics`)
-- The snapshot intentionally contains every modified, deleted, and untracked workspace file requested by the user.
-- Primary implementation plan: `docs/superpowers/plans/2026-08-05-agent-sidebar.md`
-- Product context: `docs/prd/2026-08-05-agent-sidebar.md`
-- Working tree was clean immediately after the snapshot commit.
+Resolved on branch `codex/debug-agent-input`.
 
-## Current investigation
+The first-character-only input bug was caused by Buzz's Chinese `DocumentTranslator`, not Electron, Lexical, Tiptap, assistant-ui, React, the browser profile, or the input method.
 
-The Agent composer accepts only the first character when text is entered one physical/discrete key at a time. The user corrected the earlier report: ChatGPT's built-in browser also fails. There is therefore no confirmed ordinary-browser versus built-in-browser discriminator. Bulk/direct text insertion still works, while the physical keyboard, IME, or per-key event path fails.
+## Root cause
 
-Diagnostic routes are committed outside the normal workspace shell:
+`src/renderer/shared/i18n/index.tsx` observes the whole document in Chinese locale. It cached the first content of every Text node as source text and later restored that value after `characterData` mutations.
+
+For a contenteditable editor, input changed `w` to `wh`, then the translator restored the cached `w`. That DOM write moved Selection back to offset 0 and discarded every character after the first.
+
+## Fix
+
+`translateTree` now ignores user-editable controls and contenteditable subtrees. Ordinary UI text remains translated.
+
+The temporary visible event recorder was removed from the two diagnostic routes because it is no longer needed.
+
+## Regression coverage
+
+- `tests/renderer/shared/i18n.test.tsx` proves editable text is preserved under `zh-CN` while ordinary UI text remains translated.
+- `e2e-electron/smoke.spec.ts` forces `zh-CN`, focuses the macOS Electron window, then types `whoami` one key at a time into both Tiptap and Lexical. It asserts the text and Selection offsets after every character.
+
+## Diagnostic routes
 
 - `http://127.0.0.1:1420/#/lexical-test`
 - `http://127.0.0.1:1420/#/tiptap-test`
 
-Relevant files:
+## Detailed investigation
 
-- `src/renderer/features/workspace/LexicalTestPage.tsx`
-- `src/renderer/features/workspace/TiptapTestPage.tsx`
-- `src/renderer/features/agent/composer/MentionComposer.tsx`
-- `src/renderer/features/agent/AgentPage.tsx`
+See `docs/debugging/2026-08-11-editor-first-character-input.md`.
 
-## Confirmed observations
-
-- Opening the renderer at `127.0.0.1:1420` removes Electron main/preload from the input path; the failure can still occur, so Electron is not required for the bug.
-- Whole-string direct insertion can produce the complete text. ChatGPT built-in browser discrete-key input also reproduces the one-character failure.
-- Discrete key input on the Agent Lexical composer, standalone `LexicalComposerInput`, raw Lexical 0.49, and raw Lexical 0.48 retained only the first character in automation reproductions.
-- Standalone Tiptap accepted discrete keys normally in the controlled browser. The user's earlier experimental Tiptap replacement inside the Agent composer also failed, but that implementation is no longer present to inspect; editor recreation or controlled-value selection resets remain possible there.
-- Moving `LexicalComposerInput` outside `ComposerPrimitive.Root` did not fix it.
-- Disabling React StrictMode did not fix it.
-- Temporarily upgrading React and React DOM from 19.2.7 to 19.2.8 did not fix it. Versions and files were restored before commit.
-- Removing assistant-ui's synchronization layer in a temporary raw Lexical test did not fix the discrete-key automation reproduction, so `SyncPlugin` is not a necessary condition.
-- Temporary diagnostic source changes were restored before commit.
-- The local `xulux-base-demo` source is not a locked comparison: it has no lockfile or installed dependency tree and uses dependency ranges plus Next.js, so its working behavior does not isolate one package version.
-
-## Best current hypothesis
-
-Focus on the event/selection path that differs between direct text insertion and physical input: macOS input method composition, `keydown` / `beforeinput` / `input` ordering, browser extensions, and DOM Selection after the first mutation. Do not frame this as “Lexical or Tiptap cannot run in Electron.”
-
-Useful remaining comparisons are:
-
-1. macOS `ABC` input source versus their usual IME.
-2. An incognito browser window with extensions disabled.
-3. Paste of `whoami` versus physical per-key typing.
-4. Both committed diagnostic routes, not only the root Agent route.
-
-A temporary visible event recorder is now present on both diagnostic pages. It captures `keydown`, `beforeinput`, `input`, `keyup`, `compositionstart`, `compositionupdate`, `compositionend`, focus changes, `isComposing`, `inputType`, `data`, active element, and selection anchor/focus. Compare physical input across input sources and browsers; the built-in browser is no longer a known-good baseline. The recorder remains outside production routes.
-
-## Verification already completed
+## Verification
 
 - `pnpm typecheck` passed.
-- Full Vitest run passed: 95 files, 317 tests.
-- `git diff --check` passed before staging.
-
-## Suggested skills
-
-- `browser:control-in-app-browser`: reproduce both whole-string and discrete-key paths on the local diagnostic routes and inspect visible state.
-- `code-review`: review the debug branch against its parent after a concrete fix is implemented.
-- `handoff`: regenerate this document if the investigation changes substantially before another session transfer.
+- Full Vitest passed: 96 files, 319 tests.
+- The focused Electron input regression passed under forced `zh-CN`.
+- Full Electron E2E ran the input regression successfully; its unrelated desktop-service smoke failed locally with `PTY_OPEN_FAILED` while opening a terminal.

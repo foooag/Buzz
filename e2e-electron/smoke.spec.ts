@@ -75,7 +75,7 @@ test("boots Electron and reaches the isolated desktop services", async () => {
   }
 });
 
-test.skip("keeps the Agent composer cursor stable during sequential typing", async () => {
+test("keeps Lexical and Tiptap cursors stable during discrete typing", async () => {
   const dataDirectory = await mkdtemp(path.join(tmpdir(), "buzz-agent-e2e-"));
   const application = await electron.launch({
     executablePath: electronExecutable as unknown as string,
@@ -89,38 +89,51 @@ test.skip("keeps the Agent composer cursor stable during sequential typing", asy
   });
   try {
     const window = await application.firstWindow();
-    const created = await window.evaluate(() => window.terminus?.invoke(
-      "ai_create_provider_config",
-      {
-        input: {
-          providerKind: "ollama",
-          name: "Electron E2E Ollama",
-          baseUrl: "http://127.0.0.1:9",
-          modelId: "e2e-model",
-          isDefault: true,
-        },
-      },
-    ));
-    expect(created).toMatchObject({ ok: true });
-
-    await window.getByRole("link", { name: "Agent" }).click();
-    const composer = window.getByRole("textbox", { name: "Message agent" });
-    await expect(composer).toBeEnabled();
-    await composer.pressSequentially("whoami", { delay: 50 });
-
-    await expect(composer).toHaveValue("whoami");
-    expect(await composer.evaluate((element) => {
-      const input = element as HTMLTextAreaElement;
-      return {
-        active: document.activeElement === element,
-        anchorOffset: input.selectionStart,
-        focusOffset: input.selectionEnd,
-      };
-    })).toEqual({
-      active: true,
-      anchorOffset: 6,
-      focusOffset: 6,
+    await application.evaluate(({ app, BrowserWindow }) => {
+      app.focus({ steal: true });
+      const focusedWindow = BrowserWindow.getAllWindows()[0];
+      focusedWindow?.show();
+      focusedWindow?.focus();
     });
+    await window.waitForTimeout(300);
+    await window.evaluate(() => {
+      window.localStorage.setItem("terminus-locale", "zh-CN");
+    });
+    await window.reload();
+    for (const editor of [
+      { path: "tiptap-test", label: "Tiptap test input" },
+      { path: "lexical-test", label: "Lexical test input" },
+    ]) {
+      await window.goto(`http://127.0.0.1:1421/#/${editor.path}`);
+      await application.evaluate(({ app, BrowserWindow }) => {
+        app.focus({ steal: true });
+        BrowserWindow.getAllWindows()[0]?.focus();
+      });
+      await window.waitForTimeout(100);
+      const input = window.getByRole("textbox", { name: editor.label });
+      await expect(input).toBeEditable();
+      await input.click();
+      await input.focus();
+
+      let expected = "";
+      for (const key of "whoami") {
+        await window.keyboard.press(key);
+        expected += key;
+        await expect(input).toHaveText(expected);
+        expect(await input.evaluate((element) => {
+          const selection = window.getSelection();
+          return {
+            active: document.activeElement === element,
+            anchorOffset: selection?.anchorOffset,
+            focusOffset: selection?.focusOffset,
+          };
+        })).toEqual({
+          active: true,
+          anchorOffset: expected.length,
+          focusOffset: expected.length,
+        });
+      }
+    }
   } finally {
     await application.close();
   }

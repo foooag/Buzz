@@ -1,6 +1,5 @@
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { InputEventRecorder } from "./InputEventRecorder";
 
 export function TiptapTestPage() {
   const editor = useEditor({
@@ -21,11 +20,9 @@ export function TiptapTestPage() {
   });
 
   return (
-    <InputEventRecorder targetLabel="Tiptap test input">
-      <EditorContent
-        editor={editor}
-        className="m-6 min-h-32 rounded-xl border border-graphite bg-carbon px-4 py-3 focus-within:border-acid-lime/45"
-      />
-    </InputEventRecorder>
+    <EditorContent
+      editor={editor}
+      className="m-6 min-h-32 rounded-xl border border-graphite bg-carbon px-4 py-3 focus-within:border-acid-lime/45"
+    />
   );
 }

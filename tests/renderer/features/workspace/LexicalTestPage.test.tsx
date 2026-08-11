@@ -9,6 +9,5 @@ describe("LexicalTestPage", () => {
     expect(
       await screen.findByRole("textbox", { name: "Lexical test input" }),
     ).toBeVisible();
-    expect(screen.getByLabelText("Lexical test input event log")).toBeVisible();
   });
 });
