@@ -11,7 +11,7 @@
 
 ## Current investigation
 
-The Agent composer accepts only the first character when text is entered one physical/discrete key at a time in the user's ordinary browser. The user has now confirmed that text entry through ChatGPT's built-in browser works normally. This is the strongest current discriminator: bulk/direct text insertion works, while the physical keyboard, IME, or per-key event path fails.
+The Agent composer accepts only the first character when text is entered one physical/discrete key at a time. The user corrected the earlier report: ChatGPT's built-in browser also fails. There is therefore no confirmed ordinary-browser versus built-in-browser discriminator. Bulk/direct text insertion still works, while the physical keyboard, IME, or per-key event path fails.
 
 Diagnostic routes are committed outside the normal workspace shell:
 
@@ -28,7 +28,7 @@ Relevant files:
 ## Confirmed observations
 
 - Opening the renderer at `127.0.0.1:1420` removes Electron main/preload from the input path; the failure can still occur, so Electron is not required for the bug.
-- ChatGPT built-in browser text entry and Playwright-style whole-string `type("whoami")` produce the complete text.
+- Whole-string direct insertion can produce the complete text. ChatGPT built-in browser discrete-key input also reproduces the one-character failure.
 - Discrete key input on the Agent Lexical composer, standalone `LexicalComposerInput`, raw Lexical 0.49, and raw Lexical 0.48 retained only the first character in automation reproductions.
 - Standalone Tiptap accepted discrete keys normally in the controlled browser. The user's earlier experimental Tiptap replacement inside the Agent composer also failed, but that implementation is no longer present to inspect; editor recreation or controlled-value selection resets remain possible there.
 - Moving `LexicalComposerInput` outside `ComposerPrimitive.Root` did not fix it.
@@ -42,14 +42,14 @@ Relevant files:
 
 Focus on the event/selection path that differs between direct text insertion and physical input: macOS input method composition, `keydown` / `beforeinput` / `input` ordering, browser extensions, and DOM Selection after the first mutation. Do not frame this as “Lexical or Tiptap cannot run in Electron.”
 
-First ask the user to compare:
+Useful remaining comparisons are:
 
 1. macOS `ABC` input source versus their usual IME.
 2. An incognito browser window with extensions disabled.
 3. Paste of `whoami` versus physical per-key typing.
 4. Both committed diagnostic routes, not only the root Agent route.
 
-If code changes are desired, add a temporary visible event recorder to a diagnostic page that captures `keydown`, `beforeinput`, `input`, `keyup`, `compositionstart`, `compositionupdate`, `compositionend`, `isComposing`, `inputType`, `data`, active element, and selection anchor/focus after each event. Compare ordinary-browser physical input with the built-in browser's successful input. Keep the recorder out of production routes or behind a development-only switch.
+A temporary visible event recorder is now present on both diagnostic pages. It captures `keydown`, `beforeinput`, `input`, `keyup`, `compositionstart`, `compositionupdate`, `compositionend`, focus changes, `isComposing`, `inputType`, `data`, active element, and selection anchor/focus. Compare physical input across input sources and browsers; the built-in browser is no longer a known-good baseline. The recorder remains outside production routes.
 
 ## Verification already completed
 
