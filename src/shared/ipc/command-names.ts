@@ -21,6 +21,12 @@ export const COMMANDS = {
   aiRenameSession: "ai_rename_session",
   aiDeleteSession: "ai_delete_session",
 
+  agentCreate: "agent_create",
+  agentSteer: "agent_steer",
+  agentAbort: "agent_abort",
+  agentDecideTool: "agent_decide_tool",
+  agentClose: "agent_close",
+
   inventoryListVaults: "inventory_list_vaults",
   inventoryCreateVault: "inventory_create_vault",
   inventoryUpdateVault: "inventory_update_vault",

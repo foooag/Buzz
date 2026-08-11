@@ -54,7 +54,7 @@ export function ProtocolBadge({ protocol = "ssh" }: { protocol?: Host["protocol"
   const Icon = style.Icon;
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-pill px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-[0.05em] ${style.cls}`}
+      className={`inline-flex items-center gap-1 rounded-pill px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wider ${style.cls}`}
     >
       <Icon size={11} />
       {style.label}

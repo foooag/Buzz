@@ -99,7 +99,7 @@ export function ServersPage({ inventoryApi, sshApi, forwardingApi, onSshEvent, o
               if (event.key === "Enter" && canConnect) openQuickConnect();
             }}
             placeholder={'Search servers or connect directly — try “ssh deploy@10.0.0.20”'}
-            className="min-w-0 flex-1 bg-transparent text-[13.5px] text-mist outline-none placeholder:text-fog/60"
+            className="min-w-0 flex-1 bg-transparent text-[13.5px] text-mist outline-hidden placeholder:text-fog/60"
           />
           {query ? (
             <button

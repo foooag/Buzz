@@ -389,7 +389,7 @@ export function InventoryView({ api, query = "", sshApi, forwardingApi, onSshEve
     }
     if (layout === "grid") {
       return (
-        <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(230px,1fr))]">
+        <div className="grid gap-2.5 grid-cols-[repeat(auto-fill,minmax(230px,1fr))]">
           {filtered.map((host) => {
             const selected = panel?.type !== "new-group" && selectedId === host.id;
             return (
@@ -542,7 +542,7 @@ export function InventoryView({ api, query = "", sshApi, forwardingApi, onSshEve
                 value={tag}
                 onChange={(event) => setTag(event.target.value)}
                 aria-label="Filter by tag"
-                className="bg-transparent text-mist outline-none"
+                className="bg-transparent text-mist outline-hidden"
               >
                 <option value="">All</option>
                 {allTags.map((t) => (

@@ -11,6 +11,7 @@ import { createDeterministicSftpApi } from "./features/sftp/deterministicSftpApi
 import { createDeterministicAiConfigApi } from "./features/ai/deterministicAiApi";
 import { PROTOTYPE_AI_PROVIDERS } from "./features/ai/prototypeAiProviders";
 import { createDeterministicForwardingApi } from "./features/forwarding/deterministicForwardingApi";
+import { createDeterministicAgentApi } from "./features/agent/deterministicAgentApi";
 import "./styles/globals.css";
 
 const root = document.getElementById("root");
@@ -29,6 +30,7 @@ createRoot(root).render(
         sftp={selectSftpApi()}
         aiConfig={selectAiConfigApi()}
         forwarding={selectForwardingApi()}
+        agentClient={selectAgentApi()}
       />
     </AppProviders>
   </StrictMode>,
@@ -108,6 +110,18 @@ function selectForwardingApi() {
     )
   ) {
     return createDeterministicForwardingApi();
+  }
+  return undefined;
+}
+
+function selectAgentApi() {
+  if (
+    import.meta.env.DEV &&
+    ["deterministic-agent", "prototype"].includes(
+      new URLSearchParams(window.location.search).get("transport") ?? "",
+    )
+  ) {
+    return createDeterministicAgentApi();
   }
   return undefined;
 }

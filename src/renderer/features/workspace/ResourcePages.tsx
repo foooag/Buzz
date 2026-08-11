@@ -121,7 +121,7 @@ function ForwardRow({ rule, running, hostName, onToggle, onEdit, onDelete }: {
   const style = KIND_STYLE[rule.kind];
   return (
     <div className="flex items-center gap-3 rounded-xl border border-graphite/70 bg-obsidian/30 px-3.5 py-3">
-      <span className={`inline-flex shrink-0 items-center gap-1 rounded-pill px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-[0.05em] ${style.cls}`}>
+      <span className={`inline-flex shrink-0 items-center gap-1 rounded-pill px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wider ${style.cls}`}>
         <Route size={11} />
         {style.label}
       </span>
@@ -228,7 +228,7 @@ export function PortForwardingPage({
       />
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-5 pb-6">
         {error ? (
-          <div role="alert" className="mb-3 rounded-lg border border-coral-red/30 bg-coral-red/[0.06] px-3 py-2 text-[12px] text-coral-red">
+          <div role="alert" className="mb-3 rounded-lg border border-coral-red/30 bg-coral-red/6 px-3 py-2 text-[12px] text-coral-red">
             {error}
           </div>
         ) : null}
@@ -285,7 +285,7 @@ export function PortForwardingPage({
         </div>
       ) : null}
       {pendingHostKey ? (
-        <div className="fixed inset-0 z-[60] grid place-items-center bg-void/75 p-4">
+        <div className="fixed inset-0 z-60 grid place-items-center bg-void/75 p-4">
           <div role="dialog" aria-label="Verify forwarding host key" className="w-full max-w-[460px] rounded-xl border border-graphite bg-carbon p-5">
             <h2 className="m-0 text-[16px] font-semibold text-paper">Verify SSH host key</h2>
             <p className="mt-2 text-[12px] text-fog">{pendingHostKey.host}:{pendingHostKey.port}</p>
@@ -327,7 +327,7 @@ function ForwardRuleDialog({
     hostId: "",
     label: "",
   });
-  const field = "rounded-md border border-graphite bg-obsidian px-2.5 py-2 text-[13px] text-mist outline-none";
+  const field = "rounded-md border border-graphite bg-obsidian px-2.5 py-2 text-[13px] text-mist outline-hidden";
   const valid = Boolean(
     hosts.some((host) => host.id === rule.hostId) &&
     rule.bindHost.trim() &&
@@ -403,7 +403,7 @@ function HistoryRow({ entry, onReconnect }: { entry: HistoryEntry; onReconnect: 
   const failed = entry.status === "failed";
   const statusStyle = HISTORY_STATUS_STYLE[entry.status];
   return (
-    <div className={`flex items-center gap-3 rounded-xl border px-3.5 py-3 ${failed ? "border-coral-red/30 bg-coral-red/[0.04]" : "border-graphite/70 bg-obsidian/30"}`}>
+    <div className={`flex items-center gap-3 rounded-xl border px-3.5 py-3 ${failed ? "border-coral-red/30 bg-coral-red/4" : "border-graphite/70 bg-obsidian/30"}`}>
       <StatusDot status={HISTORY_STATUS_DOT[entry.status]} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -470,7 +470,7 @@ export function HistoryPage({ onReconnect }: { onReconnect?: (entry: HistoryEntr
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search history"
                 aria-label="Search history"
-                className="w-[150px] bg-transparent text-mist outline-none placeholder:text-fog/60"
+                className="w-[150px] bg-transparent text-mist outline-hidden placeholder:text-fog/60"
               />
             </label>
             <Button type="button" variant="outline" size="sm" disabled={!history.length} onClick={() => downloadConnectionHistory(history)}>

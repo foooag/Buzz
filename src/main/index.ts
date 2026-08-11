@@ -11,6 +11,9 @@ import type { ForwardingRepository } from "./domains/forwarding/repository.js";
 import type { SftpRuntime as ElectronSftpRuntime } from "./domains/sftp/runtime.js";
 import type { SftpAssociations } from "./domains/sftp/associations.js";
 import type { AiService } from "./domains/ai/service.js";
+import type { MultiHostAgentRuntime } from "./domains/agent/agent-runtime.js";
+import { registerAgentStreamIpc } from "./domains/agent/stream-ipc.js";
+import type { SshHeadlessRuntime } from "./domains/ssh/headless.js";
 
 const streamOwners = new Map<string, WebContents>();
 let commandDispatcher: ElectronCommandDispatcher | undefined;
@@ -23,9 +26,12 @@ let forwardingRepository: ForwardingRepository | undefined;
 let sftpRuntime: ElectronSftpRuntime | undefined;
 let sftpAssociations: SftpAssociations | undefined;
 let aiService: AiService | undefined;
+let agentRuntime: MultiHostAgentRuntime | undefined;
+let sshHeadlessRuntime: SshHeadlessRuntime | undefined;
 let mainWindow: BrowserWindow | undefined;
 let allowQuit = false;
 let shutdownStarted = false;
+const developmentRendererUrl = process.env.ELECTRON_RENDERER_URL ?? "http://127.0.0.1:1420";
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -47,17 +53,27 @@ function createWindow(): BrowserWindow {
   const ownerId = String(window.webContents.id);
   window.webContents.once("destroyed", () => {
     void aiService?.agents.closeOwner(ownerId);
+    void agentRuntime?.closeOwner(ownerId);
   });
   window.webContents.on("will-navigate", (event, url) => {
     const allowed = app.isPackaged
       ? url.startsWith("file:")
-      : url.startsWith("http://127.0.0.1:1420");
+      : isSameOrigin(url, developmentRendererUrl);
     if (!allowed) event.preventDefault();
   });
   window.once("ready-to-show", () => window.show());
   if (app.isPackaged) void window.loadFile(path.join(import.meta.dirname, "..", "renderer", "index.html"));
-  else void window.loadURL("http://127.0.0.1:1420");
+  else void window.loadURL(developmentRendererUrl);
+  if (agentRuntime) registerAgentStreamIpc(window, agentRuntime);
   return window;
+}
+
+function isSameOrigin(candidate: string, expected: string): boolean {
+  try {
+    return new URL(candidate).origin === new URL(expected).origin;
+  } catch {
+    return false;
+  }
 }
 
 function installIpcHandlers(): void {
@@ -191,6 +207,9 @@ async function start(): Promise<void> {
     { SftpAssociations },
     { createAiCommandHandlers },
     { openAiService },
+    { createAgentCommandHandlers },
+    { MultiHostAgentRuntime },
+    { SshHeadlessRuntime },
     { CommandDispatcher },
   ] = await Promise.all([
     import("./domains/app.js"),
@@ -209,6 +228,9 @@ async function start(): Promise<void> {
     import("./domains/sftp/associations.js"),
     import("./domains/ai/commands.js"),
     import("./domains/ai/service.js"),
+    import("./domains/agent/commands.js"),
+    import("./domains/agent/agent-runtime.js"),
+    import("./domains/ssh/headless.js"),
     import("./ipc/dispatcher.js"),
   ]);
   const dataDirectory = configuredTestData ?? app.getPath("userData");
@@ -240,6 +262,14 @@ async function start(): Promise<void> {
   ));
   terminalRuntime = new TerminalRuntime(emitStreamEvent);
   aiService = await openAiService(dataDirectory, isolatedE2e, sshRuntime);
+  sshHeadlessRuntime = new SshHeadlessRuntime(sshRuntime);
+  agentRuntime = new MultiHostAgentRuntime(
+    aiService.models,
+    aiService.history,
+    aiService.risk,
+    sshHeadlessRuntime,
+    inventoryRepository,
+  );
   commandDispatcher = new CommandDispatcher(
     {
       ...createAppCommandHandlers(app.getVersion()),
@@ -249,6 +279,7 @@ async function start(): Promise<void> {
       ...createForwardingCommandHandlers(portForwardingRuntime, forwardingRepository),
       ...createSftpCommandHandlers(sftpRuntime, sftpAssociations),
       ...createAiCommandHandlers(aiService, emitStreamEvent),
+      ...createAgentCommandHandlers(agentRuntime),
     },
     async () => ({
       ok: false,
@@ -273,6 +304,10 @@ async function start(): Promise<void> {
     if (shutdownStarted) return;
     shutdownStarted = true;
     void (async () => {
+      await agentRuntime?.closeAll();
+      agentRuntime = undefined;
+      await sshHeadlessRuntime?.closeAll();
+      sshHeadlessRuntime = undefined;
       await aiService?.close();
       aiService = undefined;
       terminalRuntime?.closeAll();

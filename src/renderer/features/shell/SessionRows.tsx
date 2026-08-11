@@ -32,7 +32,7 @@ export function SessionRows({ onActivate, onClose }: SessionRowsProps) {
           <div
             key={sessionId}
             data-active={activeSessionId === sessionId || undefined}
-            className="group/row relative grid grid-cols-[minmax(0,1fr)_auto] items-center rounded-[10px] data-[active]:bg-graphite data-[active]:shadow-[inset_3px_0_#e4f222]"
+            className="group/row relative grid grid-cols-[minmax(0,1fr)_auto] items-center rounded-[10px] data-active:bg-graphite data-active:shadow-[inset_3px_0_#e4f222]"
           >
             <button
               type="button"

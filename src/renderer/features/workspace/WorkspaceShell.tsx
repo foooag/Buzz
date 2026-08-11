@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { History, LockKeyhole, Network, Settings } from "lucide-react";
+import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import { PrimaryNavigation } from "./PrimaryNavigation";
 import { SessionRows } from "../shell/SessionRows";
@@ -15,12 +16,18 @@ function recentDot(status: string): string {
   return "bg-fog/50";
 }
 
-export type Destination = "servers" | "sftp" | "forwarding" | "history" | "terminal";
+export type Destination =
+  | "servers"
+  | "agent"
+  | "lexical-test"
+  | "tiptap-test"
+  | "sftp"
+  | "forwarding"
+  | "history"
+  | "terminal";
 
 type WorkspaceShellProps = {
   children: ReactNode;
-  destination: Destination;
-  onDestinationChange: (destination: Destination) => void;
   onSessionActivate?: (sessionId: string) => void;
   onSessionClose?: (sessionId: string) => void;
   sidebarCompact?: boolean;
@@ -29,13 +36,12 @@ type WorkspaceShellProps = {
 
 export function WorkspaceShell({
   children,
-  destination,
-  onDestinationChange,
   onSessionActivate = () => undefined,
   onSessionClose = () => undefined,
   sidebarCompact = false,
   onPreferences = () => undefined,
 }: WorkspaceShellProps) {
+  const navigate = useNavigate();
   const [history, setHistory] = useState(listConnectionHistory);
   useEffect(
     () => subscribeConnectionHistory(() => setHistory(listConnectionHistory())),
@@ -67,10 +73,7 @@ export function WorkspaceShell({
           </div>
         </div>
 
-        <PrimaryNavigation
-          destination={destination}
-          onDestinationChange={onDestinationChange}
-        />
+        <PrimaryNavigation />
 
         <SessionRows onActivate={onSessionActivate} onClose={onSessionClose} />
 
@@ -87,7 +90,7 @@ export function WorkspaceShell({
             </span>
             <button
               type="button"
-              onClick={() => onDestinationChange("history")}
+              onClick={() => navigate("/history")}
               className="normal-case tracking-normal text-[11px] font-normal text-fog hover:text-mist"
             >
               Show more
@@ -98,7 +101,7 @@ export function WorkspaceShell({
               <button
                 key={entry.id}
                 type="button"
-                onClick={() => onDestinationChange("history")}
+                onClick={() => navigate("/history")}
                 className="flex min-w-0 items-center gap-2.5 rounded-[10px] px-3.5 py-1.5 text-left text-[12.5px] text-fog hover:bg-white/5 hover:text-mist"
               >
                 <span className={`h-[6px] w-[6px] shrink-0 rounded-full ${recentDot(entry.status)}`} />

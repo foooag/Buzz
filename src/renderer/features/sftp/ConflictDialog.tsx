@@ -110,7 +110,7 @@ export function ConflictDialog({
       aria-modal="true"
       aria-label={`${heading}: ${targetName}`}
       tabIndex={-1}
-      className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-6 outline-none"
+      className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-6 outline-hidden"
       data-testid="sftp-conflict-dialog"
     >
       <div className="grid w-full max-w-[460px] gap-4 rounded-lg border border-graphite bg-card p-6 shadow-[0_24px_90px_rgba(0,0,0,0.55)]">
@@ -127,7 +127,7 @@ export function ConflictDialog({
             size="sm"
             aria-pressed={policy === "overwrite"}
             data-policy="overwrite"
-            className="aria-[pressed=true]:border-acid-lime aria-[pressed=true]:bg-acid-lime/10 aria-[pressed=true]:text-acid-lime"
+            className="aria-pressed:border-acid-lime aria-pressed:bg-acid-lime/10 aria-pressed:text-acid-lime"
             onClick={() => setPolicy("overwrite")}
           >
             Overwrite
@@ -138,7 +138,7 @@ export function ConflictDialog({
             size="sm"
             aria-pressed={policy === "skip"}
             data-policy="skip"
-            className="aria-[pressed=true]:border-acid-lime aria-[pressed=true]:bg-acid-lime/10 aria-[pressed=true]:text-acid-lime"
+            className="aria-pressed:border-acid-lime aria-pressed:bg-acid-lime/10 aria-pressed:text-acid-lime"
             onClick={() => setPolicy("skip")}
           >
             Skip
@@ -149,7 +149,7 @@ export function ConflictDialog({
             size="sm"
             aria-pressed={policy === "rename"}
             data-policy="rename"
-            className="aria-[pressed=true]:border-acid-lime aria-[pressed=true]:bg-acid-lime/10 aria-[pressed=true]:text-acid-lime"
+            className="aria-pressed:border-acid-lime aria-pressed:bg-acid-lime/10 aria-pressed:text-acid-lime"
             onClick={() => setPolicy("rename")}
           >
             Rename

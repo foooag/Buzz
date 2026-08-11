@@ -177,7 +177,7 @@ export function TerminalWorkspace({
                   type="search"
                   value={searchQuery}
                   placeholder="Search terminal"
-                  className="h-[30px] w-[140px] rounded-md border border-white/10 bg-transparent px-2 text-[13px] text-white outline-none placeholder:text-[#b7bdd0]/70"
+                  className="h-[30px] w-[140px] rounded-md border border-white/10 bg-transparent px-2 text-[13px] text-white outline-hidden placeholder:text-[#b7bdd0]/70"
                   onChange={(event) => setSearchQuery(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter")

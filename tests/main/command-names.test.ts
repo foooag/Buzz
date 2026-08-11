@@ -13,7 +13,7 @@ describe("Electron command allowlist", () => {
 
   it("keeps every allowlisted command registered in Electron domain handlers", () => {
     const dispatcher = [
-      "app.ts", "ai/commands.ts", "inventory/commands.ts", "terminal/commands.ts",
+      "app.ts", "ai/commands.ts", "agent/commands.ts", "inventory/commands.ts", "terminal/commands.ts",
       "ssh/commands.ts", "forwarding/commands.ts", "sftp/commands.ts",
     ].map((file) => readFileSync(`${root}/src/main/domains/${file}`, "utf8")).join("\n");
     for (const command of COMMAND_NAMES) {

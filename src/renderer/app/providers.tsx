@@ -30,7 +30,7 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryS
             <p className="m-0 text-[11px] font-bold uppercase tracking-[0.16em] text-acid-lime">
               Application error
             </p>
-            <h1 className="m-0 text-heading-sm font-w510 tracking-[-0.022em] text-paper">
+            <h1 className="m-0 text-heading-sm font-w510 tracking-tightest text-paper">
               Buzz couldn't open this workspace.
             </h1>
             <p className="text-fog">Your saved data was not changed. Reload the application to try again.</p>

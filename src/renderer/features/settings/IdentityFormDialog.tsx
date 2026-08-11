@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import type { Identity } from "../../shared/types";
 
 const inputCls =
-  "w-full rounded-md border border-graphite bg-carbon px-2.5 py-1.5 text-[12.5px] text-mist outline-none transition-colors placeholder:text-fog/45 focus:border-smoke";
+  "w-full rounded-md border border-graphite bg-carbon px-2.5 py-1.5 text-[12.5px] text-mist outline-hidden transition-colors placeholder:text-fog/45 focus:border-smoke";
 
 export type IdentityDraft = {
   name: string;

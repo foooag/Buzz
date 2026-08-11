@@ -433,7 +433,7 @@ export function AiAssistantPanel({
             disabled={!agentIdRef.current}
             placeholder="Describe what you want done on web-prod-01…"
             rows={3}
-            className="scroll-thin max-h-32 min-h-[76px] w-full resize-none bg-transparent px-3 py-2.5 text-[13px] leading-relaxed text-paper outline-none placeholder:text-fog/70 disabled:opacity-50"
+            className="scroll-thin max-h-32 min-h-[76px] w-full resize-none bg-transparent px-3 py-2.5 text-[13px] leading-relaxed text-paper outline-hidden placeholder:text-fog/70 disabled:opacity-50"
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
@@ -484,7 +484,7 @@ export function AiAssistantPanel({
                 value={providerId}
                 disabled={busy}
                 onChange={(event) => setProviderId(event.target.value)}
-                className="max-w-full cursor-pointer truncate border-0 bg-transparent p-0 text-[10.5px] text-mist outline-none disabled:cursor-default"
+                className="max-w-full cursor-pointer truncate border-0 bg-transparent p-0 text-[10.5px] text-mist outline-hidden disabled:cursor-default"
               >
                 {providers.map((provider) => (
                   <option key={provider.id} value={provider.id}>
@@ -624,7 +624,7 @@ function AiSidebarResizeHandle({ width, onChange, onReset }: AiSidebarResizeHand
       aria-valuemax={AI_SIDEBAR_MAX_WIDTH}
       aria-valuenow={Math.round(width)}
       data-dragging={dragging || undefined}
-      className="absolute inset-y-0 -left-1.5 z-20 w-3 cursor-col-resize select-none outline-none before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-graphite before:transition-colors hover:before:bg-acid-lime/70 focus-visible:before:bg-acid-lime/80 data-[dragging=true]:before:bg-acid-lime"
+      className="absolute inset-y-0 -left-1.5 z-20 w-3 cursor-col-resize select-none outline-hidden before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-graphite before:transition-colors hover:before:bg-acid-lime/70 focus-visible:before:bg-acid-lime/80 data-[dragging=true]:before:bg-acid-lime"
       onMouseDown={(event) => {
         event.preventDefault();
         beginDrag(event.clientX);
@@ -703,13 +703,13 @@ function MessageView({ message }: { message: AiAgentMessage }) {
       {message.content.map((part, index) => {
         if (part.type === "text") {
           if (!part.text.trim() || hideIncompleteToolPrelude) return null;
-          return <p key={index} className="whitespace-pre-wrap break-words">{part.text}</p>;
+          return <p key={index} className="whitespace-pre-wrap wrap-break-word">{part.text}</p>;
         }
         if (part.type === "thinking") {
           if (!part.thinking.trim()) return null;
           return <ThinkingBlock key={index} text={part.thinking} />;
         }
-        return <div key={index} className="overflow-x-auto whitespace-pre-wrap break-words rounded border border-graphite bg-obsidian/60 p-2 font-mono text-xs">{part.name}({JSON.stringify(part.arguments)})</div>;
+        return <div key={index} className="overflow-x-auto whitespace-pre-wrap wrap-break-word rounded border border-graphite bg-obsidian/60 p-2 font-mono text-xs">{part.name}({JSON.stringify(part.arguments)})</div>;
       })}
     </div>
   );
@@ -730,7 +730,7 @@ function ThinkingBlock({ text }: { text: string }) {
   return (
     <details ref={ref} className="group text-fog" open>
       <summary className="cursor-pointer select-none">Thinking</summary>
-      <p className="mt-1 whitespace-pre-wrap break-words border-l border-graphite pl-3 text-xs leading-relaxed">
+      <p className="mt-1 whitespace-pre-wrap wrap-break-word border-l border-graphite pl-3 text-xs leading-relaxed">
         {text}
       </p>
     </details>

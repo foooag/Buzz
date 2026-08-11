@@ -275,12 +275,10 @@ export class SshRuntime {
     signal?: AbortSignal,
   ): Promise<SshCommandResult> {
     const session = this.#session(sessionId);
-    return this.#executeOnClient(
+    return executeOnClientWithEvents(
       session.client,
-      cwd,
       command,
-      timeoutMs,
-      signal,
+      { cwd, timeoutMs, signal },
       () => this.#emit(session.streamId, {
         type: "output",
         sessionId,
@@ -292,93 +290,6 @@ export class SshRuntime {
         data: Array.from(chunk),
       }),
     );
-  }
-
-  async #executeOnClient(
-    client: Client,
-    cwd: string,
-    command: string,
-    timeoutMs: number,
-    signal: AbortSignal | undefined,
-    announce: (command: string) => void,
-    emitOutput: (chunk: Buffer) => void,
-  ): Promise<SshCommandResult> {
-    if (signal?.aborted) throw commandAbortedError();
-    const boundedTimeout = Math.min(300_000, Math.max(1_000, timeoutMs));
-    const cwdExpression = cwd.trim() === "$HOME" ? "$HOME" : quote([cwd]);
-    const remoteCommand = `cd -- ${cwdExpression} && ${command}`;
-    announce(remoteCommand);
-    const channel = await new Promise<ClientChannel>((resolve, reject) => {
-      client.exec(remoteCommand, (error, opened) => {
-        if (error) reject(disconnectedError());
-        else resolve(opened);
-      });
-    });
-    if (signal?.aborted) {
-      channel.close();
-      throw commandAbortedError();
-    }
-    return await new Promise<SshCommandResult>((resolve, reject) => {
-      const limit = 1024 * 1024;
-      const stdout: Buffer[] = [];
-      const stderr: Buffer[] = [];
-      let bytes = 0;
-      let truncated = false;
-      let exitCode: number | null = null;
-      let settled = false;
-      const cleanup = () => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
-      };
-      const abort = () => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        channel.signal("INT");
-        channel.close();
-        reject(commandAbortedError());
-      };
-      const append = (target: Buffer[], data: Buffer | string) => {
-        const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
-        const remaining = Math.max(0, limit - bytes);
-        if (remaining > 0) target.push(chunk.subarray(0, remaining));
-        if (chunk.byteLength > remaining) truncated = true;
-        bytes += Math.min(chunk.byteLength, remaining);
-        emitOutput(chunk);
-      };
-      const timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        channel.signal("INT");
-        channel.close();
-        reject(new DomainError("AI_TIMEOUT", "The SSH command timed out."));
-      }, boundedTimeout);
-      timer.unref();
-      signal?.addEventListener("abort", abort, { once: true });
-      channel.on("data", (data: Buffer | string) => append(stdout, data));
-      channel.stderr.on("data", (data: Buffer | string) => append(stderr, data));
-      channel.on("exit", (code: number | null) => {
-        exitCode = typeof code === "number" && code >= 0 ? code : null;
-      });
-      channel.on("error", () => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        reject(disconnectedError());
-      });
-      channel.on("close", () => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        resolve({
-          stdout: Buffer.concat(stdout).toString("utf8"),
-          stderr: Buffer.concat(stderr).toString("utf8"),
-          exitCode,
-          truncated,
-        });
-      });
-    });
   }
 
   async write(sessionId: string, data: readonly number[]): Promise<void> {
@@ -481,6 +392,100 @@ export class SshRuntime {
     pending.publicKey.fill(0);
     pending.verify(trust);
   }
+}
+
+export async function executeOnClient(
+  client: Client,
+  command: string,
+  opts: { cwd?: string; timeoutMs: number; signal?: AbortSignal },
+): Promise<SshCommandResult> {
+  return executeOnClientWithEvents(client, command, opts, () => undefined, () => undefined);
+}
+
+async function executeOnClientWithEvents(
+  client: Client,
+  command: string,
+  opts: { cwd?: string; timeoutMs: number; signal?: AbortSignal },
+  announce: (command: string) => void,
+  emitOutput: (chunk: Buffer) => void,
+): Promise<SshCommandResult> {
+  if (opts.signal?.aborted) throw commandAbortedError();
+  const boundedTimeout = Math.min(300_000, Math.max(1_000, opts.timeoutMs));
+  const cwd = opts.cwd?.trim() || "$HOME";
+  const cwdExpression = cwd === "$HOME" ? "$HOME" : quote([cwd]);
+  const remoteCommand = `cd -- ${cwdExpression} && ${command}`;
+  announce(remoteCommand);
+  const channel = await new Promise<ClientChannel>((resolve, reject) => {
+    client.exec(remoteCommand, (error, opened) => {
+      if (error) reject(disconnectedError());
+      else resolve(opened);
+    });
+  });
+  if (opts.signal?.aborted) {
+    channel.close();
+    throw commandAbortedError();
+  }
+  return await new Promise<SshCommandResult>((resolve, reject) => {
+    const limit = 1024 * 1024;
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let bytes = 0;
+    let truncated = false;
+    let exitCode: number | null = null;
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", abort);
+    };
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      channel.signal("INT");
+      channel.close();
+      reject(commandAbortedError());
+    };
+    const append = (target: Buffer[], data: Buffer | string) => {
+      const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      const remaining = Math.max(0, limit - bytes);
+      if (remaining > 0) target.push(chunk.subarray(0, remaining));
+      if (chunk.byteLength > remaining) truncated = true;
+      bytes += Math.min(chunk.byteLength, remaining);
+      emitOutput(chunk);
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      channel.signal("INT");
+      channel.close();
+      reject(new DomainError("AI_TIMEOUT", "The SSH command timed out."));
+    }, boundedTimeout);
+    timer.unref();
+    opts.signal?.addEventListener("abort", abort, { once: true });
+    channel.on("data", (data: Buffer | string) => append(stdout, data));
+    channel.stderr.on("data", (data: Buffer | string) => append(stderr, data));
+    channel.on("exit", (code: number | null) => {
+      exitCode = typeof code === "number" && code >= 0 ? code : null;
+    });
+    channel.on("error", () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(disconnectedError());
+    });
+    channel.on("close", () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve({
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+        exitCode,
+        truncated,
+      });
+    });
+  });
 }
 
 function commandAbortedError(): DomainError {

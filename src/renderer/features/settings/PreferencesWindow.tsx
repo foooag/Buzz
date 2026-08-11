@@ -60,7 +60,7 @@ function LanguageSection() {
           aria-label="Interface language"
           value={locale}
           onChange={(event) => setLocale(event.target.value as Locale)}
-          className="rounded-md border border-graphite bg-carbon px-3 py-1.5 text-[12.5px] text-mist outline-none"
+          className="rounded-md border border-graphite bg-carbon px-3 py-1.5 text-[12.5px] text-mist outline-hidden"
         >
           <option value="zh-CN">Chinese</option>
           <option value="en">English</option>
@@ -154,7 +154,7 @@ function NumberField({
             if (!Number.isFinite(next)) return;
             onChange(Math.min(max ?? next, Math.max(min ?? next, next)));
           }}
-          className="w-[68px] bg-transparent text-right text-[12.5px] text-mist outline-none"
+          className="w-[68px] bg-transparent text-right text-[12.5px] text-mist outline-hidden"
         />
         {suffix ? <span className="text-[11px] text-fog">{suffix}</span> : null}
       </span>
@@ -192,7 +192,7 @@ function TerminalSection({
             <h3 className="m-0 text-[13px] font-semibold tracking-tight text-paper">Theme</h3>
             <span className="text-[11.5px] text-fog">Preview foreground &amp; background</span>
           </div>
-          <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(120px,1fr))]">
+          <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(120px,1fr))]">
             {PREF_THEMES.map((t) => {
               const active = t.id === theme;
               return (
@@ -219,7 +219,7 @@ function TerminalSection({
             <h3 className="m-0 text-[13px] font-semibold tracking-tight text-paper">Font</h3>
             <span className="text-[11.5px] text-fog">Missing fonts fall back to a system monospace</span>
           </div>
-          <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(150px,1fr))]">
+          <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(150px,1fr))]">
             {PREF_FONTS.map((f) => {
               const active = f.id === preferences.fontId;
               return (
@@ -228,7 +228,7 @@ function TerminalSection({
                   type="button"
                   onClick={() => update({ fontId: f.id })}
                   aria-pressed={active}
-                  className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${active ? "border-acid-lime bg-acid-lime/[0.06]" : "border-graphite hover:border-smoke"}`}
+                  className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${active ? "border-acid-lime bg-acid-lime/6" : "border-graphite hover:border-smoke"}`}
                 >
                   <div className="text-[15px] text-mist" style={{ fontFamily: f.stack }}>$ npm run dev</div>
                   <div className="mt-1 text-[11px] text-fog">{f.name}</div>
@@ -507,7 +507,7 @@ export function PreferencesWindow({
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-void/70 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-void/70 p-4 backdrop-blur-xs"
       onMouseDown={onClose}
     >
       <div

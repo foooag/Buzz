@@ -20,6 +20,8 @@ export type FilePaneProps = {
   onUpload?: () => void;
   onDownload?: () => void;
   onNewFolder?: () => void;
+  onDragStart?: (entry: Entry, payload: string) => string | void;
+  onDropEntries?: (paths: string[]) => void;
 };
 
 /**
@@ -39,6 +41,8 @@ export function FilePane({
   onUpload,
   onDownload,
   onNewFolder,
+  onDragStart,
+  onDropEntries,
 }: FilePaneProps) {
   const isRemote = source.kind === "remote";
 
@@ -47,6 +51,23 @@ export function FilePane({
       className="flex min-h-0 flex-1 flex-col rounded-lg border border-graphite/70 bg-obsidian/30"
       aria-label={isRemote ? "Remote files" : "Local files"}
       data-testid={isRemote ? "sftp-remote-pane" : "sftp-local-pane"}
+      onDragOver={
+        onDropEntries
+          ? (event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+            }
+          : undefined
+      }
+      onDrop={
+        onDropEntries
+          ? (event) => {
+              event.preventDefault();
+              const payload = event.dataTransfer.getData("text/plain");
+              if (payload) onDropEntries([payload]);
+            }
+          : undefined
+      }
     >
       <header className="flex items-center justify-between gap-2 border-b border-graphite/70 px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
@@ -76,6 +97,7 @@ export function FilePane({
           onSelect={(entry) => {
             if (entry.isDir) onNavigate(entry.name);
           }}
+          onDragStart={onDragStart}
         />
       </div>
     </section>

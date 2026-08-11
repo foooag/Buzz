@@ -121,7 +121,7 @@ function AiHistoryRow({
               }}
               onBlur={commitRename}
               onClick={(e) => e.stopPropagation()}
-              className="w-full rounded border border-smoke bg-carbon px-1.5 py-0.5 text-[12.5px] text-mist outline-none"
+              className="w-full rounded border border-smoke bg-carbon px-1.5 py-0.5 text-[12.5px] text-mist outline-hidden"
             />
           ) : (
             <div className="truncate text-[12.5px] font-medium leading-snug text-mist">
@@ -211,7 +211,7 @@ export function ConversationHistoryPanel({
               }
             }}
             placeholder="Search past chats"
-            className="min-w-0 flex-1 bg-transparent text-[12.5px] text-mist outline-none placeholder:text-fog/60"
+            className="min-w-0 flex-1 bg-transparent text-[12.5px] text-mist outline-hidden placeholder:text-fog/60"
           />
         </div>
         <button

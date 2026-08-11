@@ -1,4 +1,8 @@
 import type { IpcResult } from "@shared/ipc/result";
+import type {
+  AgentStreamEvent,
+  AgentStreamRequest,
+} from "@shared/agent-stream";
 
 export type ElectronUpdateDownloadEvent =
   | { event: "Started"; data: { contentLength?: number } }
@@ -23,6 +27,11 @@ export type TerminusDesktopBridge = {
     input: unknown,
     onEvent: (event: TEvent) => void,
   ) => Promise<IpcResult<T>>;
+  streamAgent: (
+    request: AgentStreamRequest,
+    onEvent: (event: AgentStreamEvent) => void,
+    onClose?: () => void,
+  ) => () => void;
   window: {
     minimize: () => Promise<void>;
     toggleMaximize: () => Promise<void>;

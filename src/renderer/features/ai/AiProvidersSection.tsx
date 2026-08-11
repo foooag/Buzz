@@ -375,7 +375,7 @@ function ProviderForm({
   };
 
   const fieldClass =
-    "w-full rounded-md border border-graphite bg-carbon px-2.5 py-1.5 text-[12.5px] text-mist outline-none transition-colors focus:border-acid-lime/60";
+    "w-full rounded-md border border-graphite bg-carbon px-2.5 py-1.5 text-[12.5px] text-mist outline-hidden transition-colors focus:border-acid-lime/60";
   const labelClass =
     "block text-[11px] font-semibold uppercase tracking-[0.06em] text-fog/70";
   const canSave = Boolean(
@@ -392,7 +392,7 @@ function ProviderForm({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-void/70 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-void/70 p-4 backdrop-blur-xs"
       onMouseDown={onCancel}
     >
       <form
@@ -491,7 +491,7 @@ function ProviderForm({
                   }
                   autoComplete="off"
                   spellCheck={false}
-                  className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 font-mono text-[12.5px] text-mist outline-none placeholder:text-fog/50"
+                  className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 font-mono text-[12.5px] text-mist outline-hidden placeholder:text-fog/50"
                 />
                 <button
                   type="button"
