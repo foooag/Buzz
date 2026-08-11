@@ -38,9 +38,9 @@ describe("Agent conversation integration", () => {
     expect(await screen.findByText("Host is healthy.")).toBeVisible();
     const progress = screen.getByRole("complementary", { name: "Host progress" });
     expect(within(progress).getByText("h1")).toBeVisible();
-    expect(within(progress).getByText("success")).toBeVisible();
+    expect(within(progress).getByText("done")).toBeVisible();
     expect(within(progress).getByText("uptime")).toBeVisible();
-    expect(screen.getAllByText("up 1 day")).toHaveLength(2);
+    expect(screen.getByText("up 1 day")).toBeVisible();
     await waitFor(() => expect(stop).toHaveBeenCalled());
   });
 });

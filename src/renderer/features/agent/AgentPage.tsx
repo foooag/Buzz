@@ -4,7 +4,7 @@ import {
   ThreadPrimitive,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
-import { Bot, Loader2, Plus, Sparkles } from "lucide-react";
+import { Bot, Loader2, Plus, Shield, Sparkles } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -13,6 +13,14 @@ import {
   useState,
   type RefObject,
 } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { aiConfigApi } from "@/features/ai/aiApi";
 import type { AiConfigApi, AiProviderConfig } from "@/features/ai/aiConfigTypes";
 import type { AiAgentMessage } from "@/features/ai/aiAgentTypes";
@@ -63,6 +71,7 @@ export function AgentPage({
   const [confirmation, setConfirmation] = useState<AgentToolConfirmation | null>(null);
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [sessions, setSessions] = useState<AiSessionSummary[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [historyMessages, setHistoryMessages] = useState<AiAgentMessage[] | null>(null);
   const [agentRevision, setAgentRevision] = useState(0);
 
@@ -76,6 +85,21 @@ export function AgentPage({
           .map((host) => host.id),
       ]),
   ), [activeVaultId, groups, hosts]);
+  const hostLabels = useMemo(() => Object.fromEntries(
+    Object.values(hosts).map((host) => [host.id, host.name]),
+  ), [hosts]);
+  const selectedProvider = providers?.find((provider) => provider.id === providerId);
+  const activeSession = sessions.find((session) => session.id === activeSessionId);
+  const lastEvent = events.at(-1);
+  const isWorking = Boolean(lastEvent &&
+    lastEvent.type !== "agentEnd" &&
+    lastEvent.type !== "historySaveFailed");
+  const status = confirmation
+    ? { label: "Approval", dot: "bg-coral-red" }
+    : isWorking
+      ? { label: "Working", dot: "standby-dot bg-acid-lime" }
+      : { label: "Ready", dot: "bg-pulse-green" };
+
   const agentIdRef = useRef<string | null>(null);
   const groupHostsRef = useRef<Readonly<Record<string, readonly string[]>>>(groupHosts);
   const vaultIdRef = useRef<string | null>(activeVaultId);
@@ -113,6 +137,7 @@ export function AgentPage({
     setCreateError(null);
     setProgress([]);
     setConfirmation(null);
+    setEvents([]);
     void agentClient.create({
       providerConfigId: providerId,
       ...(activeVaultId ? { vaultId: activeVaultId } : {}),
@@ -142,12 +167,42 @@ export function AgentPage({
   }, [refreshSessions]);
   const credentialHostIds = useMemo(() => deriveCredentialHostIds(events), [events]);
 
-  const decide = (approved: boolean) => {
+  const startNewTask = useCallback(() => {
+    setActiveSessionId(null);
+    setHistoryMessages([]);
+    setEvents([]);
+    setProgress([]);
+    setConfirmation(null);
+    setAgentRevision((current) => current + 1);
+  }, []);
+
+  const loadSession = useCallback((id: string) => {
+    void sessionApi.load(id).then((record) => {
+      setActiveSessionId(id);
+      setHistoryMessages(record.messages);
+      setEvents([]);
+      setProgress([]);
+      setConfirmation(null);
+    });
+  }, [sessionApi]);
+
+  const decide = useCallback((approved: boolean) => {
     if (!agentId || !confirmation) return;
     const confirmationId = confirmation.confirmationId;
     setConfirmation(null);
     void agentClient.decideTool(agentId, confirmationId, approved).catch(() => undefined);
-  };
+  }, [agentClient, agentId, confirmation]);
+
+  useEffect(() => {
+    if (!confirmation) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      decide(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [confirmation, decide]);
 
   if (providers === null) {
     return <CenteredState icon={<Loader2 className="spin size-5" />} text="Loading Agent…" />;
@@ -162,65 +217,88 @@ export function AgentPage({
   }
 
   return (
-    <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] bg-void">
-      <header className="flex items-center gap-3 border-b border-graphite bg-carbon px-5 py-3">
-        <span className="grid size-8 place-items-center rounded-lg bg-acid-lime/10 text-acid-lime">
-          <Sparkles className="size-4" />
-        </span>
-        <div>
-          <h1 className="m-0 text-[14px] font-semibold text-paper">Agent</h1>
-          <p className="m-0 text-[10.5px] text-fog">Multi-host operations through verified SSH</p>
-        </div>
-        <div className="ml-auto flex items-center gap-2">
-          <HistoryDropdown
-            sessions={sessions}
-            onLoad={(id) => {
-              void sessionApi.load(id).then((record) => setHistoryMessages(record.messages));
-            }}
-            onDelete={(id) => {
-              void sessionApi.delete(id).then(() => {
-                setSessions((current) => current.filter((session) => session.id !== id));
-              });
-            }}
-            onRename={(id, title) => {
-              void sessionApi.rename(id, title).then((renamed) => {
-                setSessions((current) => current.map((session) =>
-                  session.id === id ? renamed : session));
-              });
-            }}
-          />
-          <select
-            aria-label="AI provider"
-            value={providerId}
-            onChange={(event) => setProviderId(event.target.value)}
-            className="max-w-52 rounded-md border border-graphite bg-obsidian px-2.5 py-1.5 text-[11px] text-mist outline-hidden"
-          >
-            {providers.map((provider) => (
-              <option key={provider.id} value={provider.id}>{provider.name}</option>
-            ))}
-          </select>
-          <button
-            type="button"
-            title="New task"
-            aria-label="New Agent task"
-            onClick={() => {
-              setHistoryMessages([]);
-              setEvents([]);
-              setProgress([]);
-              setConfirmation(null);
-              setAgentRevision((current) => current + 1);
-            }}
-            className="grid size-8 place-items-center rounded-md border border-graphite text-fog hover:bg-graphite hover:text-paper"
-          >
-            <Plus className="size-4" />
-          </button>
-        </div>
-      </header>
-      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_320px]">
-        <section className="min-h-0 min-w-0 p-4">
-          <HostErrorBanner hostIds={credentialHostIds} onConnect={onOpenServers} />
+    <div className="flex h-full min-h-0 flex-col bg-void" data-screen-label="Agent view">
+      <div className="flex min-h-0 min-w-0 flex-1">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-graphite bg-carbon px-4">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-acid-lime/12 text-acid-lime">
+                <Sparkles className="size-4" />
+              </span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h1 className="m-0 text-[13px] font-semibold tracking-tight text-paper">Agent</h1>
+                  <span key={status.label} className="inline-flex items-center gap-1 rounded-pill bg-graphite/70 px-1.5 py-0.5 text-[10px] text-fog">
+                    <span className={`size-1.5 rounded-full ${status.dot}`} />
+                    {status.label}
+                  </span>
+                  {activeSession ? (
+                    <span
+                      className="hidden max-w-[220px] truncate rounded-pill bg-graphite/40 px-1.5 py-0.5 text-[10px] text-fog/90 sm:inline"
+                      title={activeSession.title}
+                    >
+                      {activeSession.title}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-0.5 flex items-center gap-1 text-[11px] text-fog">
+                  <Shield className="size-[11px]" />
+                  <span className="truncate">Multi-host ops · headless SSH</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <Select value={providerId} onValueChange={setProviderId}>
+                <SelectTrigger
+                  aria-label="AI provider"
+                  className="h-7 w-[164px] border-graphite bg-obsidian/60 px-2.5 text-[11.5px] text-mist shadow-none focus:ring-0"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="end" className="border-graphite bg-carbon text-mist">
+                  {providers.map((provider) => (
+                    <SelectItem key={provider.id} value={provider.id} className="text-[11.5px] focus:bg-graphite focus:text-paper">
+                      {provider.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <HistoryDropdown
+                sessions={sessions}
+                activeId={activeSessionId}
+                onLoad={loadSession}
+                onNew={startNewTask}
+                onDelete={(id) => {
+                  void sessionApi.delete(id).then(() => {
+                    setSessions((current) => current.filter((session) => session.id !== id));
+                    if (activeSessionId === id) startNewTask();
+                  });
+                }}
+                onRename={(id, title) => {
+                  void sessionApi.rename(id, title).then((renamed) => {
+                    setSessions((current) => current.map((session) =>
+                      session.id === id ? renamed : session));
+                  });
+                }}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                title="New chat"
+                aria-label="New Agent task"
+                onClick={startNewTask}
+                className="size-7 text-fog hover:bg-white/5 hover:text-mist"
+              >
+                <Plus className="size-[15px]" />
+              </Button>
+            </div>
+          </header>
+
           {createError ? (
-            <p role="alert" className="text-[12px] text-coral-red">{createError}</p>
+            <div className="grid min-h-0 flex-1 place-items-center px-8 text-center">
+              <p role="alert" className="m-0 text-[12px] text-coral-red">{createError}</p>
+            </div>
           ) : agentId ? (
             <AgentConversation
               agentClient={agentClient}
@@ -229,22 +307,31 @@ export function AgentPage({
               vaultIdRef={vaultIdRef}
               sideDispatch={sideDispatch}
               historyMessages={historyMessages}
+              credentialHostIds={credentialHostIds}
+              onOpenServers={onOpenServers}
+              providerName={selectedProvider?.name ?? "AI provider"}
+              modelName={selectedProvider?.modelId ?? ""}
             />
           ) : (
-            <div className="grid h-full place-items-center text-[12px] text-fog">
+            <div className="grid min-h-0 flex-1 place-items-center text-[12px] text-fog">
               <span className="flex items-center gap-2"><Loader2 className="spin size-4" /> Starting Agent…</span>
             </div>
           )}
-        </section>
-        <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
-          <ProgressPanel hosts={progress} />
-          {confirmation ? (
-            <div className="border-l border-t border-graphite bg-carbon p-3">
-              <ConfirmCard confirmation={confirmation} onDecide={decide} />
-            </div>
-          ) : null}
         </div>
+
+        {progress.length > 0 ? (
+          <ProgressPanel hosts={progress} hostLabels={hostLabels} onConnect={onOpenServers} />
+        ) : null}
       </div>
+
+      {confirmation ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-void/75 p-4 backdrop-blur-sm"
+          onMouseDown={() => decide(false)}
+        >
+          <ConfirmCard confirmation={confirmation} onDecide={decide} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -256,6 +343,10 @@ function AgentConversation({
   vaultIdRef,
   sideDispatch,
   historyMessages,
+  credentialHostIds,
+  onOpenServers,
+  providerName,
+  modelName,
 }: {
   agentClient: AgentClient;
   agentIdRef: RefObject<string | null>;
@@ -263,6 +354,10 @@ function AgentConversation({
   vaultIdRef: RefObject<string | null>;
   sideDispatch: (event: AgentEvent) => void;
   historyMessages: AiAgentMessage[] | null;
+  credentialHostIds: readonly string[];
+  onOpenServers: () => void;
+  providerName: string;
+  modelName: string;
 }) {
   const runtime = useAgentRuntime(
     agentClient,
@@ -277,15 +372,32 @@ function AgentConversation({
   }, [historyMessages, runtime]);
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <ThreadPrimitive.Root className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto]">
-        <ThreadPrimitive.Viewport className="scroll-thin min-h-0 space-y-4 overflow-y-auto pr-2" autoScroll>
-          <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-4 pb-8 pt-2">
+      <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col">
+        <ThreadPrimitive.Viewport
+          className="scroll-thin min-h-0 flex-1 overflow-y-auto bg-carbon/60 px-4 py-3"
+          autoScroll
+        >
+          <ThreadPrimitive.Empty>
+            <div className="flex min-h-full flex-col items-center justify-center px-8 text-center">
+              <span className="grid size-11 place-items-center rounded-xl border border-acid-lime/20 bg-acid-lime/10 text-acid-lime">
+                <Sparkles className="size-5" />
+              </span>
+              <h2 className="m-0 mt-4 text-[14px] font-medium text-mist">Agent standing by</h2>
+              <p className="m-0 mt-1.5 max-w-[280px] text-[12px] leading-relaxed text-fog">
+                Type <span className="text-acid-lime">@</span> to pick a server or group, then describe the ops task — the agent connects headlessly and reports progress on the right.
+              </p>
+            </div>
+          </ThreadPrimitive.Empty>
+          <div className="flex flex-col gap-3.5">
             <AgentMessages />
           </div>
         </ThreadPrimitive.Viewport>
-        <div className="mx-auto w-full max-w-3xl pt-3">
-          <MentionComposer autoFocus />
-        </div>
+        <HostErrorBanner hostIds={credentialHostIds} onConnect={onOpenServers} />
+        <MentionComposer
+          autoFocus
+          providerName={providerName}
+          modelName={modelName}
+        />
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>
   );

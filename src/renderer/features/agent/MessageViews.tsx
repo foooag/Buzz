@@ -6,7 +6,7 @@ import {
   type ToolCallMessagePartProps,
   useAssistantToolUI,
 } from "@assistant-ui/react";
-import { Bot, Server, User } from "lucide-react";
+import { Check, Loader2, Server, Sparkles, TriangleAlert, X } from "lucide-react";
 import { DirectiveText } from "@/components/assistant-ui/directive-text";
 
 export function AgentMessages() {
@@ -23,10 +23,15 @@ export function AgentMessages() {
 
 function UserMessage() {
   return (
-    <MessagePrimitive.Root className="ml-auto flex max-w-[82%] items-start gap-2.5 rounded-xl border border-graphite bg-graphite/45 px-3.5 py-3 text-[13px] text-mist">
-      <User className="mt-0.5 size-4 shrink-0 text-fog" />
-      <div className="min-w-0">
-        <MessagePrimitive.Parts components={{ Text: DirectiveText }} />
+    <MessagePrimitive.Root className="rise-in flex gap-2.5">
+      <span className="grid size-6 shrink-0 place-items-center rounded-full bg-graphite text-[10px] font-semibold text-mist">
+        U
+      </span>
+      <div className="min-w-0 flex-1 pt-0.5">
+        <div className="text-[11px] font-medium text-fog">You</div>
+        <div className="mt-0.5 whitespace-pre-wrap text-[13px] leading-relaxed text-mist">
+          <MessagePrimitive.Parts components={{ Text: DirectiveText }} />
+        </div>
       </div>
     </MessagePrimitive.Root>
   );
@@ -34,11 +39,12 @@ function UserMessage() {
 
 function AssistantMessage() {
   return (
-    <MessagePrimitive.Root className="mr-auto flex w-full max-w-[92%] items-start gap-2.5 text-[13px] text-mist">
-      <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg border border-acid-lime/20 bg-acid-lime/8 text-acid-lime">
-        <Bot className="size-4" />
+    <MessagePrimitive.Root className="rise-in flex gap-2.5">
+      <span className="grid size-6 shrink-0 place-items-center rounded-full bg-acid-lime/12 text-acid-lime">
+        <Sparkles className="size-[13px]" />
       </span>
-      <div className="min-w-0 flex-1 space-y-2">
+      <div className="min-w-0 flex-1 space-y-2 pt-0.5">
+        <div className="text-[11px] font-medium text-acid-lime/90">Agent</div>
         <MessagePrimitive.Parts
           components={{
             Text: PlainText,
@@ -55,7 +61,7 @@ function AssistantMessage() {
 }
 
 function PlainText({ text }: TextMessagePartProps) {
-  return <p className="m-0 whitespace-pre-wrap wrap-break-word leading-relaxed">{text}</p>;
+  return <p className="m-0 whitespace-pre-wrap wrap-break-word text-[13px] leading-relaxed text-mist">{text}</p>;
 }
 
 function Reasoning({ text }: ReasoningMessagePartProps) {
@@ -72,32 +78,65 @@ export function HostExecCard({
   result,
   isError,
 }: ToolCallMessagePartProps<{ hostId?: string; command?: string }, unknown>) {
+  const output = result === undefined ? "" : formatResult(result);
   return (
-    <div className="overflow-hidden rounded-xl border border-graphite bg-obsidian/70">
-      <div className="flex items-center gap-2 border-b border-graphite px-3 py-2 text-[11px] text-fog">
-        <Server className="size-3.5 text-acid-lime" />
-        <span>{args.hostId ?? "host"}</span>
-        <span className={`ml-auto ${isError ? "text-coral-red" : result === undefined ? "text-fog" : "text-pulse-green"}`}>
-          {isError ? "Failed" : result === undefined ? "Running" : "Complete"}
+    <div className="rise-in overflow-hidden rounded-xl border border-graphite bg-obsidian/50">
+      <div className="flex items-center justify-between gap-2 px-3 py-2">
+        <span className="inline-flex items-center gap-1.5 rounded-pill bg-pulse-green/12 px-2 py-0.5 text-[11px] font-medium text-pulse-green">
+          <span className="size-1.5 rounded-full bg-pulse-green" />
+          auto-run
         </span>
+        {result === undefined ? (
+          <span key="running" className="inline-flex items-center gap-1.5 text-[11px] text-mist">
+            <Loader2 className="spin size-3" />
+            running
+          </span>
+        ) : (
+          <span key={isError ? "failed" : "complete"} className={`inline-flex items-center gap-1 rounded-pill px-2 py-0.5 text-[11px] font-medium ${
+            isError
+              ? "bg-coral-red/12 text-coral-red"
+              : "bg-pulse-green/12 text-pulse-green"
+          }`}>
+            {isError ? <X className="size-3" /> : <Check className="size-3" />}
+            {isError ? "failed" : "complete"}
+          </span>
+        )}
       </div>
-      <code className="block overflow-x-auto px-3 py-2 font-mono text-[11.5px] text-mist">
-        $ {args.command ?? "command"}
-      </code>
-      {result !== undefined ? (
-        <pre className="scroll-thin m-0 max-h-48 overflow-auto border-t border-graphite bg-void/50 px-3 py-2 font-mono text-[11px] leading-relaxed text-fog">
-          {formatResult(result)}
+      <div className="px-3 pb-2">
+        <div className="flex items-start gap-2 font-mono text-[12.5px] leading-relaxed text-mist">
+          <span className="select-none text-fog">$</span>
+          <code className="min-w-0 flex-1 whitespace-pre-wrap break-words">{args.command ?? "command"}</code>
+        </div>
+      </div>
+      {result === undefined ? (
+        <div className="mx-3 mb-2.5 rounded-md border border-graphite/70 bg-black/40 px-2.5 py-2 font-mono text-[12px] text-fog">
+          <span className="c-dim">capturing output…</span>
+        </div>
+      ) : output ? (
+        <pre className={`scroll-thin mx-3 mb-2.5 max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-graphite/70 bg-black/40 px-2.5 py-2 font-mono text-[12px] leading-relaxed ${
+          isError ? "text-coral-red" : "text-mist/90"
+        }`}>
+          {output}
         </pre>
       ) : null}
+      <div className="flex items-center gap-1 border-t border-graphite/70 px-3 py-1.5 text-[11px] text-fog">
+        <Server className="size-[11px] shrink-0" />
+        <span className="truncate">{args.hostId ?? "host"}</span>
+      </div>
     </div>
   );
 }
 
 function ToolFallback({ toolName, args, result, isError }: ToolCallMessagePartProps) {
   return (
-    <div className="rounded-lg border border-graphite bg-obsidian/60 p-3 text-[11px] text-fog">
-      <p className="m-0 font-medium text-mist">{toolName}{isError ? " failed" : ""}</p>
-      <pre className="scroll-thin mb-0 overflow-auto">{formatResult(result ?? args)}</pre>
+    <div className="overflow-hidden rounded-xl border border-graphite bg-obsidian/50">
+      <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-fog">
+        {isError ? <TriangleAlert className="size-3.5 text-coral-red" /> : <Sparkles className="size-3.5 text-acid-lime" />}
+        <span className="font-medium text-mist">{toolName}</span>
+      </div>
+      <pre className="scroll-thin m-0 max-h-48 overflow-auto border-t border-graphite bg-black/40 px-3 py-2 font-mono text-[11px] leading-relaxed text-fog">
+        {formatResult(result ?? args)}
+      </pre>
     </div>
   );
 }

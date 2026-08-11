@@ -19,7 +19,7 @@ describe("ConfirmCard", () => {
     );
 
     expect(screen.getByText("Command changes machine state.")).toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Approve once" }));
+    await userEvent.click(screen.getByRole("button", { name: "Run command" }));
     expect(onDecide).toHaveBeenCalledWith(true);
   });
 });
