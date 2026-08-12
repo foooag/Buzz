@@ -1,17 +1,15 @@
 import {
+  groupPartByType,
   MessagePrimitive,
-  type ReasoningGroupProps,
-  type ReasoningMessagePartProps,
   ThreadPrimitive,
-  type ToolCallMessagePartProps,
-  useAssistantToolUI,
 } from "@assistant-ui/react";
-import { Check, Loader2, Server, Sparkles, TriangleAlert, X } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { DirectiveText } from "@/components/assistant-ui/directive-text";
 import { StreamdownText } from "@/components/assistant-ui/streamdown-text";
+import { ToolFallbackRenderer } from "@/components/assistant-ui/tool-fallback";
+import { ToolGroupRoot } from "@/components/assistant-ui/tool-group";
 
 export function AgentMessages() {
-  useAssistantToolUI({ toolName: "host_exec", render: HostExecCard });
   return (
     <ThreadPrimitive.Messages
       components={{
@@ -46,27 +44,47 @@ function AssistantMessage() {
       </span>
       <div className="min-w-0 flex-1 space-y-2 pt-0.5">
         <div className="text-[11px] font-medium text-acid-lime/90">Agent</div>
-        <MessagePrimitive.Parts
-          components={{
-            Text: StreamdownText,
-            Reasoning: ReasoningChunk,
-            ReasoningGroup,
-            tools: {
-              by_name: { host_exec: HostExecCard },
-              Fallback: ToolFallback,
-            },
+        <MessagePrimitive.GroupedParts
+          groupBy={groupPartByType({
+            reasoning: ["group-thought"],
+            "tool-call": ["group-tool"],
+          })}
+        >
+          {({ part, children }) => {
+            switch (part.type) {
+              case "group-thought":
+                return <ThoughtGroup>{children}</ThoughtGroup>;
+              case "group-tool":
+                return (
+                  <ToolGroupRoot
+                    variant="ghost"
+                    count={part.indices.length}
+                    active={part.status.type === "running"}
+                  >
+                    {children}
+                  </ToolGroupRoot>
+                );
+              case "text":
+                return <StreamdownText />;
+              case "reasoning":
+                return <ReasoningChunk text={part.text} />;
+              case "tool-call":
+                return part.toolUI ?? <ToolFallbackRenderer {...part} />;
+              default:
+                return null;
+            }
           }}
-        />
+        </MessagePrimitive.GroupedParts>
       </div>
     </MessagePrimitive.Root>
   );
 }
 
-function ReasoningChunk({ text }: ReasoningMessagePartProps) {
+function ReasoningChunk({ text }: { text: string }) {
   return <>{text}</>;
 }
 
-function ReasoningGroup({ children }: ReasoningGroupProps) {
+function ThoughtGroup({ children }: { children: React.ReactNode }) {
   return (
     <details
       className="rounded-lg border border-graphite/70 bg-obsidian/40 px-3 py-2 text-fog"
@@ -76,82 +94,4 @@ function ReasoningGroup({ children }: ReasoningGroupProps) {
       <p className="mb-0 whitespace-pre-wrap text-[11.5px] leading-relaxed">{children}</p>
     </details>
   );
-}
-
-export function HostExecCard({
-  args,
-  result,
-  isError,
-}: ToolCallMessagePartProps<{ hostId?: string; command?: string }, unknown>) {
-  const output = result === undefined ? "" : formatResult(result);
-  return (
-    <div className="rise-in overflow-hidden rounded-xl border border-graphite bg-obsidian/50">
-      <div className="flex items-center justify-between gap-2 px-3 py-2">
-        <span className="inline-flex items-center gap-1.5 rounded-pill bg-pulse-green/12 px-2 py-0.5 text-[11px] font-medium text-pulse-green">
-          <span className="size-1.5 rounded-full bg-pulse-green" />
-          auto-run
-        </span>
-        {result === undefined ? (
-          <span key="running" className="inline-flex items-center gap-1.5 text-[11px] text-mist">
-            <Loader2 className="spin size-3" />
-            running
-          </span>
-        ) : (
-          <span key={isError ? "failed" : "complete"} className={`inline-flex items-center gap-1 rounded-pill px-2 py-0.5 text-[11px] font-medium ${
-            isError
-              ? "bg-coral-red/12 text-coral-red"
-              : "bg-pulse-green/12 text-pulse-green"
-          }`}>
-            {isError ? <X className="size-3" /> : <Check className="size-3" />}
-            {isError ? "failed" : "complete"}
-          </span>
-        )}
-      </div>
-      <div className="px-3 pb-2">
-        <div className="flex items-start gap-2 font-mono text-[12.5px] leading-relaxed text-mist">
-          <span className="select-none text-fog">$</span>
-          <code className="min-w-0 flex-1 whitespace-pre-wrap break-words">{args.command ?? "command"}</code>
-        </div>
-      </div>
-      {result === undefined ? (
-        <div className="mx-3 mb-2.5 rounded-md border border-graphite/70 bg-black/40 px-2.5 py-2 font-mono text-[12px] text-fog">
-          <span className="c-dim">capturing output…</span>
-        </div>
-      ) : output ? (
-        <pre className={`scroll-thin mx-3 mb-2.5 max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-graphite/70 bg-black/40 px-2.5 py-2 font-mono text-[12px] leading-relaxed ${
-          isError ? "text-coral-red" : "text-mist/90"
-        }`}>
-          {output}
-        </pre>
-      ) : null}
-      <div className="flex items-center gap-1 border-t border-graphite/70 px-3 py-1.5 text-[11px] text-fog">
-        <Server className="size-[11px] shrink-0" />
-        <span className="truncate">{args.hostId ?? "host"}</span>
-      </div>
-    </div>
-  );
-}
-
-function ToolFallback({ toolName, args, result, isError }: ToolCallMessagePartProps) {
-  return (
-    <div className="overflow-hidden rounded-xl border border-graphite bg-obsidian/50">
-      <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-fog">
-        {isError ? <TriangleAlert className="size-3.5 text-coral-red" /> : <Sparkles className="size-3.5 text-acid-lime" />}
-        <span className="font-medium text-mist">{toolName}</span>
-      </div>
-      <pre className="scroll-thin m-0 max-h-48 overflow-auto border-t border-graphite bg-black/40 px-3 py-2 font-mono text-[11px] leading-relaxed text-fog">
-        {formatResult(result ?? args)}
-      </pre>
-    </div>
-  );
-}
-
-function formatResult(value: unknown): string {
-  if (value && typeof value === "object") {
-    const result = value as Record<string, unknown>;
-    const stdout = typeof result.stdout === "string" ? result.stdout : "";
-    const stderr = typeof result.stderr === "string" ? result.stderr : "";
-    if (stdout || stderr) return [stdout, stderr].filter(Boolean).join("\n");
-  }
-  return typeof value === "string" ? value : JSON.stringify(value, null, 2);
 }
