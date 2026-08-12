@@ -28,6 +28,15 @@ Prefer shadcn/ui for frontend components. Reuse the existing primitives in `src/
 
 Add tests with every behavior change. Prefer Testing Library semantic queries over implementation details. Keep deterministic frontend APIs aligned with real IPC APIs. Desktop commands require domain and command-contract coverage; register new commands in `src/shared/ipc/command-names.ts`, the matching domain handler, and its contract test. No numeric coverage threshold is configured, but affected paths and regressions should be exercised.
 
+## Feature Documentation
+
+When a feature-level capability lands — a new user-facing capability or a meaningful behavioral addition, not a bugfix or refactor — add a short Markdown doc at `docs/features/<kebab-name>.md` in the same PR. The doc doubles as release-note input: the `update-readme-and-site` skill scans this folder to refresh `README.md` and the marketing site, so keep it machine-scrapeable.
+
+- **Filename:** kebab-case, e.g. `command-palette.md`.
+- **Title:** one `#` H1 with the feature name — it is parsed as the title.
+- **Summary:** a one-to-two-sentence opening paragraph stating what it does and why it matters. Keep it under ~160 characters; it is parsed as the summary.
+- **Body:** add short sections as relevant — What it does, How to use, Where it lives (key source paths), and Security notes if the feature touches the vault, the IPC boundary, or the risk gate.
+
 ## Commit & Pull Request Guidelines
 
 Follow Conventional Commits used in history: `feat(sftp): ...`, `fix(theme): ...`, `test: ...`, or `docs(plan): ...`. Keep commits focused and green. Pull requests should explain the behavior change, link the relevant issue/spec, list verification commands, and include screenshots for UI changes. Call out migrations, IPC contract changes, and security implications explicitly.
