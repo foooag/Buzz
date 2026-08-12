@@ -1,7 +1,16 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { App } from "@/app/App";
+import type { TerminalApi } from "@/features/shell/terminalApi";
+import type { SshApi } from "@/features/ssh/sshApi";
+import type { InventoryApi } from "@/features/inventory/inventoryApi";
+import {
+  recordConnectionAttempt,
+  markConnectionConnected,
+} from "@/features/workspace/connectionHistory";
+import { useTerminalStore } from "@/features/shell/terminalStore";
+import { createPaneNode } from "@/features/shell/terminalTree";
 
 describe("Termius-compatible application shell", () => {
   it("opens on Servers with the observed primary navigation and quick connect", async () => {
@@ -37,5 +46,54 @@ describe("Termius-compatible application shell", () => {
       "aria-current",
       "page",
     );
+  });
+
+  it("activates the live session and routes to /terminal when a connected Recent row is clicked", async () => {
+    const user = userEvent.setup();
+    localStorage.clear();
+    useTerminalStore.setState({
+      sessions: {},
+      sessionOrder: [],
+      activeSessionId: null,
+    });
+
+    const api: TerminalApi = {
+      open: vi.fn().mockResolvedValue({ sessionId: "ssh-1", title: "deploy@host" }),
+      close: vi.fn().mockResolvedValue(undefined),
+      write: vi.fn(),
+      resize: vi.fn(),
+    } as unknown as TerminalApi;
+    const ssh: SshApi = {
+      open: vi.fn().mockResolvedValue({ sessionId: "ssh-1", title: "deploy@host" }),
+      reconnect: vi.fn(),
+    } as unknown as SshApi;
+    const inventory: InventoryApi = {
+      listHosts: vi.fn().mockResolvedValue([]),
+    } as unknown as InventoryApi;
+
+    // Seed a live workspace whose id equals the history entry's sessionId,
+    // mirroring the real SSH-open flow (onSshOpened + markConnectionConnected).
+    const paneId = "pane-ssh-1";
+    useTerminalStore.getState().addSession({
+      id: "ssh-1",
+      title: "deploy@host",
+      status: "connected",
+      root: createPaneNode(paneId, "ssh-1"),
+      activePaneId: paneId,
+    });
+    const historyId = recordConnectionAttempt({
+      hostId: "host-1",
+      host: "10.0.0.5",
+      port: 22,
+      username: "deploy",
+    });
+    markConnectionConnected(historyId, "ssh-1");
+
+    render(<App api={api} ssh={ssh} inventory={inventory} />);
+
+    await user.click(screen.getByRole("button", { name: /10\.0\.0\.5/ }));
+
+    expect(useTerminalStore.getState().activeSessionId).toBe("ssh-1");
+    expect(window.location.hash).toContain("/terminal");
   });
 });

@@ -337,6 +337,23 @@ function RoutedApp({
     [onSshEvent, onSshOpened, ssh, terminalPreferences.keepaliveInterval],
   );
 
+  const openRecentSession = useCallback(
+    (entry: HistoryEntry) => {
+      const sessionId = entry.sessionId;
+      const live =
+        entry.status === "connected" &&
+        sessionId != null &&
+        Boolean(useTerminalStore.getState().sessions[sessionId]);
+      if (live) {
+        activateSession(sessionId!);
+        navigate(destinationPaths.terminal);
+      } else {
+        navigate(destinationPaths.history);
+      }
+    },
+    [activateSession, navigate],
+  );
+
   const restartSession = useCallback(
     async (sessionId: string, onEvent: (event: TerminalEvent) => void) => {
       if (sshSessionIds.current.has(sessionId)) {
@@ -359,6 +376,7 @@ function RoutedApp({
           setDestination("terminal");
         }}
         onSessionClose={(sessionId) => void closeWorkspace(sessionId)}
+        onOpenSession={openRecentSession}
         sidebarCompact={sidebarCompact}
         onPreferences={() => setPreferencesOpen(true)}
       >
