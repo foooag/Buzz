@@ -29,11 +29,13 @@ describe("Agent lifecycle commands", () => {
       providerConfigId: "provider-1",
       vaultId: "vault-1",
       targets: ["h1"],
+      historySessionId: "history-1",
     }, context)).resolves.toEqual({ ok: true, data: { agentId: "a1" } });
     expect(runtime.create).toHaveBeenCalledWith("renderer-1", {
       providerConfigId: "provider-1",
       vaultId: "vault-1",
       targets: ["h1"],
+      historySessionId: "history-1",
     });
   });
 });

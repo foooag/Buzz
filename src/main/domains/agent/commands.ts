@@ -20,6 +20,7 @@ export function createAgentCommandHandlers(
         providerConfigId: id,
         vaultId: id.optional(),
         targets: z.array(id).optional(),
+        historySessionId: id.optional(),
       }),
       (input, context) => runtime.create(context.ownerId, input),
     ),

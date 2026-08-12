@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiProviderConfig } from "@/features/ai/aiConfigTypes";
 import { AiAssistantPanel } from "@/features/ai/AiAssistantPanel";
@@ -104,6 +104,66 @@ describe("AiAssistantPanel", () => {
     await waitFor(() => expect(screen.getByText("检查完成")).toBeVisible());
   });
 
+  it("keeps streamed thinking monotonic when updates and the final snapshot lag", async () => {
+    let emit: ((event: AiAgentEvent) => void) | undefined;
+    let finish: ((snapshot: AiAgentSnapshot) => void) | undefined;
+    const completion = new Promise<AiAgentSnapshot>((resolve) => {
+      finish = resolve;
+    });
+    const userMessage = {
+      role: "user" as const,
+      content: "Think first",
+      timestamp: 1,
+    };
+    const partial = thinkingAssistant("The", 2);
+    const complete = thinkingAssistant("The user asked to inspect the server", 2);
+    const staleSnapshot = snapshot([userMessage, partial]);
+
+    render(
+      <AiAssistantPanel
+        onClose={() => undefined}
+        sshSessionId="ssh-1"
+        providerApi={{ list: async () => [provider], create: vi.fn(), update: vi.fn(), delete: vi.fn(), test: vi.fn(), probe: vi.fn() }}
+        agentClient={agentClient((_text, onEvent) => {
+          emit = onEvent;
+          return completion;
+        })}
+      />,
+    );
+
+    const input = await screen.findByRole("textbox", { name: "Message AI assistant" });
+    await waitFor(() => expect(input).toBeEnabled());
+    fireEvent.change(input, { target: { value: "Think first" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(emit).toBeTypeOf("function"));
+
+    act(() => {
+      emit?.({ type: "agentStart" });
+      emit?.({ type: "messageStart", message: userMessage });
+      emit?.({ type: "messageStart", message: partial });
+      emit?.({ type: "messageUpdate", message: partial });
+    });
+    const thinkingLabel = await screen.findByText("Thinking");
+    const partialThinking = thinkingLabel.closest("details");
+    expect(partialThinking).toHaveTextContent("The");
+
+    act(() => {
+      emit?.({ type: "messageUpdate", message: complete });
+    });
+    await screen.findByText("The user asked to inspect the server");
+    const completeThinking = screen.getByText("Thinking").closest("details");
+    expect(completeThinking).not.toBe(partialThinking);
+
+    act(() => {
+      emit?.({ type: "messageUpdate", message: partial });
+      emit?.({ type: "agentEnd", snapshot: staleSnapshot });
+      finish?.(staleSnapshot);
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeVisible());
+    expect(completeThinking).toHaveTextContent("The user asked to inspect the server");
+    expect(completeThinking).toHaveAttribute("open");
+  });
+
   it("renders a resizable sidebar with default width and persists changes", () => {
     const providerApi = { list: async () => [] as AiProviderConfig[], create: vi.fn(), update: vi.fn(), delete: vi.fn(), test: vi.fn(), probe: vi.fn() };
     const { container } = render(
@@ -153,7 +213,10 @@ describe("AiAssistantPanel", () => {
 });
 
 function agentClient(
-  run: (text: string, onEvent: (event: AiAgentEvent) => void) => AiAgentSnapshot,
+  run: (
+    text: string,
+    onEvent: (event: AiAgentEvent) => void,
+  ) => AiAgentSnapshot | Promise<AiAgentSnapshot>,
 ): AiAgentClient {
   return {
     create: vi.fn(async () => snapshot([])),
@@ -162,6 +225,18 @@ function agentClient(
     abort: vi.fn(async () => undefined),
     decideTool: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
+  };
+}
+
+function thinkingAssistant(
+  thinking: string,
+  timestamp: number,
+): Extract<AiAgentSnapshot["messages"][number], { role: "assistant" }> {
+  return {
+    role: "assistant",
+    content: [{ type: "thinking", thinking }],
+    stopReason: "pending",
+    timestamp,
   };
 }
 

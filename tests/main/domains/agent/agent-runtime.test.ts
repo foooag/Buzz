@@ -51,6 +51,106 @@ describe("MultiHostAgentRuntime", () => {
     }));
   });
 
+  it("restores and continues a selected Agent history session", async () => {
+    const previousMessage = {
+      role: "user" as const,
+      content: "Check the fleet",
+      timestamp: 1,
+    };
+    const history = {
+      load: vi.fn(() => ({
+        id: "history-7",
+        title: "Fleet investigation",
+        providerConfigId: "provider-1",
+        sshSessionId: "",
+        messageCount: 1,
+        lastStatus: null,
+        encryptedBytes: 64,
+        createdAt: "2026-08-12T00:00:00.000Z",
+        updatedAt: "2026-08-12T00:01:00.000Z",
+        messages: [previousMessage],
+      })),
+      save: vi.fn(() => ({ id: "history-7" })),
+    } as unknown as AiHistoryRepository;
+    const models = modelRuntime([textResponse("Still healthy")]);
+    const runtime = new MultiHostAgentRuntime(
+      models,
+      history,
+      allowRisk(),
+      headless(),
+      inventory(),
+    );
+
+    const created = runtime.create("renderer-1", {
+      providerConfigId: "provider-1",
+      vaultId: "v1",
+      historySessionId: "history-7",
+    });
+
+    expect(created.messages).toEqual([previousMessage]);
+    await runtime.prompt("renderer-1", created.agentId, "Check again", [], () => undefined);
+    expect(history.save).toHaveBeenCalledWith(expect.objectContaining({
+      id: "history-7",
+      title: "Fleet investigation",
+      messages: expect.arrayContaining([previousMessage]),
+    }));
+  });
+
+  it("streams complete reasoning when provider partials lag behind deltas", async () => {
+    const history = historyRepository();
+    const runtime = new MultiHostAgentRuntime(
+      modelRuntime([laggingReasoningResponse()]),
+      history,
+      allowRisk(),
+      headless(),
+      inventory(),
+    );
+    const { agentId } = runtime.create("renderer-1", {
+      providerConfigId: "provider-1",
+      vaultId: "v1",
+    });
+    const events: AgentEvent[] = [];
+
+    const completed = await runtime.prompt(
+      "renderer-1",
+      agentId,
+      "Think first",
+      [],
+      (event) => events.push(event),
+    );
+
+    expect(events.filter((event) => event.type === "messageUpdate").at(-1))
+      .toMatchObject({
+        message: {
+          content: [
+            { type: "thinking", thinking: "The user asked to inspect" },
+            { type: "text", text: "All systems ready" },
+          ],
+        },
+      });
+    expect(completed.messages.at(-1)).toMatchObject({
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "The user asked to inspect" },
+        { type: "text", text: "All systems ready" },
+      ],
+    });
+    expect(history.save).toHaveBeenCalledWith(expect.objectContaining({
+      messages: expect.arrayContaining([
+        expect.objectContaining({
+          role: "assistant",
+          content: [
+            expect.objectContaining({
+              type: "thinking",
+              thinking: "The user asked to inspect",
+            }),
+            expect.objectContaining({ type: "text", text: "All systems ready" }),
+          ],
+        }),
+      ]),
+    }));
+  });
+
   it("rejects requested targets outside the current vault", async () => {
     const runtime = new MultiHostAgentRuntime(
       modelRuntime([]),
@@ -148,6 +248,62 @@ function textResponse(text: string): AssistantMessageEvent[] {
     { type: "text_delta", contentIndex: 0, delta: text, partial },
     { type: "text_end", contentIndex: 0, content: text, partial },
     { type: "done", reason: "stop", message: partial },
+  ];
+}
+
+function laggingReasoningResponse(): AssistantMessageEvent[] {
+  const start = assistantMessage([]);
+  const thinkingStart = assistantMessage([{ type: "thinking", thinking: "" }]);
+  const firstThinking = assistantMessage([{ type: "thinking", thinking: "The" }]);
+  const textStart = assistantMessage([
+    { type: "thinking", thinking: "The" },
+    { type: "text", text: "" },
+  ]);
+  const firstText = assistantMessage([
+    { type: "thinking", thinking: "The" },
+    { type: "text", text: "All" },
+  ]);
+  return [
+    { type: "start", partial: start },
+    { type: "thinking_start", contentIndex: 0, partial: thinkingStart },
+    {
+      type: "thinking_delta",
+      contentIndex: 0,
+      delta: "The",
+      partial: firstThinking,
+    },
+    {
+      type: "thinking_delta",
+      contentIndex: 0,
+      delta: " user asked to inspect",
+      partial: firstThinking,
+    },
+    {
+      type: "thinking_end",
+      contentIndex: 0,
+      content: "The user asked to inspect",
+      partial: firstThinking,
+    },
+    { type: "text_start", contentIndex: 1, partial: textStart },
+    {
+      type: "text_delta",
+      contentIndex: 1,
+      delta: "All",
+      partial: firstText,
+    },
+    {
+      type: "text_delta",
+      contentIndex: 1,
+      delta: " systems ready",
+      partial: firstText,
+    },
+    {
+      type: "text_end",
+      contentIndex: 1,
+      content: "All systems ready",
+      partial: firstText,
+    },
+    { type: "done", reason: "stop", message: firstText },
   ];
 }
 

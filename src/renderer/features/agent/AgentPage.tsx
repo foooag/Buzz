@@ -140,6 +140,7 @@ export function AgentPage({
     void agentClient.create({
       providerConfigId: providerId,
       ...(activeVaultId ? { vaultId: activeVaultId } : {}),
+      ...(activeSessionId ? { historySessionId: activeSessionId } : {}),
       targets: [],
     }).then((snapshot) => {
       createdAgentId = snapshot.agentId;
@@ -156,7 +157,7 @@ export function AgentPage({
       closed = true;
       if (createdAgentId) void agentClient.close(createdAgentId).catch(() => undefined);
     };
-  }, [activeVaultId, agentClient, agentRevision, providerId]);
+  }, [activeSessionId, activeVaultId, agentClient, agentRevision, providerId]);
 
   const sideDispatch = useCallback((event: AgentEvent) => {
     setProgress((current) => reduceHostProgress(current, event));
@@ -177,13 +178,17 @@ export function AgentPage({
 
   const loadSession = useCallback((id: string) => {
     void sessionApi.load(id).then((record) => {
+      if (providers?.some((provider) => provider.id === record.providerConfigId)) {
+        setProviderId(record.providerConfigId);
+      }
       setActiveSessionId(id);
       setHistoryMessages(record.messages);
       setEvents([]);
       setProgress([]);
       setConfirmation(null);
+      setAgentRevision((current) => current + 1);
     });
-  }, [sessionApi]);
+  }, [providers, sessionApi]);
 
   const decide = useCallback((approved: boolean) => {
     if (!agentId || !confirmation) return;

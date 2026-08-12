@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AgentPage } from "../../../../src/renderer/features/agent/AgentPage";
 import type {
@@ -41,6 +41,54 @@ describe("Agent conversation integration", () => {
     expect(within(progress).getByText("done")).toBeVisible();
     expect(within(progress).getByText("uptime")).toBeVisible();
     expect(screen.getByText("up 1 day")).toBeVisible();
+    await waitFor(() => expect(stop).toHaveBeenCalled());
+  });
+
+  it("keeps streamed reasoning visible as its snapshot grows", async () => {
+    let emit: ((event: AgentEvent) => void) | undefined;
+    const stop = vi.fn();
+    const client = agentClient((onEvent) => {
+      emit = onEvent;
+      return stop;
+    });
+    render(
+      <AgentPage
+        agentClient={client}
+        providerApi={providerApi()}
+        sessionApi={sessionApi()}
+      />,
+    );
+
+    const composer = await screen.findByRole("textbox", { name: "Agent command" });
+    fireEvent.paste(composer, {
+      clipboardData: {
+        getData: () => "Think first",
+        types: ["text/plain"],
+      },
+    });
+    const send = screen.getByRole("button", { name: "Send Agent command" });
+    await waitFor(() => expect(send).toBeEnabled());
+    fireEvent.click(send);
+
+    await waitFor(() => expect(emit).toBeTypeOf("function"));
+    const events = reasoningEvents();
+    act(() => {
+      for (const event of events.slice(0, 3)) emit?.(event);
+    });
+    const reasoningLabel = await screen.findByText("Reasoning");
+    const reasoning = reasoningLabel.closest("details");
+    expect(reasoning).toHaveTextContent("The");
+
+    act(() => {
+      emit?.(events[3]);
+    });
+    await waitFor(() => expect(reasoning).toHaveTextContent("The user asked to inspect"));
+    expect(reasoning).toHaveAttribute("open");
+    expect(screen.getAllByText("Reasoning")).toHaveLength(1);
+
+    act(() => {
+      for (const event of events.slice(4)) emit?.(event);
+    });
     await waitFor(() => expect(stop).toHaveBeenCalled());
   });
 });
@@ -100,6 +148,40 @@ function completedEvents(): AgentEvent[] {
         status: "idle",
         hosts: ["h1"],
         messages: [message],
+      },
+    },
+  ];
+}
+
+function reasoningEvents(): AgentEvent[] {
+  const partial = {
+    role: "assistant" as const,
+    content: [{ type: "thinking", thinking: "The" }],
+    stopReason: "pending" as const,
+    timestamp: Date.now(),
+  };
+  const complete = {
+    ...partial,
+    content: [
+      { type: "thinking", thinking: "The user asked to inspect" },
+      { type: "text", text: "Done" },
+    ],
+    stopReason: "stop" as const,
+  };
+  return [
+    { type: "agentStart" },
+    { type: "messageStart", message: { ...partial, content: [] } },
+    { type: "messageUpdate", message: partial },
+    { type: "messageUpdate", message: complete },
+    { type: "messageEnd", message: complete },
+    {
+      type: "agentEnd",
+      snapshot: {
+        agentId: "agent-1",
+        providerConfigId: "provider-1",
+        status: "idle",
+        hosts: [],
+        messages: [complete],
       },
     },
   ];

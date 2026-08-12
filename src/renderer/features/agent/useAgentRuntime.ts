@@ -84,16 +84,19 @@ export function applyEventToSnapshot(
     event.message.role === "assistant"
   ) {
     const toolParts = current.filter((part) => part.type === "tool-call");
-    const messageParts: ThreadAssistantMessagePart[] = [];
-    for (const raw of event.message.content) {
-      if (raw.type === "text" && typeof raw.text === "string") {
-        messageParts.push({ type: "text", text: raw.text });
-      }
-      if (raw.type === "thinking" && typeof raw.thinking === "string") {
-        messageParts.push({ type: "reasoning", text: raw.thinking });
-      }
-    }
-    return [...messageParts, ...toolParts];
+    const reasoning = event.message.content
+      .filter((part) => part.type === "thinking")
+      .map((part) => part.thinking)
+      .join("");
+    const text = event.message.content
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("");
+    return [
+      ...growStreamingParts(current, "reasoning", reasoning),
+      ...growStreamingParts(current, "text", text),
+      ...toolParts,
+    ];
   }
   if (event.type === "toolStart") {
     const part: ThreadAssistantMessagePart = {
@@ -118,6 +121,26 @@ export function applyEventToSnapshot(
       : part);
   }
   return [...current];
+}
+
+function growStreamingParts(
+  current: readonly ThreadAssistantMessagePart[],
+  type: "reasoning" | "text",
+  nextText: string,
+): ThreadAssistantMessagePart[] {
+  const existing = current.filter(
+    (part): part is Extract<
+      ThreadAssistantMessagePart,
+      { type: "reasoning" | "text" }
+    > => part.type === type,
+  );
+  const currentText = existing.map((part) => part.text).join("");
+  if (nextText === currentText) return [...existing];
+  if (nextText.startsWith(currentText)) {
+    const suffix = nextText.slice(currentText.length);
+    return suffix ? [...existing, { type, text: suffix }] : [...existing];
+  }
+  return nextText ? [{ type, text: nextText }] : [];
 }
 
 function latestUserText(messages: readonly ThreadMessage[]): string {

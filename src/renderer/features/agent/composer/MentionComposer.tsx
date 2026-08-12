@@ -2,6 +2,7 @@ import { ComposerPrimitive, ThreadPrimitive } from "@assistant-ui/react";
 import { Send, Shield, Square } from "lucide-react";
 import { useCallback } from "react";
 import { ComposerTriggerPopover } from "@/components/assistant-ui/composer-trigger-popover";
+import { MentionDirectiveChip } from "@/components/assistant-ui/mention-directive-chip";
 import {
   ModelSelector,
   type ModelOption,
@@ -36,6 +37,7 @@ export function MentionComposer({
         <div className="relative">
           <ComposerTriggerPopover
             char="@"
+            variant="flat"
             {...mention}
             categoriesLabel="Select target type"
             itemsLabel="Select target"
@@ -44,6 +46,7 @@ export function MentionComposer({
             <LexicalComposerInput
               ref={labelEditor}
               autoFocus={autoFocus}
+              directiveChip={MentionDirectiveChip}
               className="scroll-thin relative max-h-32 min-h-[76px] min-w-0 overflow-y-auto bg-transparent px-3 py-2.5 pr-9 text-[13px] leading-relaxed text-mist outline-hidden [&_.aui-lexical-input]:min-h-14 [&_.aui-lexical-input]:outline-hidden [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:absolute [&_.aui-lexical-placeholder]:left-3 [&_.aui-lexical-placeholder]:top-2.5 [&_.aui-lexical-placeholder]:text-fog/70"
               placeholder={placeholder}
             />
@@ -90,10 +93,14 @@ export function MentionComposer({
               contentClassName="border-graphite bg-carbon text-mist"
             />
             <span className="flex shrink-0 items-center gap-1">
-              <kbd className="rounded border border-graphite bg-obsidian px-1 py-px font-sans text-[10px]">@</kbd>
+              <kbd className="rounded border border-graphite bg-obsidian px-1 py-px font-sans text-[10px]">
+                @
+              </kbd>
               <span>mention</span>
               <span className="text-fog/40">·</span>
-              <kbd className="rounded border border-graphite bg-obsidian px-1 py-px font-sans text-[10px]">⏎</kbd>
+              <kbd className="rounded border border-graphite bg-obsidian px-1 py-px font-sans text-[10px]">
+                ⏎
+              </kbd>
               <span>send</span>
             </span>
           </div>

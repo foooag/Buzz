@@ -1,8 +1,9 @@
 import {
   MessagePrimitive,
-  ThreadPrimitive,
+  type ReasoningGroupProps,
   type ReasoningMessagePartProps,
   type TextMessagePartProps,
+  ThreadPrimitive,
   type ToolCallMessagePartProps,
   useAssistantToolUI,
 } from "@assistant-ui/react";
@@ -47,8 +48,9 @@ function AssistantMessage() {
         <div className="text-[11px] font-medium text-acid-lime/90">Agent</div>
         <MessagePrimitive.Parts
           components={{
-            Text: PlainText,
-            Reasoning,
+            Text: StreamingTextChunk,
+            Reasoning: ReasoningChunk,
+            ReasoningGroup,
             tools: {
               by_name: { host_exec: HostExecCard },
               Fallback: ToolFallback,
@@ -60,15 +62,22 @@ function AssistantMessage() {
   );
 }
 
-function PlainText({ text }: TextMessagePartProps) {
-  return <p className="m-0 whitespace-pre-wrap wrap-break-word text-[13px] leading-relaxed text-mist">{text}</p>;
+function StreamingTextChunk({ text }: TextMessagePartProps) {
+  return <span className="whitespace-pre-wrap wrap-break-word text-[13px] leading-relaxed text-mist">{text}</span>;
 }
 
-function Reasoning({ text }: ReasoningMessagePartProps) {
+function ReasoningChunk({ text }: ReasoningMessagePartProps) {
+  return <>{text}</>;
+}
+
+function ReasoningGroup({ children }: ReasoningGroupProps) {
   return (
-    <details className="rounded-lg border border-graphite/70 bg-obsidian/40 px-3 py-2 text-fog">
+    <details
+      className="rounded-lg border border-graphite/70 bg-obsidian/40 px-3 py-2 text-fog"
+      open
+    >
       <summary className="cursor-pointer text-[11px] font-medium">Reasoning</summary>
-      <p className="mb-0 whitespace-pre-wrap text-[11.5px] leading-relaxed">{text}</p>
+      <p className="mb-0 whitespace-pre-wrap text-[11.5px] leading-relaxed">{children}</p>
     </details>
   );
 }

@@ -21,6 +21,7 @@ export type AgentClient = {
     providerConfigId: string;
     vaultId?: string;
     targets?: string[];
+    historySessionId?: string;
   }): Promise<AgentSnapshot>;
   streamPrompt(
     agentId: string,

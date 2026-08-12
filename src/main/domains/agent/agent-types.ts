@@ -28,4 +28,5 @@ export type AgentCreateInput = {
   providerConfigId: string;
   vaultId?: string;
   targets?: string[];
+  historySessionId?: string;
 };

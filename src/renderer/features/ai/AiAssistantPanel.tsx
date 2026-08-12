@@ -282,7 +282,7 @@ export function AiAssistantPanel({
       applyAgentEvent(event, setMessages, setRunning, setError, setConfirmation);
     }).then(
       (snapshot) => {
-        applySnapshot(snapshot, setMessages, setRunning, setError);
+        applyStreamingSnapshot(snapshot, setMessages, setRunning, setError);
         loadConversations();
       },
       () => {
@@ -530,6 +530,17 @@ function applySnapshot(
   setError(snapshot.errorMessage);
 }
 
+function applyStreamingSnapshot(
+  snapshot: AiAgentSnapshot,
+  setMessages: Dispatch<SetStateAction<AiAgentMessage[]>>,
+  setRunning: Dispatch<SetStateAction<boolean>>,
+  setError: Dispatch<SetStateAction<string | undefined>>,
+): void {
+  setMessages((current) => mergeStreamingMessages(current, snapshot.messages));
+  setRunning(snapshot.status !== "idle");
+  setError(snapshot.errorMessage);
+}
+
 function applyAgentEvent(
   event: AiAgentEvent,
   setMessages: Dispatch<SetStateAction<AiAgentMessage[]>>,
@@ -546,14 +557,20 @@ function applyAgentEvent(
       return;
     case "messageUpdate":
     case "messageEnd":
-      setMessages((current) => [...current.slice(0, -1), event.message]);
+      setMessages((current) => {
+        const previous = current.at(-1);
+        return [
+          ...current.slice(0, -1),
+          mergeStreamingMessage(previous, event.message),
+        ];
+      });
       return;
     case "toolConfirmationRequired":
       setConfirmation(event.confirmation);
       return;
     case "agentEnd":
       setConfirmation(undefined);
-      applySnapshot(event.snapshot, setMessages, setRunning, setError);
+      applyStreamingSnapshot(event.snapshot, setMessages, setRunning, setError);
       return;
     case "historySaveFailed":
       setError("The AI session history could not be saved.");
@@ -561,6 +578,57 @@ function applyAgentEvent(
     default:
       return;
   }
+}
+
+function mergeStreamingMessages(
+  current: readonly AiAgentMessage[],
+  incoming: readonly AiAgentMessage[],
+): AiAgentMessage[] {
+  return incoming.map((message, index) =>
+    mergeStreamingMessage(current[index], message));
+}
+
+type AiAssistantContent = Extract<
+  AiAgentMessage,
+  { role: "assistant" }
+>["content"][number];
+
+function mergeStreamingMessage(
+  previous: AiAgentMessage | undefined,
+  incoming: AiAgentMessage,
+): AiAgentMessage {
+  if (previous?.role !== "assistant" || incoming.role !== "assistant") {
+    return incoming;
+  }
+  const content = Array.from(
+    { length: Math.max(previous.content.length, incoming.content.length) },
+    (_, index) => {
+      const previousPart = previous.content[index];
+      const incomingPart = incoming.content[index];
+      if (!previousPart) return incomingPart;
+      if (!incomingPart) return previousPart;
+      if (previousPart.type === "thinking" && incomingPart.type === "thinking") {
+        return {
+          ...incomingPart,
+          thinking: richerStreamText(previousPart.thinking, incomingPart.thinking),
+        };
+      }
+      if (previousPart.type === "text" && incomingPart.type === "text") {
+        return {
+          ...incomingPart,
+          text: richerStreamText(previousPart.text, incomingPart.text),
+        };
+      }
+      return incomingPart;
+    },
+  ).filter((part): part is AiAssistantContent => Boolean(part));
+  return { ...incoming, content };
+}
+
+function richerStreamText(previous: string, incoming: string): string {
+  if (incoming.startsWith(previous)) return incoming;
+  if (previous.startsWith(incoming)) return previous;
+  return incoming;
 }
 
 function EmptyState({ text }: { text: string }) {
@@ -703,11 +771,23 @@ function MessageView({ message }: { message: AiAgentMessage }) {
       {message.content.map((part, index) => {
         if (part.type === "text") {
           if (!part.text.trim() || hideIncompleteToolPrelude) return null;
-          return <p key={index} className="whitespace-pre-wrap wrap-break-word">{part.text}</p>;
+          return (
+            <p
+              key={`${index}-text-${part.text.length}`}
+              className="whitespace-pre-wrap wrap-break-word"
+            >
+              {part.text}
+            </p>
+          );
         }
         if (part.type === "thinking") {
           if (!part.thinking.trim()) return null;
-          return <ThinkingBlock key={index} text={part.thinking} />;
+          return (
+            <ThinkingBlock
+              key={`${index}-thinking-${part.thinking.length}`}
+              text={part.thinking}
+            />
+          );
         }
         return <div key={index} className="overflow-x-auto whitespace-pre-wrap wrap-break-word rounded border border-graphite bg-obsidian/60 p-2 font-mono text-xs">{part.name}({JSON.stringify(part.arguments)})</div>;
       })}

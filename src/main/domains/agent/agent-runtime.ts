@@ -5,13 +5,19 @@ import {
   type AgentMessage,
   type AgentTool,
 } from "@earendil-works/pi-agent-core";
-import { Type } from "@earendil-works/pi-ai";
+import {
+  Type,
+  type AssistantMessage,
+} from "@earendil-works/pi-ai";
 import { DomainError } from "../../ipc/domain-error.js";
 import type { InventoryRepository } from "../inventory/repository.js";
 import type { Host } from "../inventory/models.js";
 import type { SshHeadlessRuntime } from "../ssh/headless.js";
 import type { AiAgentMessage } from "../ai/agent-types.js";
-import { createActiveContextCompactor } from "../ai/agent-runtime.js";
+import {
+  createActiveContextCompactor,
+  mergeAssistantStream,
+} from "../ai/agent-runtime.js";
 import type { AiHistoryRepository } from "../ai/history.js";
 import type { AiModelRuntime } from "../ai/model-runtime.js";
 import type { AiShellRiskRuntime, ShellAssessment } from "../ai/risk.js";
@@ -51,7 +57,9 @@ type AgentEntry = {
   unsubscribe: () => void;
   emit?: Emit;
   historyId?: string;
+  historyTitle: string;
   pending?: PendingConfirmation;
+  streamingAssistant?: AssistantMessage;
   closed: boolean;
 };
 
@@ -82,6 +90,19 @@ export class MultiHostAgentRuntime {
 
   create(ownerId: string, input: AgentCreateInput): AgentSnapshot {
     const model = this.#models.model(input.providerConfigId);
+    const historySession = input.historySessionId
+      ? this.#history.load(input.historySessionId)
+      : undefined;
+    if (historySession && historySession.sshSessionId !== "") {
+      throw new DomainError(
+        "AI_HISTORY_INVALID",
+        "The selected history does not belong to the multi-host Agent.",
+      );
+    }
+    const historyMessages = historySession?.messages;
+    if (historyMessages !== undefined && !Array.isArray(historyMessages)) {
+      throw new DomainError("AI_HISTORY_INVALID", "The selected Agent history is invalid.");
+    }
     const id = randomUUID();
     const entry = {} as AgentEntry;
     const agent = new Agent({
@@ -90,6 +111,7 @@ export class MultiHostAgentRuntime {
         model,
         thinkingLevel: model.reasoning ? "medium" : "off",
         tools: [this.#createHostExecTool(id), this.#createHostListTool(id)],
+        ...(historyMessages ? { messages: historyMessages as AgentMessage[] } : {}),
       },
       streamFn: (_model, context, options) =>
         this.#models.stream(input.providerConfigId, context, options),
@@ -109,6 +131,8 @@ export class MultiHostAgentRuntime {
       vaultId: input.vaultId,
       allowedHosts: new Set(input.targets ?? []),
       agent,
+      historyId: historySession?.id,
+      historyTitle: historySession?.title ?? "Ops agent task",
       unsubscribe: () => undefined,
       closed: false,
     });
@@ -259,15 +283,32 @@ export class MultiHostAgentRuntime {
     if (entry.closed) return;
     switch (event.type) {
       case "agent_start":
+        entry.streamingAssistant = undefined;
         entry.emit?.({ type: "agentStart" });
         return;
       case "message_start":
+        if (event.message.role === "assistant") {
+          entry.streamingAssistant = serializable(event.message);
+        }
         entry.emit?.({ type: "messageStart", message: wireMessage(event.message) });
         return;
-      case "message_update":
-        entry.emit?.({ type: "messageUpdate", message: wireMessage(event.message) });
+      case "message_update": {
+        if (event.message.role !== "assistant") return;
+        const message = mergeAssistantStream(
+          entry.streamingAssistant,
+          event.message,
+          event.assistantMessageEvent,
+        );
+        entry.streamingAssistant = message;
+        entry.emit?.({ type: "messageUpdate", message: wireMessage(message) });
         return;
+      }
       case "message_end":
+        if (event.message.role === "assistant" && entry.streamingAssistant) {
+          const message = mergeAssistantStream(entry.streamingAssistant, event.message);
+          event.message.content = message.content;
+        }
+        entry.streamingAssistant = undefined;
         entry.emit?.({ type: "messageEnd", message: wireMessage(event.message) });
         return;
       case "tool_execution_start":
@@ -300,10 +341,10 @@ export class MultiHostAgentRuntime {
         try {
           const saved = this.#history.save({
             id: entry.historyId,
-            title: "Ops agent task",
+            title: entry.historyTitle,
             providerConfigId: entry.providerConfigId,
             sshSessionId: "",
-            messages: serializable(event.messages),
+            messages: serializable(entry.agent.state.messages),
           });
           entry.historyId = saved.id;
         } catch {
@@ -414,6 +455,7 @@ export class MultiHostAgentRuntime {
     await entry.agent.waitForIdle();
     entry.unsubscribe();
     entry.emit = undefined;
+    entry.streamingAssistant = undefined;
   }
 
   #entry(ownerId: string, agentId: string): AgentEntry {

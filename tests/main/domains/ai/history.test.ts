@@ -34,6 +34,25 @@ describe("Electron AI history repository", () => {
     );
   });
 
+  it("stores multi-host Agent history without an SSH session id", () => {
+    const history = new AiHistoryRepository(
+      openAiDatabase(":memory:"),
+      new AesGcmFieldCipher(Buffer.alloc(32, 11)),
+    );
+
+    const saved = history.save({
+      title: "Ops agent task",
+      providerConfigId: "provider-1",
+      sshSessionId: "",
+      messages: [{ role: "user", content: "Check the fleet" }],
+    });
+
+    expect(saved.sshSessionId).toBe("");
+    expect(history.load(saved.id).messages).toEqual([
+      { role: "user", content: "Check the fleet" },
+    ]);
+  });
+
   it("rejects invalid metadata and a session larger than capacity", () => {
     const history = new AiHistoryRepository(
       openAiDatabase(":memory:"),
