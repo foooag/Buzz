@@ -14,13 +14,7 @@ import {
   type RefObject,
 } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import type { ModelOption } from "@/components/assistant-ui/model-selector";
 import { aiConfigApi } from "@/features/ai/aiApi";
 import type { AiConfigApi, AiProviderConfig } from "@/features/ai/aiConfigTypes";
 import type { AiAgentMessage } from "@/features/ai/aiAgentTypes";
@@ -88,7 +82,12 @@ export function AgentPage({
   const hostLabels = useMemo(() => Object.fromEntries(
     Object.values(hosts).map((host) => [host.id, host.name]),
   ), [hosts]);
-  const selectedProvider = providers?.find((provider) => provider.id === providerId);
+  const modelOptions = useMemo<ModelOption[]>(() => providers?.map((provider) => ({
+    id: provider.id,
+    name: provider.modelId || provider.name,
+    description: provider.name,
+    keywords: [provider.name, provider.providerKind].filter(Boolean),
+  })) ?? [], [providers]);
   const activeSession = sessions.find((session) => session.id === activeSessionId);
   const lastEvent = events.at(-1);
   const isWorking = Boolean(lastEvent &&
@@ -248,21 +247,6 @@ export function AgentPage({
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
-              <Select value={providerId} onValueChange={setProviderId}>
-                <SelectTrigger
-                  aria-label="AI provider"
-                  className="h-7 w-[164px] border-graphite bg-obsidian/60 px-2.5 text-[11.5px] text-mist shadow-none focus:ring-0"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent align="end" className="border-graphite bg-carbon text-mist">
-                  {providers.map((provider) => (
-                    <SelectItem key={provider.id} value={provider.id} className="text-[11.5px] focus:bg-graphite focus:text-paper">
-                      {provider.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
               <HistoryDropdown
                 sessions={sessions}
                 activeId={activeSessionId}
@@ -309,8 +293,9 @@ export function AgentPage({
               historyMessages={historyMessages}
               credentialHostIds={credentialHostIds}
               onOpenServers={onOpenServers}
-              providerName={selectedProvider?.name ?? "AI provider"}
-              modelName={selectedProvider?.modelId ?? ""}
+              modelOptions={modelOptions}
+              modelId={providerId}
+              onModelChange={setProviderId}
             />
           ) : (
             <div className="grid min-h-0 flex-1 place-items-center text-[12px] text-fog">
@@ -345,8 +330,9 @@ function AgentConversation({
   historyMessages,
   credentialHostIds,
   onOpenServers,
-  providerName,
-  modelName,
+  modelOptions,
+  modelId,
+  onModelChange,
 }: {
   agentClient: AgentClient;
   agentIdRef: RefObject<string | null>;
@@ -356,8 +342,9 @@ function AgentConversation({
   historyMessages: AiAgentMessage[] | null;
   credentialHostIds: readonly string[];
   onOpenServers: () => void;
-  providerName: string;
-  modelName: string;
+  modelOptions: readonly ModelOption[];
+  modelId: string;
+  onModelChange: (modelId: string) => void;
 }) {
   const runtime = useAgentRuntime(
     agentClient,
@@ -395,8 +382,9 @@ function AgentConversation({
         <HostErrorBanner hostIds={credentialHostIds} onConnect={onOpenServers} />
         <MentionComposer
           autoFocus
-          providerName={providerName}
-          modelName={modelName}
+          models={modelOptions}
+          modelId={modelId}
+          onModelChange={onModelChange}
         />
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>

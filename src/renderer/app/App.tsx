@@ -1,11 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import {
-  HashRouter,
-  Navigate,
-  Route,
-  Routes,
-  useNavigate,
-} from "react-router";
+import { HashRouter, Navigate, Route, Routes, useNavigate } from "react-router";
 import { create } from "zustand";
 import { terminalApi, type TerminalApi } from "../features/shell/terminalApi";
 import {
@@ -24,7 +18,10 @@ import type {
   TerminalEvent,
 } from "../features/shell/terminalTypes";
 import { TerminalWorkspace } from "../features/shell/TerminalWorkspace";
-import { inventoryApi, type InventoryApi } from "../features/inventory/inventoryApi";
+import {
+  inventoryApi,
+  type InventoryApi,
+} from "../features/inventory/inventoryApi";
 import {
   forwardingApi,
   type ForwardingApi,
@@ -41,8 +38,14 @@ import { getHostCredential } from "../features/ssh/savedCredentials";
 import { ServersPage } from "../features/servers/ServersPage";
 import { SftpPanel } from "../features/sftp/SftpPanel";
 import { sftpApi, type SftpApi } from "../features/sftp/sftpApi";
-import { type Destination, WorkspaceShell } from "../features/workspace/WorkspaceShell";
-import { HistoryPage, PortForwardingPage } from "../features/workspace/ResourcePages";
+import {
+  type Destination,
+  WorkspaceShell,
+} from "../features/workspace/WorkspaceShell";
+import {
+  HistoryPage,
+  PortForwardingPage,
+} from "../features/workspace/ResourcePages";
 import {
   finishConnectionSession,
   markConnectionConnected,
@@ -50,7 +53,10 @@ import {
   recordConnectionAttempt,
   type HistoryEntry,
 } from "../features/workspace/connectionHistory";
-import { PreferencesWindow, type SectionId } from "../features/settings/PreferencesWindow";
+import {
+  PreferencesWindow,
+  type SectionId,
+} from "../features/settings/PreferencesWindow";
 import {
   loadTerminalPreferences,
   saveTerminalPreferences,
@@ -61,8 +67,6 @@ import type { AiConfigApi } from "../features/ai/aiConfigTypes";
 import { AgentPage } from "../features/agent/AgentPage";
 import { agentApi } from "../features/agent/agentApi";
 import type { AgentClient } from "../features/agent/agentTypes";
-import { LexicalTestPage } from "../features/workspace/LexicalTestPage";
-import { TiptapTestPage } from "../features/workspace/TiptapTestPage";
 
 type AppProps = {
   api?: TerminalApi;
@@ -80,8 +84,6 @@ export function App(props: AppProps = {}) {
   return (
     <HashRouter useTransitions={false}>
       <Routes>
-        <Route path="/lexical-test" element={<LexicalTestPage />} />
-        <Route path="/tiptap-test" element={<TiptapTestPage />} />
         <Route path="*" element={<RoutedApp {...props} />} />
       </Routes>
     </HashRouter>
@@ -107,13 +109,20 @@ function RoutedApp({
   const [commandDrawerOpen, setCommandDrawerOpen] = useState(false);
   const [focusCommandSearch, setFocusCommandSearch] = useState(false);
   const [terminalSearchOpen, setTerminalSearchOpen] = useState(false);
-  const [hostKeyPrompt, setHostKeyPrompt] = useState<HostKeyPrompt | null>(null);
-  const [changedHostKeySession, setChangedHostKeySession] = useState<string | null>(null);
+  const [hostKeyPrompt, setHostKeyPrompt] = useState<HostKeyPrompt | null>(
+    null,
+  );
+  const [changedHostKeySession, setChangedHostKeySession] = useState<
+    string | null
+  >(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
-  const [preferencesSection, setPreferencesSection] = useState<SectionId | undefined>(undefined);
+  const [preferencesSection, setPreferencesSection] = useState<
+    SectionId | undefined
+  >(undefined);
   const sshSessionIds = useRef(new Set<string>());
   const [themeId, setThemeId] = useState(
-    () => localStorage.getItem("terminus.terminalTheme") ?? defaultTerminalThemeId,
+    () =>
+      localStorage.getItem("terminus.terminalTheme") ?? defaultTerminalThemeId,
   );
   const [terminalPreferences, setTerminalPreferences] = useState(
     loadTerminalPreferences,
@@ -130,7 +139,9 @@ function RoutedApp({
   const removeSession = useTerminalStore((state) => state.removeSession);
   const activateSession = useTerminalStore((state) => state.activateSession);
   const activateRelative = useTerminalStore((state) => state.activateRelative);
-  const setSidebarCompact = useTerminalStore((state) => state.setSidebarCompact);
+  const setSidebarCompact = useTerminalStore(
+    (state) => state.setSidebarCompact,
+  );
 
   const openLocal = useCallback(async () => {
     try {
@@ -160,7 +171,9 @@ function RoutedApp({
     async (workspaceId: string) => {
       const workspace = useTerminalStore.getState().sessions[workspaceId];
       if (!workspace) return;
-      await Promise.all(collectSessionIds(workspace.root).map((id) => api.close(id)));
+      await Promise.all(
+        collectSessionIds(workspace.root).map((id) => api.close(id)),
+      );
       removeSession(workspaceId);
       if (useTerminalStore.getState().sessionOrder.length === 0)
         setDestination("servers");
@@ -198,16 +211,20 @@ function RoutedApp({
       },
       activateRelative: (offset: number) => {
         activateRelative(offset);
-        if (useTerminalStore.getState().activeSessionId) setDestination("terminal");
+        if (useTerminalStore.getState().activeSessionId)
+          setDestination("terminal");
       },
       toggleCommands: (focusSearch: boolean) => {
         setFocusCommandSearch(focusSearch);
         setCommandDrawerOpen((open) => (focusSearch ? true : !open));
       },
-      toggleSidebar: () => setSidebarCompact(!useTerminalStore.getState().sidebarCompact),
+      toggleSidebar: () =>
+        setSidebarCompact(!useTerminalStore.getState().sidebarCompact),
       clearActive: () => {
         const activeId = useTerminalStore.getState().activeSessionId;
-        const active = activeId ? useTerminalStore.getState().sessions[activeId] : undefined;
+        const active = activeId
+          ? useTerminalStore.getState().sessions[activeId]
+          : undefined;
         if (active) terminalRuntimeRegistry.get(active.activePaneId)?.clear();
       },
       searchActive: () => setTerminalSearchOpen(true),
@@ -232,7 +249,13 @@ function RoutedApp({
       },
       selectAll: () => getActiveRuntime()?.runtime.selectAll(),
     }),
-    [activateRelative, activateSession, closeActive, openLocal, setSidebarCompact],
+    [
+      activateRelative,
+      activateSession,
+      closeActive,
+      openLocal,
+      setSidebarCompact,
+    ],
   );
   useTerminalShortcuts(shortcutActions);
 
@@ -245,7 +268,8 @@ function RoutedApp({
     if (
       event.type === "connectionStateChanged" &&
       event.state === "disconnected"
-    ) finishConnectionSession(event.sessionId);
+    )
+      finishConnectionSession(event.sessionId);
     if (event.type === "hostKeyVerificationRequired") setHostKeyPrompt(event);
     if (event.type === "error" && event.error.code === "HOST_KEY_CHANGED")
       setChangedHostKeySession(event.sessionId);
@@ -259,182 +283,204 @@ function RoutedApp({
     forwardTerminalEvent(event);
   }, []);
 
-  const onSshOpened = useCallback((opened: { sessionId: string; title: string }) => {
-    const paneId = `pane-${opened.sessionId}`;
-    sshSessionIds.current.add(opened.sessionId);
-    addSession({
-      id: opened.sessionId,
-      title: opened.title,
-      status: "connected",
-      root: createPaneNode(paneId, opened.sessionId),
-      activePaneId: paneId,
-    });
-    setDestination("terminal");
-  }, [addSession]);
-
-  const reconnectHistory = useCallback((entry: HistoryEntry) => {
-    const host = useInventoryStore.getState().hosts[entry.hostId];
-    const credential = host ? getHostCredential(host) : null;
-    if (!host || !credential) {
-      setDestination("servers");
-      return;
-    }
-    const historyId = recordConnectionAttempt({
-      hostId: host.id,
-      host: host.address,
-      port: host.port ?? 22,
-      username: host.username,
-    });
-    void ssh.open({
-      hostId: host.id,
-      hostname: host.address,
-      port: host.port ?? 22,
-      username: host.username,
-      authKind: credential.authKind,
-      credentialRef: credential.credentialRef,
-      identityId: null,
-      keepaliveInterval: terminalPreferences.keepaliveInterval,
-    }, { cols: 80, rows: 24 }, onSshEvent)
-      .then((opened) => {
-        markConnectionConnected(historyId, opened.sessionId);
-        onSshOpened(opened);
-      })
-      .catch(() => markConnectionFailed(historyId));
-  }, [onSshEvent, onSshOpened, ssh, terminalPreferences.keepaliveInterval]);
-
-  const restartSession = useCallback(async (
-    sessionId: string,
-    onEvent: (event: TerminalEvent) => void,
-  ) => {
-    if (sshSessionIds.current.has(sessionId)) {
-      const opened = await ssh.reconnect(sessionId);
-      sshSessionIds.current.delete(sessionId);
+  const onSshOpened = useCallback(
+    (opened: { sessionId: string; title: string }) => {
+      const paneId = `pane-${opened.sessionId}`;
       sshSessionIds.current.add(opened.sessionId);
-      return opened.sessionId;
-    }
-    await api.close(sessionId).catch(() => undefined);
-    return (await api.open({ cols: 80, rows: 24 }, onEvent)).sessionId;
-  }, [api, ssh]);
+      addSession({
+        id: opened.sessionId,
+        title: opened.title,
+        status: "connected",
+        root: createPaneNode(paneId, opened.sessionId),
+        activePaneId: paneId,
+      });
+      setDestination("terminal");
+    },
+    [addSession],
+  );
+
+  const reconnectHistory = useCallback(
+    (entry: HistoryEntry) => {
+      const host = useInventoryStore.getState().hosts[entry.hostId];
+      const credential = host ? getHostCredential(host) : null;
+      if (!host || !credential) {
+        setDestination("servers");
+        return;
+      }
+      const historyId = recordConnectionAttempt({
+        hostId: host.id,
+        host: host.address,
+        port: host.port ?? 22,
+        username: host.username,
+      });
+      void ssh
+        .open(
+          {
+            hostId: host.id,
+            hostname: host.address,
+            port: host.port ?? 22,
+            username: host.username,
+            authKind: credential.authKind,
+            credentialRef: credential.credentialRef,
+            identityId: null,
+            keepaliveInterval: terminalPreferences.keepaliveInterval,
+          },
+          { cols: 80, rows: 24 },
+          onSshEvent,
+        )
+        .then((opened) => {
+          markConnectionConnected(historyId, opened.sessionId);
+          onSshOpened(opened);
+        })
+        .catch(() => markConnectionFailed(historyId));
+    },
+    [onSshEvent, onSshOpened, ssh, terminalPreferences.keepaliveInterval],
+  );
+
+  const restartSession = useCallback(
+    async (sessionId: string, onEvent: (event: TerminalEvent) => void) => {
+      if (sshSessionIds.current.has(sessionId)) {
+        const opened = await ssh.reconnect(sessionId);
+        sshSessionIds.current.delete(sessionId);
+        sshSessionIds.current.add(opened.sessionId);
+        return opened.sessionId;
+      }
+      await api.close(sessionId).catch(() => undefined);
+      return (await api.open({ cols: 80, rows: 24 }, onEvent)).sessionId;
+    },
+    [api, ssh],
+  );
 
   return (
     <>
-    <WorkspaceShell
-      onSessionActivate={(sessionId) => {
-        activateSession(sessionId);
-        setDestination("terminal");
-      }}
-      onSessionClose={(sessionId) => void closeWorkspace(sessionId)}
-      sidebarCompact={sidebarCompact}
-      onPreferences={() => setPreferencesOpen(true)}
-    >
-      <Routes>
-        <Route path="/" element={<Navigate to="/servers" replace />} />
-        <Route
-          path="/servers"
-          element={
-            <ServersPage
-              inventoryApi={inventory}
-              sshApi={ssh}
-              forwardingApi={forwarding}
-              onSshEvent={onSshEvent}
-              onSshOpened={onSshOpened}
-              sshKeepaliveInterval={terminalPreferences.keepaliveInterval}
-              onSshStartup={async (sessionId, commands) => {
-                if (!commands.length) return;
-                const payload = new TextEncoder().encode(`${commands.join("\n")}\n`);
-                await api.write(sessionId, payload);
-              }}
-            />
-          }
-        />
-        <Route
-          path="/agent"
-          element={
-            <AgentPage
-              agentClient={agentClient}
-              providerApi={aiConfig}
-              onOpenServers={() => setDestination("servers")}
-            />
-          }
-        />
-        <Route
-          path="/sftp"
-          element={
-            <SftpPanel
-              api={sftp}
-              keepaliveInterval={terminalPreferences.keepaliveInterval}
-            />
-          }
-        />
-        <Route
-          path="/forwarding"
-          element={
-            <PortForwardingPage
-              store={forwardingStore}
-              keepaliveInterval={terminalPreferences.keepaliveInterval}
-            />
-          }
-        />
-        <Route
-          path="/history"
-          element={<HistoryPage onReconnect={reconnectHistory} />}
-        />
-        <Route
-          path="/terminal"
-          element={
-            activeSessionId && sessions[activeSessionId] ? (
-              <TerminalWorkspace
-                api={api}
-                eventBus={terminalEventBus}
-                runtimeFactory={runtimeFactory}
-                resizeObserverFactory={resizeObserverFactory}
-                themeId={themeId}
-                onThemeChange={onThemeChange}
-                commandDrawerOpen={commandDrawerOpen}
-                focusCommandSearch={focusCommandSearch}
-                onCommandDrawerChange={setCommandDrawerOpen}
-                terminalSearchOpen={terminalSearchOpen}
-                onTerminalSearchChange={setTerminalSearchOpen}
-                onTerminalEvent={forwardTerminalEvent}
-                restartSession={restartSession}
-                onEmpty={() => setDestination("servers")}
-                terminalPreferences={terminalPreferences}
-                aiConfigApi={aiConfig}
-                isSshSession={(sessionId) => sshSessionIds.current.has(sessionId)}
+      <WorkspaceShell
+        onSessionActivate={(sessionId) => {
+          activateSession(sessionId);
+          setDestination("terminal");
+        }}
+        onSessionClose={(sessionId) => void closeWorkspace(sessionId)}
+        sidebarCompact={sidebarCompact}
+        onPreferences={() => setPreferencesOpen(true)}
+      >
+        <Routes>
+          <Route path="/" element={<Navigate to="/servers" replace />} />
+          <Route
+            path="/servers"
+            element={
+              <ServersPage
+                inventoryApi={inventory}
+                sshApi={ssh}
+                forwardingApi={forwarding}
+                onSshEvent={onSshEvent}
+                onSshOpened={onSshOpened}
+                sshKeepaliveInterval={terminalPreferences.keepaliveInterval}
+                onSshStartup={async (sessionId, commands) => {
+                  if (!commands.length) return;
+                  const payload = new TextEncoder().encode(
+                    `${commands.join("\n")}\n`,
+                  );
+                  await api.write(sessionId, payload);
+                }}
               />
-            ) : (
-              <Navigate to="/servers" replace />
-            )
-          }
-        />
-        <Route path="*" element={<Navigate to="/servers" replace />} />
-      </Routes>
-    </WorkspaceShell>
-    <HostKeyDialog
-      api={ssh}
-      pending={hostKeyPrompt ?? undefined}
-      changed={changedHostKeySession ? { sessionId: changedHostKeySession } : undefined}
-      onClose={() => { setHostKeyPrompt(null); setChangedHostKeySession(null); }}
-    />
-    <PreferencesWindow
-      open={preferencesOpen}
-      onClose={() => {
-        setPreferencesOpen(false);
-      }}
-      inventoryApi={inventory}
-      sftpApi={sftp}
-      sshApi={ssh}
-      aiConfigApi={aiConfig}
-      terminalThemeId={themeId}
-      onTerminalThemeChange={onThemeChange}
-      terminalPreferences={terminalPreferences}
-      onTerminalPreferencesChange={(next) => {
-        setTerminalPreferences(next);
-        saveTerminalPreferences(next);
-      }}
-      initialSection={preferencesSection}
-    />
-    <UpdateDialog />
+            }
+          />
+          <Route
+            path="/agent"
+            element={
+              <AgentPage
+                agentClient={agentClient}
+                providerApi={aiConfig}
+                onOpenServers={() => setDestination("servers")}
+              />
+            }
+          />
+          <Route
+            path="/sftp"
+            element={
+              <SftpPanel
+                api={sftp}
+                keepaliveInterval={terminalPreferences.keepaliveInterval}
+              />
+            }
+          />
+          <Route
+            path="/forwarding"
+            element={
+              <PortForwardingPage
+                store={forwardingStore}
+                keepaliveInterval={terminalPreferences.keepaliveInterval}
+              />
+            }
+          />
+          <Route
+            path="/history"
+            element={<HistoryPage onReconnect={reconnectHistory} />}
+          />
+          <Route
+            path="/terminal"
+            element={
+              activeSessionId && sessions[activeSessionId] ? (
+                <TerminalWorkspace
+                  api={api}
+                  eventBus={terminalEventBus}
+                  runtimeFactory={runtimeFactory}
+                  resizeObserverFactory={resizeObserverFactory}
+                  themeId={themeId}
+                  onThemeChange={onThemeChange}
+                  commandDrawerOpen={commandDrawerOpen}
+                  focusCommandSearch={focusCommandSearch}
+                  onCommandDrawerChange={setCommandDrawerOpen}
+                  terminalSearchOpen={terminalSearchOpen}
+                  onTerminalSearchChange={setTerminalSearchOpen}
+                  onTerminalEvent={forwardTerminalEvent}
+                  restartSession={restartSession}
+                  onEmpty={() => setDestination("servers")}
+                  terminalPreferences={terminalPreferences}
+                  aiConfigApi={aiConfig}
+                  isSshSession={(sessionId) =>
+                    sshSessionIds.current.has(sessionId)
+                  }
+                />
+              ) : (
+                <Navigate to="/servers" replace />
+              )
+            }
+          />
+          <Route path="*" element={<Navigate to="/servers" replace />} />
+        </Routes>
+      </WorkspaceShell>
+      <HostKeyDialog
+        api={ssh}
+        pending={hostKeyPrompt ?? undefined}
+        changed={
+          changedHostKeySession
+            ? { sessionId: changedHostKeySession }
+            : undefined
+        }
+        onClose={() => {
+          setHostKeyPrompt(null);
+          setChangedHostKeySession(null);
+        }}
+      />
+      <PreferencesWindow
+        open={preferencesOpen}
+        onClose={() => {
+          setPreferencesOpen(false);
+        }}
+        inventoryApi={inventory}
+        sftpApi={sftp}
+        sshApi={ssh}
+        aiConfigApi={aiConfig}
+        terminalThemeId={themeId}
+        onTerminalThemeChange={onThemeChange}
+        terminalPreferences={terminalPreferences}
+        onTerminalPreferencesChange={(next) => {
+          setTerminalPreferences(next);
+          saveTerminalPreferences(next);
+        }}
+        initialSection={preferencesSection}
+      />
+      <UpdateDialog />
     </>
   );
 }
@@ -458,7 +504,9 @@ function collectSessionIds(root: SplitNode): string[] {
 
 function findActivePane(root: SplitNode, paneId: string): PaneNode | undefined {
   if (root.type === "pane") return root.paneId === paneId ? root : undefined;
-  return findActivePane(root.first, paneId) ?? findActivePane(root.second, paneId);
+  return (
+    findActivePane(root.first, paneId) ?? findActivePane(root.second, paneId)
+  );
 }
 
 function getActiveRuntime() {

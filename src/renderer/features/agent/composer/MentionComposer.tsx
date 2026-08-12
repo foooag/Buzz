@@ -2,21 +2,27 @@ import { ComposerPrimitive, ThreadPrimitive } from "@assistant-ui/react";
 import { Send, Shield, Square } from "lucide-react";
 import { useCallback } from "react";
 import { ComposerTriggerPopover } from "@/components/assistant-ui/composer-trigger-popover";
+import {
+  ModelSelector,
+  type ModelOption,
+} from "@/components/assistant-ui/model-selector";
 import { useAgentMentionAdapter } from "./mentionAdapter";
 import { LexicalComposerInput } from "@assistant-ui/react-lexical";
 
 export type MentionComposerProps = {
   placeholder?: string;
   autoFocus?: boolean;
-  providerName?: string;
-  modelName?: string;
+  models: readonly ModelOption[];
+  modelId: string;
+  onModelChange: (modelId: string) => void;
 };
 
 export function MentionComposer({
   placeholder = "@ select a server or group, then describe the ops task…",
   autoFocus = false,
-  providerName = "AI provider",
-  modelName = "",
+  models,
+  modelId,
+  onModelChange,
 }: MentionComposerProps) {
   const mention = useAgentMentionAdapter();
   const labelEditor = useCallback((element: HTMLDivElement | null) => {
@@ -72,15 +78,17 @@ export function MentionComposer({
             </div>
           </ComposerPrimitive.Root>
           <div className="mt-2 flex items-center justify-between gap-3 px-0.5 text-[10.5px] text-fog">
-            <span className="min-w-0 truncate">
-              <span className="text-mist">{providerName}</span>
-              {modelName ? (
-                <>
-                  <span className="px-1 text-fog/50">·</span>
-                  {modelName}
-                </>
-              ) : null}
-            </span>
+            <ModelSelector
+              models={models}
+              value={modelId}
+              onValueChange={onModelChange}
+              searchable={models.length > 6}
+              variant="ghost"
+              size="sm"
+              align="start"
+              className="h-7 max-w-[220px] px-2 text-[10.5px] text-mist hover:bg-graphite/70 hover:text-paper"
+              contentClassName="border-graphite bg-carbon text-mist"
+            />
             <span className="flex shrink-0 items-center gap-1">
               <kbd className="rounded border border-graphite bg-obsidian px-1 py-px font-sans text-[10px]">@</kbd>
               <span>mention</span>

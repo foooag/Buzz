@@ -12,8 +12,6 @@ import { NavLink } from "react-router";
 const destinations = [
   { id: "servers", label: "Servers", icon: Server },
   { id: "agent", label: "Agent", icon: Sparkles },
-  { id: "lexical-test", label: "Lexical Test", icon: TextCursorInput },
-  { id: "tiptap-test", label: "Tiptap Test", icon: Pilcrow },
   { id: "sftp", label: "SFTP", icon: FolderOpen },
   { id: "forwarding", label: "Port Forwarding", icon: Network },
   { id: "history", label: "History", icon: History },
