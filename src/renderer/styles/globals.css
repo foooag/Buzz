@@ -1,6 +1,12 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Streamdown (markdown renderer) writes its controls, code-block chrome, and
+   streaming caret as Tailwind utility class strings inside node_modules; scan
+   them so Tailwind v4 generates those utilities. */
+@source "../../../node_modules/streamdown/dist/*.js";
+@source "../../../node_modules/@streamdown/code/dist/*.js";
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 @utility container {
@@ -41,6 +47,10 @@
 
   --color-card: hsl(var(--card));
   --color-card-foreground: hsl(var(--card-foreground));
+
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
 }
 
 @theme {
@@ -148,6 +158,9 @@
   --foreground: 217 21% 85%;
   --card: 210 6% 6%;
   --card-foreground: 217 21% 85%;
+  --sidebar: 210 4% 9%;
+  --sidebar-foreground: 217 21% 85%;
+  --sidebar-border: 223 9% 15%;
   --popover: 210 4% 9%;
   --popover-foreground: 217 21% 85%;
   --primary: 64 89% 54%;

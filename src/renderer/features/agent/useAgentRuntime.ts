@@ -93,8 +93,8 @@ export function applyEventToSnapshot(
       .map((part) => part.text)
       .join("");
     return [
-      ...growStreamingParts(current, "reasoning", reasoning),
-      ...growStreamingParts(current, "text", text),
+      ...streamingPart(current, "reasoning", reasoning),
+      ...streamingPart(current, "text", text),
       ...toolParts,
     ];
   }
@@ -123,7 +123,12 @@ export function applyEventToSnapshot(
   return [...current];
 }
 
-function growStreamingParts(
+// Keep the streamed text/reasoning as a SINGLE growing part. Markdown renderers
+// (Streamdown) parse each part independently via MessagePrimitive.Parts, so
+// appending a suffix part per token would split a markdown span/code fence
+// across parts and break rendering. Mutating the one part in place keeps the
+// whole document parseable on every token.
+function streamingPart(
   current: readonly ThreadAssistantMessagePart[],
   type: "reasoning" | "text",
   nextText: string,
@@ -136,10 +141,6 @@ function growStreamingParts(
   );
   const currentText = existing.map((part) => part.text).join("");
   if (nextText === currentText) return [...existing];
-  if (nextText.startsWith(currentText)) {
-    const suffix = nextText.slice(currentText.length);
-    return suffix ? [...existing, { type, text: suffix }] : [...existing];
-  }
   return nextText ? [{ type, text: nextText }] : [];
 }
 

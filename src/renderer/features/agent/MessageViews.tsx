@@ -2,13 +2,13 @@ import {
   MessagePrimitive,
   type ReasoningGroupProps,
   type ReasoningMessagePartProps,
-  type TextMessagePartProps,
   ThreadPrimitive,
   type ToolCallMessagePartProps,
   useAssistantToolUI,
 } from "@assistant-ui/react";
 import { Check, Loader2, Server, Sparkles, TriangleAlert, X } from "lucide-react";
 import { DirectiveText } from "@/components/assistant-ui/directive-text";
+import { StreamdownText } from "@/components/assistant-ui/streamdown-text";
 
 export function AgentMessages() {
   useAssistantToolUI({ toolName: "host_exec", render: HostExecCard });
@@ -48,7 +48,7 @@ function AssistantMessage() {
         <div className="text-[11px] font-medium text-acid-lime/90">Agent</div>
         <MessagePrimitive.Parts
           components={{
-            Text: StreamingTextChunk,
+            Text: StreamdownText,
             Reasoning: ReasoningChunk,
             ReasoningGroup,
             tools: {
@@ -60,10 +60,6 @@ function AssistantMessage() {
       </div>
     </MessagePrimitive.Root>
   );
-}
-
-function StreamingTextChunk({ text }: TextMessagePartProps) {
-  return <span className="whitespace-pre-wrap wrap-break-word text-[13px] leading-relaxed text-mist">{text}</span>;
 }
 
 function ReasoningChunk({ text }: ReasoningMessagePartProps) {
