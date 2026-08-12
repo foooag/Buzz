@@ -96,4 +96,44 @@ describe("Termius-compatible application shell", () => {
     expect(useTerminalStore.getState().activeSessionId).toBe("ssh-1");
     expect(window.location.hash).toContain("/terminal");
   });
+
+  it("falls back to /history when the Recent row has no live session", async () => {
+    const user = userEvent.setup();
+    localStorage.clear();
+    useTerminalStore.setState({
+      sessions: {},
+      sessionOrder: [],
+      activeSessionId: null,
+    });
+
+    const api: TerminalApi = {
+      open: vi.fn().mockResolvedValue({ sessionId: "gone", title: "deploy@host" }),
+      close: vi.fn().mockResolvedValue(undefined),
+      write: vi.fn(),
+      resize: vi.fn(),
+    } as unknown as TerminalApi;
+    const ssh: SshApi = {
+      open: vi.fn().mockResolvedValue({ sessionId: "gone", title: "deploy@host" }),
+      reconnect: vi.fn(),
+    } as unknown as SshApi;
+    const inventory: InventoryApi = {
+      listHosts: vi.fn().mockResolvedValue([]),
+    } as unknown as InventoryApi;
+
+    // History entry with a sessionId that is NOT present as a live workspace.
+    const historyId = recordConnectionAttempt({
+      hostId: "host-2",
+      host: "10.0.0.9",
+      port: 22,
+      username: "deploy",
+    });
+    markConnectionConnected(historyId, "gone");
+
+    render(<App api={api} ssh={ssh} inventory={inventory} />);
+
+    await user.click(screen.getByRole("button", { name: /10\.0\.0\.9/ }));
+
+    expect(window.location.hash).toContain("/history");
+    expect(useTerminalStore.getState().activeSessionId).not.toBe("gone");
+  });
 });
