@@ -8,6 +8,7 @@ import {
   formatHistoryWhen,
   listConnectionHistory,
   subscribeConnectionHistory,
+  type HistoryEntry,
 } from "./connectionHistory";
 
 function recentDot(status: string): string {
@@ -30,6 +31,7 @@ type WorkspaceShellProps = {
   children: ReactNode;
   onSessionActivate?: (sessionId: string) => void;
   onSessionClose?: (sessionId: string) => void;
+  onOpenSession?: (entry: HistoryEntry) => void;
   sidebarCompact?: boolean;
   onPreferences?: () => void;
 };
@@ -38,6 +40,7 @@ export function WorkspaceShell({
   children,
   onSessionActivate = () => undefined,
   onSessionClose = () => undefined,
+  onOpenSession = () => undefined,
   sidebarCompact = false,
   onPreferences = () => undefined,
 }: WorkspaceShellProps) {
@@ -101,7 +104,7 @@ export function WorkspaceShell({
               <button
                 key={entry.id}
                 type="button"
-                onClick={() => navigate("/history")}
+                onClick={() => onOpenSession(entry)}
                 className="flex min-w-0 items-center gap-2.5 rounded-[10px] px-3.5 py-1.5 text-left text-[12.5px] text-fog hover:bg-white/5 hover:text-mist"
               >
                 <span className={`h-[6px] w-[6px] shrink-0 rounded-full ${recentDot(entry.status)}`} />
