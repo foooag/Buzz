@@ -7,14 +7,34 @@ test("mentions a server and runs a deterministic Agent task", async ({ page }) =
   const composer = page.getByRole("textbox", { name: "Agent command" });
   await expect(composer).toBeVisible();
   await composer.fill("@");
-  await expect(page.getByRole("option", { name: "Servers" })).toBeVisible();
-  await page.getByRole("option", { name: "Servers" }).click();
-  await page.getByRole("option", { name: /web-prod-01/ }).click();
+  const server = page.getByRole("option", { name: /web-prod-01/ });
+  await expect(server).toBeVisible();
+  await server.click();
   await composer.press("End");
   await composer.type(" check uptime");
   await composer.press("Enter");
 
+  const reasoning = page.locator("details").filter({ hasText: "Reasoning" });
+  await expect(reasoning).toContainText("Running 1 command");
   await expect(page.getByText(/deterministic Agent is ready/)).toBeVisible();
+  await expect(page.getByText("Final line remains visible.")).toBeVisible();
+  await expect(reasoning).toContainText(
+    "Inspecting the deterministic host before running uptime.",
+  );
+  await expect(reasoning).toContainText("Ran 1 command");
+  await expect(reasoning).toContainText("uptime");
+  await expect(reasoning).not.toContainText("Docker response content is complete.");
+
+  const timelineOrder = await page.evaluate(() => {
+    const reasoningElement = [...document.querySelectorAll("details")]
+      .find((element) => element.textContent?.includes("Reasoning"));
+    const finalElement = [...document.querySelectorAll("li")]
+      .find((element) => element.textContent?.includes("Final line remains visible."));
+    return reasoningElement && finalElement
+      ? Boolean(reasoningElement.compareDocumentPosition(finalElement) & Node.DOCUMENT_POSITION_FOLLOWING)
+      : false;
+  });
+  expect(timelineOrder).toBe(true);
   await expect(page.getByRole("complementary", { name: "Host progress" })
-    .getByText("host-1")).toBeVisible();
+    .getByText("web-prod-01")).toBeVisible();
 });

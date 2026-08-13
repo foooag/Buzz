@@ -224,6 +224,74 @@ describe("MultiHostAgentRuntime", () => {
       ["h2", "docker run alpine"],
     ]);
   });
+
+  it("includes the exact command and AI explanation in risk confirmations", async () => {
+    const ssh = headless();
+    vi.mocked(ssh.exec).mockResolvedValue({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      truncated: false,
+    });
+    const risk = confirmationRisk();
+    const runtime = new MultiHostAgentRuntime(
+      modelRuntime([
+        hostToolResponse(
+          "h1",
+          "rm -rf /tmp/buzz-cache",
+          "Recursively and permanently removes the Buzz cache directory.",
+        ),
+        textResponse("Cache removed"),
+      ]),
+      historyRepository(),
+      risk,
+      ssh,
+      inventory(),
+    );
+    const { agentId } = runtime.create("renderer-1", {
+      providerConfigId: "provider-1",
+      vaultId: "v1",
+    });
+    const events: AgentEvent[] = [];
+
+    const prompt = runtime.prompt(
+      "renderer-1",
+      agentId,
+      "Clear the cache",
+      ["h1"],
+      (event) => events.push(event),
+    );
+
+    await vi.waitFor(() => expect(
+      events.some((event) => event.type === "toolConfirmationRequired"),
+    ).toBe(true));
+    const request = events.find(
+      (event) => event.type === "toolConfirmationRequired",
+    );
+    if (!request || request.type !== "toolConfirmationRequired") {
+      throw new Error("missing confirmation");
+    }
+    expect(request.confirmation).toMatchObject({
+      command: "rm -rf /tmp/buzz-cache",
+      projectedEffect: "Recursively and permanently removes the Buzz cache directory.",
+      reason: "Confirmation required.",
+    });
+    expect(JSON.stringify(request)).not.toContain("main-process-token");
+
+    runtime.decideTool(
+      "renderer-1",
+      agentId,
+      request.confirmation.confirmationId,
+      true,
+    );
+    await prompt;
+
+    expect(ssh.exec).toHaveBeenCalledWith(
+      "h1",
+      "rm -rf /tmp/buzz-cache",
+      expect.objectContaining({ cwd: "$HOME" }),
+    );
+  });
 });
 
 function modelRuntime(events: AssistantMessageEvent[][]): AiModelRuntime {
@@ -307,12 +375,21 @@ function laggingReasoningResponse(): AssistantMessageEvent[] {
   ];
 }
 
-function hostToolResponse(hostId: string, command: string): AssistantMessageEvent[] {
+function hostToolResponse(
+  hostId: string,
+  command: string,
+  explanation = `Runs ${command} on the selected host.`,
+): AssistantMessageEvent[] {
   const call = {
     type: "toolCall" as const,
     id: "call-host-1",
     name: "host_exec",
-    arguments: { hostId, command, cwd: "$HOME" },
+    arguments: {
+      hostId,
+      command,
+      explanation,
+      cwd: "$HOME",
+    },
   };
   const start = assistantMessage([]);
   const partial = { ...assistantMessage([call]), stopReason: "toolUse" as const };
@@ -371,6 +448,23 @@ function historyRepository(): AiHistoryRepository {
 function allowRisk(): AiShellRiskRuntime {
   return {
     assess: vi.fn(() => ({ verdict: { kind: "allow" } })),
+    authorize: vi.fn(),
+    discard: vi.fn(),
+  } as unknown as AiShellRiskRuntime;
+}
+
+function confirmationRisk(): AiShellRiskRuntime {
+  return {
+    assess: vi.fn(() => ({
+      verdict: {
+        kind: "needsConfirmation",
+        level: "high",
+        reason: "Confirmation required.",
+        projectedEffect: "",
+      },
+      confirmationToken: "main-process-token",
+      expiresInMs: 60_000,
+    })),
     authorize: vi.fn(),
     discard: vi.fn(),
   } as unknown as AiShellRiskRuntime;

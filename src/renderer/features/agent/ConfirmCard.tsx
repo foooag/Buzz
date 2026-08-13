@@ -1,4 +1,4 @@
-import { ChevronRight, Server, ShieldAlert } from "lucide-react";
+import { Bot, Server, ShieldAlert, Terminal } from "lucide-react";
 import type { AgentToolConfirmation } from "./agentTypes";
 
 export function ConfirmCard({
@@ -13,9 +13,9 @@ export function ConfirmCard({
       role="alertdialog"
       aria-labelledby="agent-confirm-title"
       onMouseDown={(event) => event.stopPropagation()}
-      className="pop-in w-[min(560px,92vw)] overflow-hidden rounded-xl border border-smoke bg-carbon shadow-[0_24px_80px_rgb(0_0_0/0.6)]"
+      className="pop-in flex max-h-[min(720px,90vh)] w-[min(640px,92vw)] flex-col overflow-hidden rounded-xl border border-smoke bg-carbon shadow-[0_24px_80px_rgb(0_0_0/0.6)]"
     >
-      <div className="flex items-start gap-3 border-b border-graphite px-5 py-4">
+      <div className="flex shrink-0 items-start gap-3 border-b border-graphite px-5 py-4">
         <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-coral-red/12 text-coral-red">
           <ShieldAlert className="size-[18px]" />
         </span>
@@ -35,7 +35,33 @@ export function ConfirmCard({
         </div>
       </div>
 
-      <div className="flex flex-col gap-4 px-5 py-4">
+      <div className="scroll-thin flex min-h-0 flex-col gap-4 overflow-y-auto px-5 py-4">
+        <section aria-labelledby="agent-confirm-command-label">
+          <div
+            id="agent-confirm-command-label"
+            className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-fog"
+          >
+            <Terminal className="size-3" />
+            Command to execute
+          </div>
+          <pre className="scroll-thin m-0 overflow-x-auto rounded-lg border border-graphite bg-obsidian/70 px-3 py-2.5">
+            <code className="whitespace-pre-wrap break-all font-mono text-[12px] leading-relaxed text-paper">
+              {confirmation.command}
+            </code>
+          </pre>
+        </section>
+        <section aria-labelledby="agent-confirm-interpretation-label">
+          <div
+            id="agent-confirm-interpretation-label"
+            className="mb-1 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-acid-lime"
+          >
+            <Bot className="size-3" />
+            AI interpretation
+          </div>
+          <p className="m-0 text-[13px] leading-relaxed text-mist">
+            {confirmation.projectedEffect}
+          </p>
+        </section>
         <section>
           <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-coral-red">
             <ShieldAlert className="size-3" />
@@ -43,16 +69,9 @@ export function ConfirmCard({
           </div>
           <p className="m-0 text-[13px] leading-relaxed text-mist">{confirmation.reason}</p>
         </section>
-        <section>
-          <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-fog">
-            <ChevronRight className="size-3" />
-            What will happen
-          </div>
-          <p className="m-0 text-[13px] leading-relaxed text-mist">{confirmation.projectedEffect}</p>
-        </section>
       </div>
 
-      <div className="flex items-center justify-between gap-3 border-t border-graphite bg-obsidian/40 px-5 py-3.5">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-t border-graphite bg-obsidian/40 px-5 py-3.5">
         <button
           type="button"
           onClick={() => onDecide(false)}

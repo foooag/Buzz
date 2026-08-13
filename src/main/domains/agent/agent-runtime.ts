@@ -36,6 +36,7 @@ import type {
 const SYSTEM_PROMPT = [
   "You are the Buzz multi-host Linux operations agent.",
   "Use host_list to inspect approved targets and host_exec for every remote command.",
+  "For every host_exec call, explain in plain language what the exact command will do and its expected impact.",
   "Never access a host outside the approved target list. Always provide an explicit cwd.",
 ].join(" ");
 const CONFIRMATION_TTL_MS = 60_000;
@@ -217,6 +218,10 @@ export class MultiHostAgentRuntime {
       parameters: Type.Object({
         hostId: Type.String({ minLength: 1 }),
         command: Type.String({ minLength: 1 }),
+        explanation: Type.String({
+          minLength: 1,
+          description: "A concise, user-facing explanation of what the exact command does and its expected impact.",
+        }),
         cwd: Type.Optional(Type.String({ minLength: 1 })),
         timeoutMs: Type.Optional(Type.Number({ minimum: 1_000, maximum: 300_000 })),
       }),
@@ -225,6 +230,7 @@ export class MultiHostAgentRuntime {
         const params = raw as {
           hostId: string;
           command: string;
+          explanation: string;
           cwd?: string;
           timeoutMs?: number;
         };
@@ -236,12 +242,13 @@ export class MultiHostAgentRuntime {
         await this.#openHost(host);
         const cwd = params.cwd?.trim() || "$HOME";
         const command = params.command.trim();
+        const explanation = params.explanation.trim();
         const assessment = this.#risk.assess(agentId, hostId, host.address, cwd, command);
         if (assessment.verdict.kind === "reject") {
           throw new Error(assessment.verdict.reason);
         }
         const token = assessment.verdict.kind === "needsConfirmation"
-          ? await this.#confirm(agentId, assessment, signal)
+          ? await this.#confirm(agentId, assessment, command, explanation, signal)
           : undefined;
         if (signal?.aborted) throw new Error("The SSH command was cancelled.");
         this.#risk.authorize(agentId, hostId, host.address, cwd, command, token);
@@ -362,6 +369,8 @@ export class MultiHostAgentRuntime {
   #confirm(
     agentId: string,
     assessment: ShellAssessment,
+    command: string,
+    explanation: string,
     signal?: AbortSignal,
   ): Promise<string> {
     const entry = this.#entries.get(agentId);
@@ -395,8 +404,9 @@ export class MultiHostAgentRuntime {
         confirmation: {
           confirmationId,
           level: verdict.level,
+          command,
           reason: verdict.reason,
-          projectedEffect: verdict.projectedEffect,
+          projectedEffect: explanation || verdict.projectedEffect || verdict.reason,
         },
       });
       if (signal?.aborted) abort();
