@@ -1,8 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentPage } from "../../../../src/renderer/features/agent/AgentPage";
-import type { AgentClient } from "../../../../src/renderer/features/agent/agentTypes";
+import type {
+  AgentClient,
+  AgentEvent,
+} from "../../../../src/renderer/features/agent/agentTypes";
 import type { AiConfigApi } from "../../../../src/renderer/features/ai/aiConfigTypes";
 import type { AiSessionClient } from "../../../../src/renderer/features/ai/aiSessionApi";
 import { useInventoryStore } from "../../../../src/renderer/features/inventory/inventoryStore";
@@ -66,6 +69,77 @@ describe("AgentPage", () => {
     expect(screen.getByRole("combobox", { name: "Model" })).toBeVisible();
     expect(screen.getByText("qwen3")).toBeVisible();
     expect(screen.queryByRole("complementary", { name: "Host progress" })).toBeNull();
+  });
+
+  it("shows risky command details and sends the confirmation decision", async () => {
+    const user = userEvent.setup();
+    let emit: ((event: AgentEvent) => void) | undefined;
+    const decideTool = vi.fn(async () => undefined);
+
+    render(
+      <AgentPage
+        agentClient={{
+          create: vi.fn(async () => ({
+            agentId: "agent-1",
+            providerConfigId: "provider-1",
+            status: "idle",
+            hosts: [],
+            messages: [],
+          })),
+          streamPrompt: vi.fn((_agentId, _text, _targets, onEvent) => {
+            emit = onEvent;
+            return () => undefined;
+          }),
+          decideTool,
+          close: vi.fn(async () => undefined),
+        } as unknown as AgentClient}
+        providerApi={{
+          list: vi.fn(async () => [{
+            id: "provider-1",
+            name: "Local model",
+            modelId: "qwen3",
+            isDefault: true,
+          }]),
+        } as unknown as AiConfigApi}
+        sessionApi={{ list: vi.fn(async () => []) } as unknown as AiSessionClient}
+      />,
+    );
+
+    const composer = await screen.findByRole("textbox", { name: "Agent command" });
+    fireEvent.paste(composer, {
+      clipboardData: {
+        getData: () => "Clear the remote cache",
+        types: ["text/plain"],
+      },
+    });
+    await user.click(screen.getByRole("button", { name: "Send Agent command" }));
+    await waitFor(() => expect(emit).toBeTypeOf("function"));
+
+    act(() => emit?.({
+      type: "toolConfirmationRequired",
+      confirmation: {
+        confirmationId: "confirmation-1",
+        level: "high",
+        command: "rm -rf /tmp/buzz-cache",
+        projectedEffect: "Permanently removes the remote cache directory.",
+        reason: "rm recursively and forcibly removes files.",
+      },
+    }));
+
+    expect(screen.getByRole("alertdialog", {
+      name: "Confirm high-risk command",
+    })).toBeVisible();
+    expect(screen.getByText("rm -rf /tmp/buzz-cache")).toBeVisible();
+    expect(screen.getByText(
+      "Permanently removes the remote cache directory.",
+    )).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Run command" }));
+    expect(decideTool).toHaveBeenCalledWith(
+      "agent-1",
+      "confirmation-1",
+      true,
+    );
   });
 
   it("loads an Agent history session into both the conversation and Agent runtime", async () => {

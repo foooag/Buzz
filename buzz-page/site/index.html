@@ -105,11 +105,18 @@
                 </div>
               </div>
               <aside class="agent-panel">
-                <div class="agent-head"><span>✦</span><strong>Agent</strong><small><i></i> Ready</small></div>
+                <div class="agent-head"><span>✦</span><strong>Agent</strong><small class="md-chip" title="Responses render streaming Markdown"><i></i>Markdown</small><small><i></i> Ready</small></div>
                 <div class="agent-body">
                   <div class="agent-label">ACTIVE CONTEXT</div>
                   <div class="host-chip"><i></i><span>prod-api-01</span><b>×</b></div>
-                  <p class="agent-question">Check why the API restarted and verify the service is healthy.</p>
+                  <div class="agent-reply">
+                    <p class="reply-line"><b>Looking at the restart.</b> So far:</p>
+                    <ul class="reply-list">
+                      <li><span class="reply-code">systemctl status buzz-api</span> → <span class="term-green">active (running)</span></li>
+                      <li>One restart in the last <span class="reply-code">15m</span></li>
+                    </ul>
+                    <div class="reply-block"><span class="reply-kw">sudo</span> journalctl -u buzz-api -n 80</div>
+                  </div>
                   <div class="agent-step done"><i>✓</i><span>Inspected systemd journal</span></div>
                   <div class="agent-step done"><i>✓</i><span>Checked service health</span></div>
                   <div class="agent-step current"><i></i><span>Reviewing recent deploy</span></div>
@@ -170,7 +177,12 @@
             <div class="flow-head"><span>agent.task</span><small>prod-api-01</small></div>
             <div class="flow-message">“Restart the API and confirm it comes back healthy.”</div>
             <div class="flow-line"><span>1</span><div><b>Agent proposes</b><code>sudo systemctl restart buzz-api</code></div><i class="done">✓</i></div>
-            <div class="flow-line active"><span>2</span><div><b>Main process checks risk</b><small>Privilege escalation + service mutation</small></div><i>!</i></div>
+            <div class="flow-line active"><span>2</span><div class="flow-review">
+              <b>Main process checks risk</b>
+              <div class="review-row"><small class="review-label">Command</small><code>sudo systemctl restart buzz-api</code></div>
+              <div class="review-row"><small class="review-label">Interpretation</small><span class="review-text">Restarts the buzz-api service via systemd. Requires sudo.</span></div>
+              <div class="review-row"><small class="review-label">Risk reason</small><span class="review-text">Privilege escalation + service mutation</span></div>
+            </div><i>!</i></div>
             <div class="flow-line"><span>3</span><div><b>You confirm the exact action</b><small>Single-use token · bound to host, task, CWD, command</small></div><i>→</i></div>
             <div class="flow-footer"><span><i></i> Secrets scrubbed</span><button>Confirm once</button></div>
           </div>

@@ -51,6 +51,7 @@ export type AgentStreamEvent =
       confirmation: {
         confirmationId: string;
         level: "high";
+        command: string;
         reason: string;
         projectedEffect: string;
       };

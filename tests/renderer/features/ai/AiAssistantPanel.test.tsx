@@ -63,6 +63,38 @@ describe("AiAssistantPanel", () => {
     expect(screen.getByText("Check server")).toBeVisible();
   });
 
+  it("renders assistant responses as Streamdown markdown", async () => {
+    render(
+      <AiAssistantPanel
+        onClose={() => undefined}
+        sshSessionId="ssh-1"
+        providerApi={{ list: async () => [provider], create: vi.fn(), update: vi.fn(), delete: vi.fn(), test: vi.fn(), probe: vi.fn() }}
+        agentClient={agentClient((_text, onEvent) => {
+          const messages = [
+            { role: "user" as const, content: "Summarize", timestamp: 1 },
+            assistant("**Server ready** with `nginx`", 2),
+          ];
+          const result = snapshot(messages);
+          onEvent({ type: "agentStart" });
+          onEvent({ type: "agentEnd", snapshot: result });
+          return result;
+        })}
+      />,
+    );
+
+    const input = await screen.findByRole("textbox", { name: "Message AI assistant" });
+    await waitFor(() => expect(input).toBeEnabled());
+    fireEvent.change(input, { target: { value: "Summarize" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    const emphasis = await screen.findByText("Server ready");
+    expect(emphasis).toHaveAttribute("data-streamdown", "strong");
+    expect(screen.getByText("nginx")).toHaveAttribute(
+      "data-streamdown",
+      "inline-code",
+    );
+  });
+
   it("expands thinking content and hides incomplete text before a tool call", async () => {
     render(
       <AiAssistantPanel
@@ -162,6 +194,66 @@ describe("AiAssistantPanel", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeVisible());
     expect(completeThinking).toHaveTextContent("The user asked to inspect the server");
     expect(completeThinking).toHaveAttribute("open");
+  });
+
+  it("shows the command and AI interpretation in risk confirmations", async () => {
+    let emit: ((event: AiAgentEvent) => void) | undefined;
+    const completion = new Promise<AiAgentSnapshot>(() => undefined);
+    const client = agentClient((_text, onEvent) => {
+      emit = onEvent;
+      return completion;
+    });
+
+    render(
+      <AiAssistantPanel
+        onClose={() => undefined}
+        sshSessionId="ssh-1"
+        providerApi={{ list: async () => [provider], create: vi.fn(), update: vi.fn(), delete: vi.fn(), test: vi.fn(), probe: vi.fn() }}
+        agentClient={client}
+      />,
+    );
+
+    const input = await screen.findByRole("textbox", { name: "Message AI assistant" });
+    await waitFor(() => expect(input).toBeEnabled());
+    fireEvent.change(input, { target: { value: "Restart nginx" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(emit).toBeTypeOf("function"));
+
+    act(() => {
+      emit?.({
+        type: "toolStart",
+        toolCallId: "tool-1",
+        toolName: "ssh_exec",
+        args: {
+          command: "sudo systemctl restart nginx",
+          explanation: "Restarts Nginx and may briefly interrupt active connections.",
+        },
+      });
+      emit?.({
+        type: "toolConfirmationRequired",
+        confirmation: {
+          confirmationId: "confirmation-1",
+          level: "high",
+          reason: "Privilege escalation requires confirmation.",
+        },
+      } as unknown as AiAgentEvent);
+    });
+
+    expect(screen.getByRole("alertdialog", {
+      name: "Confirmation required",
+    })).toBeVisible();
+    expect(screen.getByText("sudo systemctl restart nginx")).toBeVisible();
+    expect(screen.getByText(
+      "Restarts Nginx and may briefly interrupt active connections.",
+    )).toBeVisible();
+    expect(screen.getByText("Privilege escalation requires confirmation.")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run command" }));
+    expect(client.decideTool).toHaveBeenCalledWith(
+      "agent-1",
+      "confirmation-1",
+      true,
+    );
   });
 
   it("renders a resizable sidebar with default width and persists changes", () => {

@@ -45,12 +45,12 @@ export function useAgentRuntime(
         queue.end();
       };
       abortSignal.addEventListener("abort", abort, { once: true });
-      let content: ThreadAssistantMessagePart[] = [];
+      let snapshot = emptyStreamSnapshot();
       try {
         for await (const event of queue) {
-          content = applyEventToSnapshot(content, event);
+          snapshot = applyEventToSnapshot(snapshot, event);
           yield {
-            content,
+            content: snapshot.content,
             status: event.type === "agentEnd"
               ? { type: "complete", reason: "stop" as const }
               : { type: "running" as const },
@@ -58,7 +58,7 @@ export function useAgentRuntime(
         }
         if (!receivedAgentEnd) {
           yield {
-            content,
+            content: snapshot.content,
             status: abortSignal.aborted
               ? { type: "incomplete", reason: "cancelled" as const }
               : { type: "complete", reason: "unknown" as const },
@@ -73,30 +73,57 @@ export function useAgentRuntime(
   return useLocalRuntime(adapter);
 }
 
+type StreamSnapshot = {
+  content: ThreadAssistantMessagePart[];
+  activeMessage?: {
+    startIndex: number;
+    partCount: number;
+  };
+};
+
+function emptyStreamSnapshot(): StreamSnapshot {
+  return { content: [] };
+}
+
 export function applyEventToSnapshot(
-  current: readonly ThreadAssistantMessagePart[],
+  current: StreamSnapshot,
   event: AgentEvent,
-): ThreadAssistantMessagePart[] {
+): StreamSnapshot {
+  if (event.type === "messageStart" && event.message.role === "assistant") {
+    const messageParts = streamingMessageParts([], event.message);
+    return {
+      content: [...current.content, ...messageParts],
+      activeMessage: {
+        startIndex: current.content.length,
+        partCount: messageParts.length,
+      },
+    };
+  }
   if (
-    (event.type === "messageStart" ||
-      event.type === "messageUpdate" ||
+    (event.type === "messageUpdate" ||
       event.type === "messageEnd") &&
     event.message.role === "assistant"
   ) {
-    const toolParts = current.filter((part) => part.type === "tool-call");
-    const reasoning = event.message.content
-      .filter((part) => part.type === "thinking")
-      .map((part) => part.thinking)
-      .join("");
-    const text = event.message.content
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("");
-    return [
-      ...growReasoningParts(current, reasoning),
-      ...streamingTextPart(current, text),
-      ...toolParts,
-    ];
+    const activeMessage = current.activeMessage ?? {
+      startIndex: current.content.length,
+      partCount: 0,
+    };
+    const previousMessageParts = current.content.slice(
+      activeMessage.startIndex,
+      activeMessage.startIndex + activeMessage.partCount,
+    );
+    const messageParts = streamingMessageParts(previousMessageParts, event.message);
+    return {
+      content: [
+        ...current.content.slice(0, activeMessage.startIndex),
+        ...messageParts,
+        ...current.content.slice(activeMessage.startIndex + activeMessage.partCount),
+      ],
+      activeMessage: {
+        ...activeMessage,
+        partCount: messageParts.length,
+      },
+    };
   }
   if (event.type === "toolStart") {
     const part: ThreadAssistantMessagePart = {
@@ -106,21 +133,51 @@ export function applyEventToSnapshot(
       args: jsonObject(event.args) as never,
       argsText: JSON.stringify(event.args ?? {}),
     };
-    return replaceToolPart(current, event.toolCallId, part);
+    return {
+      ...current,
+      content: replaceToolPart(current.content, event.toolCallId, part),
+    };
   }
   if (event.type === "toolUpdate") {
-    return current.map((part) => part.type === "tool-call" &&
-      part.toolCallId === event.toolCallId
-      ? { ...part, result: event.partialResult }
-      : part);
+    return {
+      ...current,
+      content: current.content.map((part) => part.type === "tool-call" &&
+        part.toolCallId === event.toolCallId
+        ? { ...part, result: event.partialResult }
+        : part),
+    };
   }
   if (event.type === "toolEnd") {
-    return current.map((part) => part.type === "tool-call" &&
-      part.toolCallId === event.toolCallId
-      ? { ...part, result: event.result, isError: event.isError }
-      : part);
+    return {
+      ...current,
+      content: current.content.map((part) => part.type === "tool-call" &&
+        part.toolCallId === event.toolCallId
+        ? { ...part, result: event.result, isError: event.isError }
+        : part),
+    };
   }
-  return [...current];
+  return current;
+}
+
+function streamingMessageParts(
+  current: readonly ThreadAssistantMessagePart[],
+  message: Extract<
+    Extract<AgentEvent, { type: "messageStart" }>["message"],
+    { role: "assistant" }
+  >,
+): ThreadAssistantMessagePart[] {
+  const reasoning = message.content
+    .filter((part) => part.type === "thinking")
+    .map((part) => part.thinking)
+    .join("");
+  const text = message.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("");
+  return [
+    ...growReasoningParts(current, reasoning),
+    ...streamingTextPart(current, text),
+  ];
 }
 
 // Reasoning is rendered as plain text inside GroupedParts. Appending only the

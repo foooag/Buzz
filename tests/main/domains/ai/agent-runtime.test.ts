@@ -176,6 +176,11 @@ describe("Electron Pi Agent runtime", () => {
     ).toBe(true));
     const request = events.find((event) => event.type === "toolConfirmationRequired");
     if (!request || request.type !== "toolConfirmationRequired") throw new Error("missing confirmation");
+    expect(request.confirmation).toMatchObject({
+      command: "pwd",
+      projectedEffect: "Prints the active remote working directory.",
+      reason: "Confirmation required.",
+    });
     expect(JSON.stringify(request)).not.toContain("main-process-token");
     expect(() => runtime.decideTool(
       "renderer-1",
@@ -534,7 +539,11 @@ function toolResponse(): AssistantMessageEvent[] {
     type: "toolCall" as const,
     id: "call-1",
     name: "ssh_exec",
-    arguments: { command: "pwd", cwd: "/tmp" },
+    arguments: {
+      command: "pwd",
+      explanation: "Prints the active remote working directory.",
+      cwd: "/tmp",
+    },
   };
   const start = assistantMessage([]);
   const partial = assistantMessage([call], "toolUse");

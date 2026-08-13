@@ -6,8 +6,10 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
+import { code } from "@streamdown/code";
 import {
   AlertTriangle,
+  Bot,
   CornerDownLeft,
   History,
   Plus,
@@ -15,8 +17,10 @@ import {
   ShieldCheck,
   Sparkles,
   Square,
+  Terminal,
   X,
 } from "lucide-react";
+import { Streamdown } from "streamdown";
 import { Button } from "@/components/ui/button";
 import { aiConfigApi } from "./aiApi";
 import type { AiConfigApi, AiProviderConfig } from "./aiConfigTypes";
@@ -63,6 +67,11 @@ export type AiAssistantPanelProps = {
   agentClient?: AiAgentClient;
 };
 
+type PendingSshCommand = {
+  command: string;
+  explanation: string;
+};
+
 export function AiAssistantPanel({
   onClose,
   sshSessionId,
@@ -82,6 +91,7 @@ export function AiAssistantPanel({
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const agentIdRef = useRef<string | undefined>(undefined);
+  const pendingSshCommandRef = useRef<PendingSshCommand | undefined>(undefined);
 
   useEffect(() => {
     try {
@@ -145,6 +155,7 @@ export function AiAssistantPanel({
     setError(undefined);
     setRunning(false);
     setConfirmation(undefined);
+    pendingSshCommandRef.current = undefined;
     void agentClient.create({ providerConfigId: selectedProvider.id, sshSessionId }).then(
       (snapshot) => {
         createdAgentId = snapshot.agentId;
@@ -187,6 +198,7 @@ export function AiAssistantPanel({
     const agentId = agentIdRef.current;
     if (agentId) void agentClient.abort(agentId);
     setConfirmation(undefined);
+    pendingSshCommandRef.current = undefined;
     setMessages([]);
     setActiveConvId(null);
     setHistoryOpen(false);
@@ -210,6 +222,7 @@ export function AiAssistantPanel({
     const agentId = agentIdRef.current;
     if (agentId) void agentClient.abort(agentId);
     setConfirmation(undefined);
+    pendingSshCommandRef.current = undefined;
     setHistoryOpen(false);
     void aiSessionApi.load(id).then(
       (record) => {
@@ -279,7 +292,13 @@ export function AiAssistantPanel({
     }
     setRunning(true);
     void agentClient.prompt(agentId, text, (event) => {
-      applyAgentEvent(event, setMessages, setRunning, setError, setConfirmation);
+      applyAgentEvent(
+        enrichConfirmationDetails(event, pendingSshCommandRef),
+        setMessages,
+        setRunning,
+        setError,
+        setConfirmation,
+      );
     }).then(
       (snapshot) => {
         applyStreamingSnapshot(snapshot, setMessages, setRunning, setError);
@@ -504,11 +523,55 @@ export function AiAssistantPanel({
       </div>
 
       {confirmation ? (
-        <div role="dialog" aria-modal="true" aria-label="Confirm shell command" className="absolute inset-0 grid place-items-center bg-black/70 p-5">
-          <div className="rounded-xl border border-coral-red/40 bg-obsidian p-4 shadow-xl">
-            <div className="flex items-center gap-2 text-coral-red"><AlertTriangle size={16} /> Confirmation required</div>
-            <p className="mt-3 text-sm text-mist">{confirmation.reason}</p>
-            <div className="mt-4 flex justify-end gap-2">
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="ai-confirmation-title"
+          className="absolute inset-0 grid place-items-center bg-black/70 p-5"
+        >
+          <div className="scroll-thin max-h-full w-full overflow-y-auto rounded-xl border border-coral-red/40 bg-obsidian p-4 shadow-xl">
+            <div
+              id="ai-confirmation-title"
+              className="flex items-center gap-2 font-medium text-coral-red"
+            >
+              <AlertTriangle size={16} /> Confirmation required
+            </div>
+            <section aria-labelledby="ai-confirmation-command" className="mt-4">
+              <div
+                id="ai-confirmation-command"
+                className="mb-1.5 flex items-center gap-1.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-fog"
+              >
+                <Terminal size={12} /> Command to execute
+              </div>
+              <pre className="scroll-thin m-0 overflow-x-auto rounded-lg border border-graphite bg-carbon px-3 py-2.5">
+                <code className="whitespace-pre-wrap break-all font-mono text-[12px] leading-relaxed text-paper">
+                  {confirmation.command}
+                </code>
+              </pre>
+            </section>
+            <section aria-labelledby="ai-confirmation-interpretation" className="mt-4">
+              <div
+                id="ai-confirmation-interpretation"
+                className="mb-1 flex items-center gap-1.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-acid-lime"
+              >
+                <Bot size={12} /> AI interpretation
+              </div>
+              <p className="m-0 text-[12.5px] leading-relaxed text-mist">
+                {confirmation.projectedEffect}
+              </p>
+            </section>
+            <section aria-labelledby="ai-confirmation-risk" className="mt-4">
+              <div
+                id="ai-confirmation-risk"
+                className="mb-1 flex items-center gap-1.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-coral-red"
+              >
+                <AlertTriangle size={12} /> Why this is risky
+              </div>
+              <p className="m-0 text-[12.5px] leading-relaxed text-mist">
+                {confirmation.reason}
+              </p>
+            </section>
+            <div className="mt-4 flex justify-end gap-2 border-t border-graphite pt-4">
               <Button type="button" variant="ghost" onClick={() => resolveConfirmation(false)}>Cancel</Button>
               <Button type="button" onClick={() => resolveConfirmation(true)}>Run command</Button>
             </div>
@@ -578,6 +641,52 @@ function applyAgentEvent(
     default:
       return;
   }
+}
+
+function enrichConfirmationDetails(
+  event: AiAgentEvent,
+  pending: { current: PendingSshCommand | undefined },
+): AiAgentEvent {
+  if (event.type === "toolStart" && event.toolName === "ssh_exec") {
+    const args = recordValue(event.args);
+    pending.current = {
+      command: stringValue(args?.command),
+      explanation: stringValue(args?.explanation),
+    };
+    return event;
+  }
+  if (event.type === "toolEnd" && event.toolName === "ssh_exec") {
+    pending.current = undefined;
+    return event;
+  }
+  if (event.type !== "toolConfirmationRequired") return event;
+
+  const command = stringValue(event.confirmation.command) ||
+    pending.current?.command ||
+    "";
+  const projectedEffect = stringValue(event.confirmation.projectedEffect) ||
+    pending.current?.explanation ||
+    (command
+      ? "AI requested this command for execution in the active SSH session."
+      : "AI requested a high-risk command in the active SSH session.");
+  return {
+    ...event,
+    confirmation: {
+      ...event.confirmation,
+      command,
+      projectedEffect,
+    },
+  };
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function mergeStreamingMessages(
@@ -772,12 +881,17 @@ function MessageView({ message }: { message: AiAgentMessage }) {
         if (part.type === "text") {
           if (!part.text.trim() || hideIncompleteToolPrelude) return null;
           return (
-            <p
-              key={`${index}-text-${part.text.length}`}
-              className="whitespace-pre-wrap wrap-break-word"
+            <Streamdown
+              key={`${index}-text`}
+              mode="streaming"
+              isAnimating={message.stopReason === "pending"}
+              plugins={{ code }}
+              shikiTheme={["github-light", "github-dark"]}
+              caret="block"
+              className="wrap-break-word text-[13px] leading-relaxed text-mist"
             >
               {part.text}
-            </p>
+            </Streamdown>
           );
         }
         if (part.type === "thinking") {

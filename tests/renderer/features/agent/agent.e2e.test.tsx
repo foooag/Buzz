@@ -40,7 +40,12 @@ describe("Agent conversation integration", () => {
     expect(within(progress).getByText("h1")).toBeVisible();
     expect(within(progress).getByText("done")).toBeVisible();
     expect(within(progress).getByText("uptime")).toBeVisible();
+    const reasoning = screen.getByText("Reasoning").closest("details");
+    expect(reasoning).toContainElement(screen.getByText("Ran 1 command"));
+    expect(reasoning).toContainElement(screen.getByText("host_exec"));
+    fireEvent.click(screen.getByText("host_exec"));
     expect(screen.getByText("up 1 day")).toBeVisible();
+    expect(reasoning).not.toHaveTextContent("Host is healthy.");
     await waitFor(() => expect(stop).toHaveBeenCalled());
   });
 
@@ -130,9 +135,16 @@ function completedEvents(): AgentEvent[] {
     stopReason: "stop" as const,
     timestamp: Date.now(),
   };
+  const reasoning = {
+    ...message,
+    content: [{ type: "thinking" as const, thinking: "Checking host health." }],
+    stopReason: "toolUse" as const,
+  };
   return [
     { type: "agentStart" },
-    { type: "messageStart", message: { ...message, content: [] } },
+    { type: "messageStart", message: { ...reasoning, content: [] } },
+    { type: "messageUpdate", message: reasoning },
+    { type: "messageEnd", message: reasoning },
     {
       type: "toolStart",
       toolCallId: "tool-1",
@@ -145,6 +157,14 @@ function completedEvents(): AgentEvent[] {
       toolName: "host_exec",
       result: { hostId: "h1", stdout: "up 1 day", exitCode: 0 },
       isError: false,
+    },
+    { type: "messageStart", message: { ...message, content: [] } },
+    {
+      type: "messageUpdate",
+      message: {
+        ...message,
+        content: [{ type: "text", text: "Host is" }],
+      },
     },
     { type: "messageEnd", message },
     {

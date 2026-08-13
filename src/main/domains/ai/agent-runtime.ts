@@ -31,7 +31,7 @@ import type {
 } from "./agent-types.js";
 
 const SYSTEM_PROMPT =
-  "You are the Buzz Linux SSH assistant. Use only registered tools, always pass an explicit remote CWD, and explain risky actions before requesting confirmation.";
+  "You are the Buzz Linux SSH assistant. Use only registered tools, always pass an explicit remote CWD, and provide a plain-language explanation of every ssh_exec command and its expected impact.";
 const CONFIRMATION_TTL_MS = 60_000;
 
 type Emit = (event: AiAgentEvent) => void;
@@ -266,6 +266,10 @@ export class AiAgentRuntime {
   #createSshTool(agentId: string, sshSessionId: string): AgentTool {
     const parameters = Type.Object({
       command: Type.String({ minLength: 1 }),
+      explanation: Type.String({
+        minLength: 1,
+        description: "A concise, user-facing explanation of what the exact command does and its expected impact.",
+      }),
       cwd: Type.Optional(Type.String({ minLength: 1 })),
       timeoutMs: Type.Optional(Type.Number({ minimum: 1_000, maximum: 300_000 })),
     });
@@ -277,15 +281,21 @@ export class AiAgentRuntime {
       parameters,
       executionMode: "sequential",
       execute: async (_toolCallId, raw, signal) => {
-        const params = raw as { command: string; cwd?: string; timeoutMs?: number };
+        const params = raw as {
+          command: string;
+          explanation: string;
+          cwd?: string;
+          timeoutMs?: number;
+        };
         const cwd = params.cwd?.trim() || "$HOME";
         const command = params.command.trim();
+        const explanation = params.explanation.trim();
         const host = this.#ssh.host(sshSessionId);
         const assessment = this.#risk.assess(agentId, sshSessionId, host, cwd, command);
         let token: string | undefined;
         if (assessment.verdict.kind === "reject") throw new Error(assessment.verdict.reason);
         if (assessment.verdict.kind === "needsConfirmation") {
-          token = await this.#confirm(agentId, assessment, signal);
+          token = await this.#confirm(agentId, assessment, command, explanation, signal);
         }
         if (signal?.aborted) throw new Error("The SSH command was cancelled.");
         this.#risk.authorize(agentId, sshSessionId, host, cwd, command, token);
@@ -307,6 +317,8 @@ export class AiAgentRuntime {
   #confirm(
     agentId: string,
     assessment: ShellAssessment,
+    command: string,
+    explanation: string,
     signal?: AbortSignal,
   ): Promise<string> {
     const entry = this.#entries.get(agentId);
@@ -340,8 +352,9 @@ export class AiAgentRuntime {
         confirmation: {
           confirmationId,
           level: verdict.level,
+          command,
           reason: verdict.reason,
-          projectedEffect: verdict.projectedEffect,
+          projectedEffect: explanation || verdict.projectedEffect || verdict.reason,
         },
       });
       if (signal?.aborted) abort();

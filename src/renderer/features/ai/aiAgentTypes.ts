@@ -40,6 +40,7 @@ export type AiAgentSnapshot = {
 export type AiToolConfirmation = {
   confirmationId: string;
   level: "high";
+  command: string;
   reason: string;
   projectedEffect: string;
 };
