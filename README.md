@@ -20,6 +20,12 @@
   </p>
 
   <p>
+    <a href="./README.md"><strong>English</strong></a>
+    ·
+    <a href="./README.zh-CN.md"><strong>简体中文</strong></a>
+  </p>
+
+  <p>
     <a href="https://buzz.nex.show"><strong>Website</strong></a>
     ·
     <a href="https://github.com/foooag/Buzz/releases"><strong>Download</strong></a>
@@ -42,7 +48,7 @@ Buzz brings daily shell work and remote infrastructure into a single desktop wor
 | `02` | **Remote SSH** | Password or private-key authentication with explicit, fail-closed host-key trust. |
 | `03` | **SFTP** | Browse remote files, transfer data, resolve conflicts, and open files locally. |
 | `04` | **Port forwarding** | Start and stop local or remote forwarding rules for each host. |
-| `05` | **AI shell agent** | Inspect a live session and propose actions through Anthropic, OpenAI, DeepSeek, Zhipu GLM, or Moonshot Kimi endpoints. |
+| `05` | **AI shell agent** | Inspect a live session and propose actions through Anthropic, OpenAI, DeepSeek, Zhipu GLM, or Moonshot Kimi endpoints. Replies render streaming Markdown with highlighted code. |
 | `06` | **Encrypted vault** | Protect sensitive application data at rest with AES-256-GCM. |
 
 ## Ask. Inspect. Act. With a gate in the middle.
@@ -51,7 +57,7 @@ The agent can work with the context of a live terminal, but it cannot silently e
 
 | 1 · Agent proposes | 2 · Main process checks | 3 · You stay in control |
 | --- | --- | --- |
-| Buzz prepares the exact shell command for the active task. | The Electron main process evaluates the command and its execution context. | High-risk actions require a short-lived, single-use approval bound to the task, session, host, working directory, and command. |
+| Buzz prepares the exact shell command for the active task. | The Electron main process evaluates the command and its execution context. | High-risk actions require a short-lived, single-use approval bound to the task, session, host, working directory, and command. Before you approve, the gate shows the exact command, the agent's plain-language interpretation, and the deterministic risk reason. |
 
 ## Security by design
 
