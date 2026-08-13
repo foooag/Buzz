@@ -1,4 +1,5 @@
 const { contextBridge, ipcRenderer } = require("electron");
+const AGENT_STREAM_CHANNEL = "agent:stream";
 
 contextBridge.exposeInMainWorld("terminus", {
   invoke: (command, input) => ipcRenderer.invoke("terminus:invoke", command, input),
@@ -26,6 +27,20 @@ contextBridge.exposeInMainWorld("terminus", {
     } finally {
       ipcRenderer.removeListener("terminus:desktop-event", listener);
     }
+  },
+  streamAgent: (request, onEvent, onClose) => {
+    const channel = new MessageChannel();
+    const listener = (event) => onEvent(event.data);
+    const closeListener = () => onClose?.();
+    channel.port1.addEventListener("message", listener);
+    channel.port1.addEventListener("close", closeListener);
+    channel.port1.start();
+    ipcRenderer.postMessage(AGENT_STREAM_CHANNEL, request, [channel.port2]);
+    return () => {
+      channel.port1.removeEventListener("message", listener);
+      channel.port1.removeEventListener("close", closeListener);
+      channel.port1.close();
+    };
   },
   window: {
     minimize: () => ipcRenderer.invoke("terminus:window:minimize"),

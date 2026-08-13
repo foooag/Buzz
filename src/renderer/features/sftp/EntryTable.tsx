@@ -20,7 +20,7 @@ type EntryTableProps = {
   testId: string;
   onSelect?(entry: Entry): void;
   /** Optional per-row drag source. `payload` is what the drop handler reads. */
-  onDragStart?(entry: Entry, payload: string): void;
+  onDragStart?(entry: Entry, payload: string): string | void;
   /**
    * Optional per-row action button rendered in a trailing cell (e.g. the
    * remote pane's "Open With…" affordance). Absent on the local pane.
@@ -42,7 +42,7 @@ export function EntryTable({ entries, busy, testId, onSelect, onDragStart, rowAc
   }
   return (
     <table className="w-full border-collapse text-caption" data-testid={testId}>
-      <thead className="sticky top-0 bg-carbon text-[10.5px] uppercase tracking-[0.05em] text-fog/60">
+      <thead className="sticky top-0 bg-carbon text-[10.5px] uppercase tracking-wider text-fog/60">
         <tr className="border-b border-graphite">
           <th scope="col" className="px-3 py-2 text-left font-w510">Name</th>
           <th scope="col" className="px-3 py-2 text-right font-w510">Size</th>
@@ -73,12 +73,13 @@ export function EntryTable({ entries, busy, testId, onSelect, onDragStart, rowAc
             onDragStart={
               onDragStart
                 ? (event) => {
-                    event.dataTransfer.setData("text/plain", onDragStartPayload(entry, onDragStart));
+                    const payload = onDragStart(entry, entry.name) ?? entry.name;
+                    event.dataTransfer.setData("text/plain", payload);
                     event.dataTransfer.effectAllowed = "copy";
                   }
                 : undefined
             }
-            className="border-b border-graphite/60 outline-none transition-colors hover:bg-white/5 focus-visible:bg-white/5"
+            className="border-b border-graphite/60 outline-hidden transition-colors hover:bg-white/5 focus-visible:bg-white/5"
           >
             <td className="px-3 py-1.5 text-mist">
               <span className="inline-flex items-center gap-2">{entry.isDir ? <FolderIcon /> : <FileIcon />}{entry.name}</span>
@@ -110,12 +111,6 @@ export function EntryTable({ entries, busy, testId, onSelect, onDragStart, rowAc
       </tbody>
     </table>
   );
-}
-
-function onDragStartPayload(entry: Entry, onDragStart: (entry: Entry, payload: string) => void): string {
-  let payload = "";
-  onDragStart(entry, payload);
-  return entry.name;
 }
 
 function FolderIcon(): ReactNode {

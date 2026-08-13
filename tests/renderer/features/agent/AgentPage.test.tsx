@@ -1,584 +1,244 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { AgentPage } from "@/features/agent/AgentPage";
-import type {
-  AgentClient,
-  AgentMessage,
-  AgentSnapshot,
-} from "@/features/agent/agentTypes";
-import { createDeterministicAiConfigApi } from "@/features/ai/deterministicAiApi";
-import type { AiConfigApi, AiProviderConfig } from "@/features/ai/aiConfigTypes";
-import { useInventoryStore } from "@/features/inventory/inventoryStore";
-import type { Group, Host, Identity } from "@/shared/types";
-
-const timestamp = "2026-08-05T00:00:00.000Z";
-
-function seedInventory() {
-  const groups: Group[] = [{
-    id: "g1",
-    vaultId: "v1",
-    parentId: null,
-    name: "Production",
-    color: "coral",
-    count: 1,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  }];
-  const hosts: Host[] = [{
-    id: "h1",
-    vaultId: "v1",
-    groupId: "g1",
-    name: "web-prod-01",
-    address: "10.0.0.10",
-    username: "ubuntu",
-    tags: [],
-    notes: "",
-    status: "online",
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  }];
-  useInventoryStore.getState().setResources(
-    groups,
-    hosts,
-    [] as Identity[],
-  );
-}
-
-function fakeClient() {
-  return {
-    create: vi.fn(async () => ({
-      agentId: "a1",
-      providerConfigId: "cfg-1",
-      status: "idle",
-      hosts: [],
-      messages: [],
-    })),
-    prompt: vi.fn(async () => ({
-      agentId: "a1",
-      providerConfigId: "cfg-1",
-      status: "idle",
-      hosts: [],
-      messages: [],
-    })),
-    steer: vi.fn(async () => undefined),
-    abort: vi.fn(async () => undefined),
-    decideTool: vi.fn(async () => undefined),
-    close: vi.fn(async () => undefined),
-  } as unknown as AgentClient;
-}
-
-function providerApi(items: AiProviderConfig[] = [provider()]): AiConfigApi {
-  return { list: vi.fn(async () => items) } as unknown as AiConfigApi;
-}
-
-function provider(): AiProviderConfig {
-  return {
-    id: "cfg-1",
-    providerKind: "anthropic",
-    name: "Claude",
-    baseUrl: "https://api.anthropic.com",
-    modelId: "claude-sonnet-5",
-    credentialConfigured: true,
-    isDefault: true,
-    connectionStatus: "connected",
-    capabilities: {
-      streaming: "supported",
-      toolCalling: "supported",
-      structuredOutput: "supported",
-      reasoning: "untested",
-    },
-    createdAt: "now",
-    updatedAt: "now",
-  };
-}
-
-beforeEach(() => {
-  window.localStorage.clear();
-  useInventoryStore.getState().setResources([], [], []);
-});
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-  vi.restoreAllMocks();
-});
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentPage } from "../../../../src/renderer/features/agent/AgentPage";
+import type { AgentClient } from "../../../../src/renderer/features/agent/agentTypes";
+import type { AiConfigApi } from "../../../../src/renderer/features/ai/aiConfigTypes";
+import type { AiSessionClient } from "../../../../src/renderer/features/ai/aiSessionApi";
+import { useInventoryStore } from "../../../../src/renderer/features/inventory/inventoryStore";
 
 describe("AgentPage", () => {
-  it("creates an agent and renders the prototype composer", async () => {
-    const client = fakeClient();
-    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await screen.findByLabelText("Message agent");
-    await waitFor(() => expect(client.create).toHaveBeenCalledWith({
-      providerConfigId: "cfg-1",
-    }));
-    expect(screen.getByRole("heading", { name: "Agent" })).toBeVisible();
-    expect(screen.getByText("Agent standing by")).toBeVisible();
-    expect(screen.getByText("Claude · claude-sonnet-5")).toBeVisible();
-    expect(screen.queryByText("No provider configured")).toBeNull();
-  });
-
-  it("preserves the composer while asynchronous agent creation completes", async () => {
-    const client = fakeClient();
-    let resolveCreate!: (snapshot: AgentSnapshot) => void;
-    vi.mocked(client.create).mockImplementation(() => new Promise((resolve) => {
-      resolveCreate = resolve;
-    }));
-    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => expect(client.create).toHaveBeenCalled());
-    const input = screen.getByLabelText("Message agent");
-    await typeComposer(input, "w");
-
-    await act(async () => {
-      resolveCreate({
-        agentId: "a1",
-        providerConfigId: "cfg-1",
-        status: "idle",
-        hosts: [],
-        messages: [],
-      });
-    });
-
-    expect(screen.getByLabelText("Message agent")).toBe(input);
-    await typeComposer(input, "h");
-    expect(input).toHaveValue("wh");
-  });
-
-  it("sends a prompt with parsed targets on submit", async () => {
-    const client = fakeClient();
-    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => {
-      expect(screen.getByLabelText("Message agent")).toBeEnabled();
-    });
-    const input = screen.getByLabelText("Message agent");
-    await typeComposer(input, "uptime{Enter}");
-    expect(client.prompt).toHaveBeenCalledWith(
-      "a1",
-      "uptime",
-      [],
-      expect.any(Function),
-    );
-  });
-
-  it("prints development send, receive, and completion messages", async () => {
-    vi.stubEnv("MODE", "development");
-    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
-    const client = fakeClient();
-    vi.mocked(client.prompt).mockImplementation(async (
-      _agentId,
-      _text,
-      _targets,
-      onEvent,
-    ) => {
-      onEvent({ type: "agentStart" });
-      return {
-        agentId: "a1",
-        providerConfigId: "cfg-1",
-        status: "idle",
-        hosts: [],
-        messages: [],
-      };
-    });
-    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
-
-    await typeComposer(screen.getByLabelText("Message agent"), "uptime{Enter}");
-
-    await waitFor(() => expect(debug).toHaveBeenCalledWith(
-      "[agent-page:complete]",
-      expect.any(Object),
-    ));
-    expect(debug).toHaveBeenCalledWith("[agent-page:send]", expect.any(Object));
-    expect(debug).toHaveBeenCalledWith("[agent-page:receive]", { type: "agentStart" });
-  });
-
-  it("shows stderr and marks a non-zero command exit as failed", async () => {
-    seedInventory();
-    const client = fakeClient();
-    vi.mocked(client.prompt).mockImplementation(async (
-      _agentId,
-      _text,
-      _targets,
-      onEvent,
-    ) => {
-      const toolMessage = assistantMessage([{
-        type: "tool-call",
-        toolCallId: "call-1",
-        toolName: "host_exec",
-        args: { hostId: "h1", command: "docker ps" },
-        argsText: JSON.stringify({ hostId: "h1", command: "docker ps" }),
-      }]);
-      onEvent({ type: "messageStart", message: toolMessage });
-      onEvent({ type: "messageEnd", message: toolMessage });
-      onEvent({
-        type: "toolStart",
-        toolCallId: "call-1",
-        toolName: "host_exec",
-        args: { hostId: "h1", command: "docker ps" },
-      });
-      onEvent({
-        type: "toolEnd",
-        toolCallId: "call-1",
-        toolName: "host_exec",
-        result: {
-          details: {
-            stdout: "",
-            stderr: "permission denied while connecting to Docker",
-            exitCode: 1,
-          },
-        },
-        isError: false,
-      });
-      return {
-        agentId: "a1",
-        providerConfigId: "cfg-1",
-        status: "idle",
-        hosts: [],
-        messages: [],
-      };
-    });
-    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
-
-    await typeComposer(screen.getByLabelText("Message agent"), "docker ps{Enter}");
-
-    const errorMessages = await screen.findAllByText(
-      "permission denied while connecting to Docker",
-    );
-    expect(errorMessages).toHaveLength(2);
-    errorMessages.forEach((message) => expect(message).toBeVisible());
-    expect(screen.getByText("failed")).toBeVisible();
-    expect(screen.getByText("error")).toBeVisible();
-  });
-
-  it("renders reasoning and text while an assistant message is streaming", async () => {
-    const client = fakeClient();
-    let emit: Parameters<AgentClient["prompt"]>[3] | undefined;
-    let completePrompt: (() => void) | undefined;
-    vi.mocked(client.prompt).mockImplementation((
-      _agentId,
-      _text,
-      _targets,
-      onEvent,
-    ) => new Promise((resolve) => {
-      emit = onEvent;
-      completePrompt = () => resolve({
-        agentId: "a1",
-        providerConfigId: "cfg-1",
-        status: "idle",
-        hosts: [],
-        messages: [],
-      });
-    }));
-    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
-
-    const submission = typeComposer(
-      screen.getByLabelText("Message agent"),
-      "inspect containers{Enter}",
-    );
-    await waitFor(() => expect(emit).toBeDefined());
-
-    act(() => {
-      emit?.({
-        type: "messageStart",
-        message: assistantMessage([]),
-      });
-      emit?.({
-        type: "messageUpdate",
-        message: assistantMessage([
-          { type: "reasoning", text: "1." },
-        ]),
-      });
-    });
-    expect(await screen.findByText("1.")).toBeVisible();
-
-    act(() => {
-      emit?.({
-        type: "messageUpdate",
-        message: assistantMessage([
-          { type: "reasoning", text: "1.70" },
-          { type: "text", text: "正在检查容器" },
-        ]),
-      });
-    });
-    expect(await screen.findByText("1.70")).toBeVisible();
-    expect(screen.getByText("正在检查容器")).toBeVisible();
-
-    act(() => {
-      emit?.({
-        type: "messageEnd",
-        message: assistantMessage([
-          { type: "reasoning", text: "1.70" },
-          { type: "text", text: "正在检查容器" },
-        ], "stop"),
-      });
-      completePrompt?.();
-    });
-    await submission;
-  });
-
-  it("copies selected chat text from the context menu", async () => {
-    const client = fakeClient();
-    const clipboard = { writeText: vi.fn(async () => undefined) };
-    const originalClipboard = Object.getOwnPropertyDescriptor(
-      navigator,
-      "clipboard",
-    );
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: clipboard,
-    });
-    vi.mocked(client.prompt).mockResolvedValue({
-      agentId: "a1",
-      providerConfigId: "cfg-1",
+  beforeEach(() => {
+    useInventoryStore.setState({
+      vaults: {},
+      vaultOrder: [],
+      groups: {},
+      hosts: {},
+      identities: {},
+      activeVaultId: null,
       status: "idle",
-      hosts: [],
-      messages: [assistantMessage([
-        { type: "text", text: "Docker service is healthy" },
-      ], "stop")],
+      errorCode: null,
     });
-
-    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
-    await typeComposer(screen.getByLabelText("Message agent"), "status{Enter}");
-
-    const response = await screen.findByText("Docker service is healthy");
-    const range = document.createRange();
-    range.selectNodeContents(response);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-
-    fireEvent.contextMenu(response);
-    await userEvent.click(await screen.findByRole("menuitem", { name: /Copy/ }));
-
-    await waitFor(() => {
-      expect(clipboard.writeText).toHaveBeenCalledWith(
-        "Docker service is healthy",
-      );
-    });
-    selection?.removeAllRanges();
-    if (originalClipboard) {
-      Object.defineProperty(navigator, "clipboard", originalClipboard);
-    } else {
-      Reflect.deleteProperty(navigator, "clipboard");
-    }
   });
 
-  it("renders authoritative thinking and text from the prompt snapshot", async () => {
-    const client = fakeClient();
-    vi.mocked(client.prompt).mockResolvedValue({
-      agentId: "a1",
-      providerConfigId: "cfg-1",
-      status: "idle",
-      hosts: [],
-      messages: [
-        {
-          id: "user-snapshot",
-          role: "user",
-          content: [{ type: "text", text: "inspect containers" }],
-        },
-        assistantMessage([
-          { type: "reasoning", text: "读取真实运行时状态" },
-          { type: "text", text: "Docker 服务运行正常" },
-        ], "stop"),
-      ],
-    });
-    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
-
-    await typeComposer(
-      screen.getByLabelText("Message agent"),
-      "inspect containers{Enter}",
+  it("guides the user to configure a provider when none exist", async () => {
+    render(
+      <AgentPage
+        agentClient={{} as AgentClient}
+        providerApi={{ list: vi.fn(async () => []) } as unknown as AiConfigApi}
+        sessionApi={{ list: vi.fn(async () => []) } as unknown as AiSessionClient}
+      />,
     );
 
-    expect(await screen.findByText("读取真实运行时状态")).toBeVisible();
-    expect(screen.getByText("Docker 服务运行正常")).toBeVisible();
+    expect(await screen.findByText(/Configure an AI provider/)).toBeVisible();
   });
 
-  it("shows the concrete error when an agent request rejects", async () => {
-    const client = fakeClient();
-    vi.mocked(client.prompt).mockRejectedValue(
-      new Error("AI provider returned 429: rate limit exceeded"),
-    );
-    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
-
-    await typeComposer(screen.getByLabelText("Message agent"), "uptime{Enter}");
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "AI provider returned 429: rate limit exceeded",
-    );
-  });
-
-  it("resolves an official host directive into prompt targets", async () => {
-    seedInventory();
-    const client = fakeClient();
-    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => {
-      expect(screen.getByLabelText("Message agent")).toBeEnabled();
-    });
-    const input = screen.getByLabelText("Message agent");
-    await typeComposer(input, "run @");
-    await userEvent.click(
-      await screen.findByRole("option", { name: /web-prod-01/ }),
-    );
-    await userEvent.click(screen.getByLabelText("Message agent"));
-    await userEvent.keyboard("{Enter}");
-    await waitFor(() => expect(client.prompt).toHaveBeenCalledWith(
-      "a1",
-      "run :host[web-prod-01]{name=h1}",
-      ["h1"],
-      expect.any(Function),
-    ));
-    const chip = screen.getByLabelText("host: web-prod-01");
-    expect(chip).toHaveTextContent("web-prod-01");
-    expect(chip).toHaveAttribute("data-directive-id", "h1");
-    expect(chip).not.toHaveTextContent("@web-prod-01");
-    expect(screen.queryByText(
-      "run :host[web-prod-01]{name=h1}",
-      { exact: true },
-    )).toBeNull();
-  });
-
-  it("expands an official group directive into its host targets", async () => {
-    seedInventory();
-    const client = fakeClient();
-    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => {
-      expect(screen.getByLabelText("Message agent")).toBeEnabled();
-    });
-    const input = screen.getByLabelText("Message agent");
-    await typeComposer(input, "run @Prod");
-    await userEvent.click(
-      await screen.findByRole("option", { name: /Production/ }),
-    );
-    await userEvent.click(screen.getByLabelText("Message agent"));
-    await userEvent.keyboard("{Enter}");
-
-    await waitFor(() => expect(client.prompt).toHaveBeenCalledWith(
-      "a1",
-      "run :group[Production]{name=g1}",
-      ["h1"],
-      expect.any(Function),
-    ));
-    expect(screen.getByLabelText("group: Production")).toHaveTextContent(
-      "Production",
-    );
-  });
-
-  it("resolves a host address in natural-language text into prompt targets", async () => {
-    seedInventory();
-    const client = fakeClient();
-    render(<AgentPage agentClient={client} providerApi={providerApi()} />);
-    await waitFor(() => {
-      expect(screen.getByLabelText("Message agent")).toBeEnabled();
-    });
-
-    await typeComposer(
-      screen.getByLabelText("Message agent"),
-      "查看 10.0.0.10 的容器状态{Enter}",
+  it("renders the prototype standby state without an empty progress rail", async () => {
+    render(
+      <AgentPage
+        agentClient={{
+          create: vi.fn(async () => ({
+            agentId: "agent-1",
+            providerConfigId: "provider-1",
+            status: "idle",
+            hosts: [],
+            messages: [],
+          })),
+          close: vi.fn(async () => undefined),
+        } as unknown as AgentClient}
+        providerApi={{
+          list: vi.fn(async () => [{
+            id: "provider-1",
+            name: "Local model",
+            modelId: "qwen3",
+            isDefault: true,
+          }]),
+        } as unknown as AiConfigApi}
+        sessionApi={{ list: vi.fn(async () => []) } as unknown as AiSessionClient}
+      />,
     );
 
-    await waitFor(() => expect(client.prompt).toHaveBeenCalledWith(
-      "a1",
-      "查看 10.0.0.10 的容器状态",
-      ["h1"],
-      expect.any(Function),
-    ));
-  });
-
-  it("shows the standing-by empty state when no provider is usable", async () => {
-    const client = fakeClient();
-    render(<AgentPage agentClient={client} providerApi={providerApi([])} />);
     expect(await screen.findByText("Agent standing by")).toBeVisible();
-    expect(screen.getByLabelText("Message agent")).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-    expect(client.create).not.toHaveBeenCalled();
+    expect(screen.getByText("Ready")).toBeVisible();
+    expect(screen.getByText("Multi-host ops · headless SSH")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Chat history" })).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "AI provider" })).toBeNull();
+    expect(screen.getByRole("combobox", { name: "Model" })).toBeVisible();
+    expect(screen.getByText("qwen3")).toBeVisible();
+    expect(screen.queryByRole("complementary", { name: "Host progress" })).toBeNull();
   });
 
-  it("reloads providers when the revision changes and reflects a newly configured one", async () => {
-    const list = vi
-      .fn<AiConfigApi["list"]>()
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([provider()]);
-    const client = fakeClient();
-    const { rerender } = render(
-      <AgentPage
-        agentClient={client}
-        providerApi={{ list } as unknown as AiConfigApi}
-      />,
-    );
-    expect(await screen.findByText("No provider configured")).toBeVisible();
+  it("loads an Agent history session into both the conversation and Agent runtime", async () => {
+    const user = userEvent.setup();
+    const create = vi.fn(async () => ({
+      agentId: crypto.randomUUID(),
+      providerConfigId: "provider-1",
+      status: "idle" as const,
+      hosts: [],
+      messages: [],
+    }));
+    const session = {
+      id: "history-1",
+      title: "Fleet check",
+      providerConfigId: "provider-1",
+      sshSessionId: "",
+      messageCount: 2,
+      lastStatus: "stop",
+      encryptedBytes: 128,
+      createdAt: "2026-08-12T00:00:00.000Z",
+      updatedAt: "2026-08-12T00:01:00.000Z",
+    };
 
-    rerender(
+    render(
       <AgentPage
-        agentClient={client}
-        providerApi={{ list } as unknown as AiConfigApi}
-        providerRevision={1}
+        agentClient={{
+          create,
+          close: vi.fn(async () => undefined),
+        } as unknown as AgentClient}
+        providerApi={{
+          list: vi.fn(async () => [{
+            id: "provider-1",
+            name: "Local model",
+            modelId: "qwen3",
+            isDefault: true,
+          }]),
+        } as unknown as AiConfigApi}
+        sessionApi={{
+          list: vi.fn(async () => [session]),
+          load: vi.fn(async () => ({
+            ...session,
+            messages: [
+              { role: "user", content: "Inspect the fleet", timestamp: 1 },
+              {
+                role: "assistant",
+                content: [{ type: "text", text: "All hosts are healthy." }],
+                stopReason: "stop",
+                timestamp: 2,
+              },
+            ],
+          })),
+        } as unknown as AiSessionClient}
       />,
     );
-    await waitFor(() => {
-      expect(screen.getByText("Claude · claude-sonnet-5")).toBeVisible();
-    });
-    expect(screen.queryByText("No provider configured")).toBeNull();
-    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+
+    await user.click(await screen.findByRole("button", { name: "Chat history" }));
+    await user.click(await screen.findByText("Fleet check"));
+
+    expect(await screen.findByText("Inspect the fleet")).toBeVisible();
+    expect(screen.getByText("All hosts are healthy.")).toBeVisible();
+    await waitFor(() => expect(create).toHaveBeenLastCalledWith({
+      providerConfigId: "provider-1",
+      historySessionId: "history-1",
+      targets: [],
+    }));
   });
 
-  it("reflects a provider configured through the AI settings flow using the real config api", async () => {
-    const api = createDeterministicAiConfigApi([]);
-    const client = fakeClient();
-    const { rerender } = render(
-      <AgentPage agentClient={client} providerApi={api} />,
-    );
-    expect(await screen.findByText("No provider configured")).toBeVisible();
-
-    // The user adds a provider in the AI preferences section.
-    await api.create({
-      providerKind: "anthropic",
-      name: "Claude",
-      baseUrl: "https://api.anthropic.com",
-      modelId: "claude-sonnet-5",
-      apiKey: "sk-test",
-      isDefault: true,
+  it("shows server suggestions only after the user types @", async () => {
+    const timestamp = "2026-08-12T00:00:00.000Z";
+    useInventoryStore.setState({
+      activeVaultId: "vault-1",
+      hosts: {
+        "host-1": {
+          id: "host-1",
+          vaultId: "vault-1",
+          groupId: null,
+          name: "Production server",
+          address: "10.11.70.52",
+          username: "root",
+          tags: [],
+          notes: "",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      },
     });
 
-    // Preferences close → providerRevision bump.
-    rerender(
-      <AgentPage agentClient={client} providerApi={api} providerRevision={1} />,
+    render(
+      <AgentPage
+        agentClient={{
+          create: vi.fn(async () => ({
+            agentId: "agent-1",
+            providerConfigId: "provider-1",
+            status: "idle",
+            hosts: [],
+            messages: [],
+          })),
+          close: vi.fn(async () => undefined),
+        } as unknown as AgentClient}
+        providerApi={{
+          list: vi.fn(async () => [{
+            id: "provider-1",
+            name: "Local model",
+            modelId: "qwen3",
+            isDefault: true,
+          }]),
+        } as unknown as AiConfigApi}
+        sessionApi={{ list: vi.fn(async () => []) } as unknown as AiSessionClient}
+      />,
     );
-    await waitFor(() => {
-      expect(screen.getByText("Claude · claude-sonnet-5")).toBeVisible();
+
+    const composer = await screen.findByRole("textbox", { name: "Agent command" });
+    expect(screen.queryByText("Production server")).not.toBeInTheDocument();
+    expect(screen.queryByText("10.11.70.52")).not.toBeInTheDocument();
+    expect(screen.queryByRole("listbox", { name: "Suggestions" })).not.toBeInTheDocument();
+
+    fireEvent.paste(composer, {
+      clipboardData: {
+        getData: () => "@",
+        types: ["text/plain"],
+      },
     });
-    expect(screen.queryByText("No provider configured")).toBeNull();
+
+    expect(await screen.findByRole("listbox", { name: "Suggestions" })).toBeVisible();
+    expect(screen.getByText("Production server")).toBeVisible();
+    expect(screen.getByText("10.11.70.52")).toBeVisible();
+  });
+
+  it("switches the Agent model from the composer", async () => {
+    const user = userEvent.setup();
+    const create = vi.fn(async ({ providerConfigId }: { providerConfigId: string }) => ({
+      agentId: `agent-${providerConfigId}`,
+      providerConfigId,
+      status: "idle" as const,
+      hosts: [],
+      messages: [],
+    }));
+
+    render(
+      <AgentPage
+        agentClient={{
+          create,
+          close: vi.fn(async () => undefined),
+        } as unknown as AgentClient}
+        providerApi={{
+          list: vi.fn(async () => [
+            {
+              id: "provider-1",
+              providerKind: "ollama",
+              name: "Local provider",
+              modelId: "qwen3",
+              isDefault: true,
+            },
+            {
+              id: "provider-2",
+              providerKind: "openai",
+              name: "Cloud provider",
+              modelId: "gpt-5",
+              isDefault: false,
+            },
+          ]),
+        } as unknown as AiConfigApi}
+        sessionApi={{ list: vi.fn(async () => []) } as unknown as AiSessionClient}
+      />,
+    );
+
+    await user.click(await screen.findByRole("combobox", { name: "Model" }));
+    await user.click(screen.getByRole("option", { name: /gpt-5/ }));
+
+    await waitFor(() => expect(create).toHaveBeenLastCalledWith({
+      providerConfigId: "provider-2",
+      targets: [],
+    }));
+    expect(screen.getByText("gpt-5")).toBeVisible();
   });
 });
-
-async function typeComposer(input: HTMLElement, text: string): Promise<void> {
-  await waitFor(() => expect(screen.getByLabelText("Message agent")).toBeEnabled());
-  input = screen.getByLabelText("Message agent");
-  const submit = text.endsWith("{Enter}");
-  const content = submit ? text.slice(0, -"{Enter}".length) : text;
-  await userEvent.click(input);
-  fireEvent.keyDown(input, { key: "End" });
-  if (content) {
-    const previousValue = (input as HTMLTextAreaElement).value;
-    await userEvent.paste(content);
-    await waitFor(() => expect(input).toHaveValue(previousValue + content));
-  }
-  if (submit) await userEvent.keyboard("{Enter}");
-}
-
-function assistantMessage(
-  content: Extract<AgentMessage, { role: "assistant" }>["content"],
-  stopReason: "pending" | "stop" = "pending",
-): Extract<AgentMessage, { role: "assistant" }> {
-  return {
-    id: "assistant-stream",
-    role: "assistant",
-    content,
-    status: stopReason === "pending"
-      ? { type: "running" }
-      : { type: "complete", reason: "stop" },
-  };
-}

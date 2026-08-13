@@ -10,8 +10,8 @@ import "@fontsource-variable/inter";
 import { createDeterministicSftpApi } from "./features/sftp/deterministicSftpApi";
 import { createDeterministicAiConfigApi } from "./features/ai/deterministicAiApi";
 import { PROTOTYPE_AI_PROVIDERS } from "./features/ai/prototypeAiProviders";
-import { createDeterministicAgentApi } from "./features/agent/deterministicAgentApi";
 import { createDeterministicForwardingApi } from "./features/forwarding/deterministicForwardingApi";
+import { createDeterministicAgentApi } from "./features/agent/deterministicAgentApi";
 import "./styles/globals.css";
 
 const root = document.getElementById("root");
@@ -29,8 +29,8 @@ createRoot(root).render(
         ssh={selectSshApi()}
         sftp={selectSftpApi()}
         aiConfig={selectAiConfigApi()}
-        agent={selectAgentApi()}
         forwarding={selectForwardingApi()}
+        agentClient={selectAgentApi()}
       />
     </AppProviders>
   </StrictMode>,
@@ -102,18 +102,6 @@ function selectAiConfigApi() {
   return undefined;
 }
 
-function selectAgentApi() {
-  if (
-    import.meta.env.DEV &&
-    ["prototype", "deterministic-agent"].includes(
-      new URLSearchParams(window.location.search).get("transport") ?? "",
-    )
-  ) {
-    return createDeterministicAgentApi();
-  }
-  return undefined;
-}
-
 function selectForwardingApi() {
   if (
     import.meta.env.DEV &&
@@ -122,6 +110,18 @@ function selectForwardingApi() {
     )
   ) {
     return createDeterministicForwardingApi();
+  }
+  return undefined;
+}
+
+function selectAgentApi() {
+  if (
+    import.meta.env.DEV &&
+    ["deterministic-agent", "prototype"].includes(
+      new URLSearchParams(window.location.search).get("transport") ?? "",
+    )
+  ) {
+    return createDeterministicAgentApi();
   }
   return undefined;
 }

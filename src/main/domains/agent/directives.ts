@@ -6,84 +6,43 @@ export type MentionTarget = {
   label: string;
 };
 
-export type MentionResolver = (
-  label: string,
-) => { type: "host" | "group"; id: string } | undefined;
+const directivePattern = /:(host|group)\[([^\]]*)\]\{name=([^}]+)\}/g;
 
-const DIRECTIVE_RE = /:(host|group)\[([^\]]*)\]\{name=([^}]+)\}/g;
-const LINKED_MENTION_RE = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
-const FRIENDLY_MENTION_RE = /@([^\s@]+)/g;
-
-export function parseDirectives(
-  text: string,
-  resolveMention?: MentionResolver,
-): MentionTarget[] {
-  const matches: Array<{ index: number; target: MentionTarget }> = [];
-  for (const match of text.matchAll(DIRECTIVE_RE)) {
-    matches.push({
-      index: match.index ?? 0,
-      target: {
-        type: match[1] as "host" | "group",
-        label: match[2],
-        id: match[3],
-      },
-    });
-  }
-  for (const match of text.matchAll(LINKED_MENTION_RE)) {
-    const resolved = resolveMention?.(match[1]);
-    matches.push({
-      index: match.index ?? 0,
-      target: {
-        type: resolved?.type ?? "host",
-        label: match[1],
-        id: match[2],
-      },
-    });
-  }
-  if (resolveMention) {
-    for (const match of text.matchAll(FRIENDLY_MENTION_RE)) {
-      const resolved = resolveMention(match[1]);
-      if (!resolved) continue;
-      matches.push({
-        index: match.index ?? 0,
-        target: {
-          type: resolved.type,
-          label: match[1],
-          id: resolved.id,
-        },
-      });
-    }
-  }
-  return matches
-    .sort((a, b) => a.index - b.index)
-    .map((entry) => entry.target);
+export function parseDirectives(text: string): MentionTarget[] {
+  return [...text.matchAll(directivePattern)].map((match) => ({
+    type: match[1] as MentionTarget["type"],
+    label: match[2],
+    id: match[3],
+  }));
 }
 
 export function expandTargets(
-  targets: MentionTarget[],
-  groupHosts: Record<string, string[]>,
+  targets: readonly MentionTarget[],
+  groupHosts: Readonly<Record<string, readonly string[]>>,
 ): string[] {
+  const expanded: string[] = [];
   const seen = new Set<string>();
-  const out: string[] = [];
   for (const target of targets) {
-    const ids = target.type === "group" ? (groupHosts[target.id] ?? []) : [target.id];
-    for (const id of ids) {
-      if (!seen.has(id)) {
-        seen.add(id);
-        out.push(id);
-      }
+    const hostIds = target.type === "host" ? [target.id] : groupHosts[target.id] ?? [];
+    for (const hostId of hostIds) {
+      if (seen.has(hostId)) continue;
+      seen.add(hostId);
+      expanded.push(hostId);
     }
   }
-  return out;
+  return expanded;
 }
 
-export function assertNoUnknownTargets(hostIds: string[], allowedHostIds: Set<string>): void {
-  for (const hostId of hostIds) {
-    if (!allowedHostIds.has(hostId)) {
-      throw new DomainError(
-        "AGENT_TARGET_NOT_ALLOWED",
-        `Target host ${hostId} is not part of this task.`,
-      );
-    }
+export function assertAllowedTargets(
+  hostIds: readonly string[],
+  allowed: ReadonlySet<string>,
+): void {
+  const denied = hostIds.find((hostId) => !allowed.has(hostId));
+  if (denied) {
+    throw new DomainError(
+      "AGENT_TARGET_NOT_ALLOWED",
+      "The Agent target is outside the approved host list.",
+      { hostId: denied },
+    );
   }
 }

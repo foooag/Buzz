@@ -55,7 +55,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Field({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
     <div className="grid grid-cols-[110px_minmax(0,1fr)] items-center gap-2 py-1">
-      <dt className="text-[11.5px] uppercase tracking-[0.05em] text-fog/80">{label}</dt>
+      <dt className="text-[11.5px] uppercase tracking-wider text-fog/80">{label}</dt>
       <dd className={`m-0 truncate text-[12.5px] text-mist ${mono ? "font-mono" : ""}`}>{value || "—"}</dd>
     </div>
   );

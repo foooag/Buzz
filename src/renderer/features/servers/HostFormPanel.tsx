@@ -14,7 +14,7 @@ import type {
  * ------------------------------------------------------------------------- */
 
 const inputCls =
-  "w-full rounded-md border border-graphite bg-carbon px-2.5 py-1.5 text-[12.5px] text-mist outline-none transition-colors placeholder:text-fog/45 focus:border-smoke";
+  "w-full rounded-md border border-graphite bg-carbon px-2.5 py-1.5 text-[12.5px] text-mist outline-hidden transition-colors placeholder:text-fog/45 focus:border-smoke";
 export const ENCRYPTED_CREDENTIAL_PLACEHOLDER = "••••••••••••••••";
 
 function Labeled({
@@ -30,7 +30,7 @@ function Labeled({
 }) {
   return (
     <label className="block">
-      <div className="mb-1 flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.05em] text-fog/80">
+      <div className="mb-1 flex items-center gap-1 text-[11px] font-medium uppercase tracking-wider text-fog/80">
         {label}
         {required ? <span className="text-coral-red">*</span> : null}
       </div>
@@ -158,7 +158,7 @@ function ChipInput({
           }
         }}
         placeholder={value.length ? "" : placeholder}
-        className="min-w-[90px] flex-1 bg-transparent px-1 py-0.5 text-[12px] text-mist outline-none placeholder:text-fog/45"
+        className="min-w-[90px] flex-1 bg-transparent px-1 py-0.5 text-[12px] text-mist outline-hidden placeholder:text-fog/45"
       />
     </div>
   );
@@ -253,7 +253,7 @@ function MultiCheck({
               onChange={() =>
                 onChange(on ? value.filter((x) => x !== option.id) : [...value, option.id])
               }
-              className="h-3.5 w-3.5 accent-[#e4f222]"
+              className="h-3.5 w-3.5 accent-acid-lime"
             />
             <span className="min-w-0 flex-1 truncate">{option.name}</span>
             <span className="hidden truncate font-mono text-[10.5px] text-fog sm:inline">
@@ -574,7 +574,7 @@ export function HostFormPanel({
                       type="checkbox"
                       checked={saveCredential}
                       onChange={(event) => setSaveCredential(event.target.checked)}
-                      className="h-3.5 w-3.5 accent-[#e4f222]"
+                      className="h-3.5 w-3.5 accent-acid-lime"
                     />
                     {authKind === "password"
                       ? "Save password for future connections"

@@ -5,283 +5,224 @@ import {
   type Model,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
-import { MultiHostAgentRuntime } from "../../../../src/main/domains/agent/agent-runtime.js";
-import type { AgentHostResolver } from "../../../../src/main/domains/agent/host-resolution.js";
-import type { AiHistoryRepository } from "../../../../src/main/domains/ai/history.js";
-import type { AiModelRuntime } from "../../../../src/main/domains/ai/model-runtime.js";
-import type { AiShellRiskRuntime } from "../../../../src/main/domains/ai/risk.js";
-import type { SshHeadlessRuntime } from "../../../../src/main/domains/ssh/headless.js";
+import { MultiHostAgentRuntime } from "../../../../src/main/domains/agent/agent-runtime";
+import type { AgentEvent } from "../../../../src/main/domains/agent/agent-types";
+import type { AiHistoryRepository } from "../../../../src/main/domains/ai/history";
+import type { AiModelRuntime } from "../../../../src/main/domains/ai/model-runtime";
+import type { AiShellRiskRuntime } from "../../../../src/main/domains/ai/risk";
+import type { InventoryRepository } from "../../../../src/main/domains/inventory/repository";
+import type { SshHeadlessRuntime } from "../../../../src/main/domains/ssh/headless";
 
 describe("MultiHostAgentRuntime", () => {
-  it("creates an agent and completes a prompt with host targets", async () => {
+  it("creates an Agent, streams a prompt, and saves history", async () => {
+    const history = historyRepository();
     const runtime = new MultiHostAgentRuntime(
-      modelRuntime([textResponse("Ready")]),
-      historyRepository(),
+      modelRuntime([textResponse("Hosts ready")]),
+      history,
       allowRisk(),
-      fakeHeadless(),
-      resolver(),
+      headless(),
+      inventory(),
     );
-    const created = runtime.create("owner-1", {
-      providerConfigId: "cfg-1",
+    const created = runtime.create("renderer-1", {
+      providerConfigId: "provider-1",
+      vaultId: "v1",
       targets: ["h1"],
     });
-    expect(created.snapshot.hosts).toEqual(["h1"]);
-    const events: unknown[] = [];
+    const events: AgentEvent[] = [];
+
     const completed = await runtime.prompt(
-      "owner-1",
+      "renderer-1",
       created.agentId,
-      "check h1",
-      { targets: ["h1"] },
+      "Check :host[db]{name=h1}",
+      ["h1"],
       (event) => events.push(event),
     );
-    expect(completed.status).toBe("idle");
-    expect(events.some((event) => (event as { type: string }).type === "agentEnd")).toBe(true);
-    await runtime.close("owner-1", created.agentId);
-    expect(runtime.activeCount()).toBe(0);
+
+    expect(completed.hosts).toEqual(["h1"]);
+    expect(completed.messages.at(-1)).toMatchObject({
+      role: "assistant",
+      content: [{ type: "text", text: "Hosts ready" }],
+    });
+    expect(events.at(-1)).toMatchObject({ type: "agentEnd" });
+    expect(history.save).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Ops agent task",
+      providerConfigId: "provider-1",
+      sshSessionId: "",
+    }));
   });
 
-  it("streams reasoning blocks to the AgentPage wire events", async () => {
+  it("restores and continues a selected Agent history session", async () => {
+    const previousMessage = {
+      role: "user" as const,
+      content: "Check the fleet",
+      timestamp: 1,
+    };
+    const history = {
+      load: vi.fn(() => ({
+        id: "history-7",
+        title: "Fleet investigation",
+        providerConfigId: "provider-1",
+        sshSessionId: "",
+        messageCount: 1,
+        lastStatus: null,
+        encryptedBytes: 64,
+        createdAt: "2026-08-12T00:00:00.000Z",
+        updatedAt: "2026-08-12T00:01:00.000Z",
+        messages: [previousMessage],
+      })),
+      save: vi.fn(() => ({ id: "history-7" })),
+    } as unknown as AiHistoryRepository;
+    const models = modelRuntime([textResponse("Still healthy")]);
     const runtime = new MultiHostAgentRuntime(
-      modelRuntime([reasoningResponse()]),
-      historyRepository(),
+      models,
+      history,
       allowRisk(),
-      fakeHeadless(),
-      resolver(),
+      headless(),
+      inventory(),
     );
-    const { agentId } = runtime.create("owner-1", {
-      providerConfigId: "cfg-1",
+
+    const created = runtime.create("renderer-1", {
+      providerConfigId: "provider-1",
+      vaultId: "v1",
+      historySessionId: "history-7",
     });
-    const events: Array<{ type: string; [key: string]: unknown }> = [];
+
+    expect(created.messages).toEqual([previousMessage]);
+    await runtime.prompt("renderer-1", created.agentId, "Check again", [], () => undefined);
+    expect(history.save).toHaveBeenCalledWith(expect.objectContaining({
+      id: "history-7",
+      title: "Fleet investigation",
+      messages: expect.arrayContaining([previousMessage]),
+    }));
+  });
+
+  it("streams complete reasoning when provider partials lag behind deltas", async () => {
+    const history = historyRepository();
+    const runtime = new MultiHostAgentRuntime(
+      modelRuntime([laggingReasoningResponse()]),
+      history,
+      allowRisk(),
+      headless(),
+      inventory(),
+    );
+    const { agentId } = runtime.create("renderer-1", {
+      providerConfigId: "provider-1",
+      vaultId: "v1",
+    });
+    const events: AgentEvent[] = [];
 
     const completed = await runtime.prompt(
-      "owner-1",
+      "renderer-1",
       agentId,
-      "think first",
-      {},
+      "Think first",
+      [],
       (event) => events.push(event),
     );
 
-    const reasoningUpdates = events
-      .filter((event) => event.type === "messageUpdate")
-      .map((event) => {
-        const message = event.message as { content: Array<Record<string, unknown>> };
-        const reasoning = message.content.find((part) => part.type === "reasoning");
-        return reasoning?.text;
-      })
-      .filter(Boolean);
-    expect(reasoningUpdates).toContain("1.");
-    expect(reasoningUpdates).toContain("1.70");
-    expect(reasoningUpdates).not.toContain("1.1.70");
     expect(events.filter((event) => event.type === "messageUpdate").at(-1))
       .toMatchObject({
         message: {
-          role: "assistant",
           content: [
-            { type: "reasoning", text: "1.70" },
-            { type: "text", text: "Done" },
+            { type: "thinking", thinking: "The user asked to inspect" },
+            { type: "text", text: "All systems ready" },
           ],
-          status: { type: "complete", reason: "stop" },
         },
       });
     expect(completed.messages.at(-1)).toMatchObject({
+      role: "assistant",
       content: [
-        { type: "reasoning", text: "1.70" },
-        { type: "text", text: "Done" },
+        { type: "thinking", thinking: "The user asked to inspect" },
+        { type: "text", text: "All systems ready" },
       ],
     });
+    expect(history.save).toHaveBeenCalledWith(expect.objectContaining({
+      messages: expect.arrayContaining([
+        expect.objectContaining({
+          role: "assistant",
+          content: [
+            expect.objectContaining({
+              type: "thinking",
+              thinking: "The user asked to inspect",
+            }),
+            expect.objectContaining({ type: "text", text: "All systems ready" }),
+          ],
+        }),
+      ]),
+    }));
   });
 
-  it("rejects a directive whose host is not in the turn targets", async () => {
+  it("rejects requested targets outside the current vault", async () => {
     const runtime = new MultiHostAgentRuntime(
       modelRuntime([]),
       historyRepository(),
       allowRisk(),
-      fakeHeadless(),
-      resolver(),
+      headless(),
+      inventory(),
     );
-    const { agentId } = runtime.create("owner-1", {
-      providerConfigId: "cfg-1",
-      targets: ["h1"],
+    const { agentId } = runtime.create("renderer-1", {
+      providerConfigId: "provider-1",
+      vaultId: "v1",
     });
+
     await expect(runtime.prompt(
-      "owner-1",
+      "renderer-1",
       agentId,
-      "do something on @:host[other]{name=h2}",
-      { targets: ["h1"] },
+      "Check host",
+      ["h3"],
       () => undefined,
     )).rejects.toMatchObject({ code: "AGENT_TARGET_NOT_ALLOWED" });
-    await runtime.close("owner-1", agentId);
   });
 
-  it("accepts a friendly @ mention that resolves to a turn target", async () => {
-    const runtime = new MultiHostAgentRuntime(
-      modelRuntime([textResponse("Ready")]),
-      historyRepository(),
-      allowRisk(),
-      fakeHeadless(),
-      {
-        ...resolver(),
-        resolveMentionLabel: vi.fn((label) =>
-          label === "web-prod-01"
-            ? { type: "host" as const, id: "h1" }
-            : undefined,
-        ),
-      },
-    );
-    const { agentId } = runtime.create("owner-1", {
-      providerConfigId: "cfg-1",
-      targets: ["h1"],
+  it("executes host tools through the headless channel and risk gate", async () => {
+    const ssh = headless();
+    vi.mocked(ssh.hosts).mockReturnValue([]);
+    vi.mocked(ssh.exec).mockResolvedValue({
+      stdout: "up",
+      stderr: "",
+      exitCode: 0,
+      truncated: false,
     });
-    const completed = await runtime.prompt(
-      "owner-1",
-      agentId,
-      "check @web-prod-01",
-      { targets: ["h1"] },
-      () => undefined,
-    );
-    expect(completed.status).toBe("idle");
-    await runtime.close("owner-1", agentId);
-  });
-
-  it("rejects a friendly @ mention that resolves outside the turn targets", async () => {
-    const runtime = new MultiHostAgentRuntime(
-      modelRuntime([]),
-      historyRepository(),
-      allowRisk(),
-      fakeHeadless(),
-      {
-        ...resolver(),
-        resolveMentionLabel: vi.fn((label) =>
-          label === "other-host"
-            ? { type: "host" as const, id: "h2" }
-            : undefined,
-        ),
-      },
-    );
-    const { agentId } = runtime.create("owner-1", {
-      providerConfigId: "cfg-1",
-      targets: ["h1"],
-    });
-    await expect(runtime.prompt(
-      "owner-1",
-      agentId,
-      "do something on @other-host",
-      { targets: ["h1"] },
-      () => undefined,
-    )).rejects.toMatchObject({ code: "AGENT_TARGET_NOT_ALLOWED" });
-    await runtime.close("owner-1", agentId);
-  });
-
-  it("runs host_exec on an allowed host through the headless channel", async () => {
-    const headless = fakeHeadless();
     const risk = allowRisk();
     const runtime = new MultiHostAgentRuntime(
       modelRuntime([
-        toolResponse("host_exec", { hostId: "h1", command: "uptime", cwd: "$HOME" }),
-        textResponse("Checked"),
+        hostToolResponse("h1", "docker ps"),
+        hostToolResponse("h2", "docker run alpine"),
+        textResponse("Containers checked"),
       ]),
       historyRepository(),
       risk,
-      headless,
-      resolver(),
+      ssh,
+      inventory(),
     );
-    const { agentId } = runtime.create("owner-1", {
-      providerConfigId: "cfg-1",
-      targets: ["h1"],
+    const { agentId } = runtime.create("renderer-1", {
+      providerConfigId: "provider-1",
+      vaultId: "v1",
     });
-    const events: unknown[] = [];
-    await runtime.prompt(
-      "owner-1",
-      agentId,
-      "run uptime on h1",
-      { targets: ["h1"] },
-      (event) => events.push(event),
-    );
-    expect(headless.exec).toHaveBeenCalledWith(
-      "h1",
-      "uptime",
-      expect.objectContaining({ cwd: "$HOME" }),
-    );
-    expect(events.some((event) => (event as { type: string }).type === "toolEnd")).toBe(true);
-    await runtime.close("owner-1", agentId);
-  });
 
-  it("waits for confirmation and executes an approved edited command", async () => {
-    const headless = fakeHeadless();
-    const runtime = new MultiHostAgentRuntime(
-      modelRuntime([
-        toolResponse("host_exec", { hostId: "h1", command: "rm -rf /tmp/x" }),
-        textResponse("Done"),
-      ]),
-      historyRepository(),
-      confirmationRisk(),
-      headless,
-      resolver(),
-      1_000,
-    );
-    const { agentId } = runtime.create("owner-1", {
-      providerConfigId: "cfg-1",
-      targets: ["h1"],
-    });
-    const events: unknown[] = [];
-    const prompt = runtime.prompt(
-      "owner-1",
-      agentId,
-      "clean up",
-      { targets: ["h1"] },
-      (event) => events.push(event),
-    );
-    await vi.waitFor(() => expect(
-      events.some((event) => (event as { type: string }).type === "toolConfirmationRequired"),
-    ).toBe(true), { timeout: 4_000 });
-    const request = events.find(
-      (event) => (event as { type: string }).type === "toolConfirmationRequired",
-    ) as { confirmation: { confirmationId: string } };
-    runtime.decideTool(
-      "owner-1",
-      agentId,
-      request.confirmation.confirmationId,
-      true,
-      "rm -rf /tmp/x.new",
-    );
-    await prompt;
-    expect(headless.exec).toHaveBeenCalledWith(
-      "h1",
-      "rm -rf /tmp/x.new",
-      expect.anything(),
-    );
-    await runtime.close("owner-1", agentId);
-  });
-
-  it("filters host_list results to allowed hosts", async () => {
-    const headless = fakeHeadless();
-    const runtime = new MultiHostAgentRuntime(
-      modelRuntime([
-        toolResponse("host_list", { groupId: "g1" }),
-        textResponse("Two hosts"),
-      ]),
-      historyRepository(),
-      allowRisk(),
-      headless,
-      resolver(),
-    );
-    const { agentId } = runtime.create("owner-1", {
-      providerConfigId: "cfg-1",
-      targets: ["h1"],
-    });
-    const events: unknown[] = [];
     await runtime.prompt(
-      "owner-1",
+      "renderer-1",
       agentId,
-      "list the group",
-      { targets: ["h1"] },
-      (event) => events.push(event),
+      "Check containers",
+      ["h1", "h2"],
+      () => undefined,
     );
-    const toolEnd = events.find(
-      (event) => (event as { type: string }).type === "toolEnd",
-    ) as { result: unknown };
-    expect(JSON.stringify(toolEnd.result)).toContain('["h1"]');
-    await runtime.close("owner-1", agentId);
+
+    expect(ssh.open).toHaveBeenCalledWith("h1", expect.objectContaining({
+      hostname: "db.example.test",
+      credentialRef: "credential-1",
+    }));
+    expect(risk.authorize).toHaveBeenCalledWith(
+      agentId,
+      "h1",
+      "db.example.test",
+      "$HOME",
+      "docker ps",
+      undefined,
+    );
+    expect(vi.mocked(ssh.exec).mock.calls.map(([hostId, command]) => [hostId, command])).toEqual([
+      ["h1", "docker ps"],
+      ["h2", "docker run alpine"],
+    ]);
   });
 });
 
@@ -299,77 +240,85 @@ function modelRuntime(events: AssistantMessageEvent[][]): AiModelRuntime {
 }
 
 function textResponse(text: string): AssistantMessageEvent[] {
+  const start = assistantMessage([]);
   const partial = assistantMessage([{ type: "text", text }]);
   return [
-    { type: "start", partial: assistantMessage([]) },
-    { type: "text_start", contentIndex: 0, partial: assistantMessage([]) },
+    { type: "start", partial: start },
+    { type: "text_start", contentIndex: 0, partial: start },
     { type: "text_delta", contentIndex: 0, delta: text, partial },
     { type: "text_end", contentIndex: 0, content: text, partial },
     { type: "done", reason: "stop", message: partial },
   ];
 }
 
-function reasoningResponse(): AssistantMessageEvent[] {
-  const start = assistantMessage([], "pending");
-  const firstThinking = assistantMessage([
-    { type: "thinking", thinking: "1." },
-  ], "pending");
-  const completeThinking = assistantMessage([
-    { type: "thinking", thinking: "1.70" },
-  ], "pending");
-  const complete = assistantMessage([
-    { type: "thinking", thinking: "1.70" },
-    { type: "text", text: "Done" },
+function laggingReasoningResponse(): AssistantMessageEvent[] {
+  const start = assistantMessage([]);
+  const thinkingStart = assistantMessage([{ type: "thinking", thinking: "" }]);
+  const firstThinking = assistantMessage([{ type: "thinking", thinking: "The" }]);
+  const textStart = assistantMessage([
+    { type: "thinking", thinking: "The" },
+    { type: "text", text: "" },
+  ]);
+  const firstText = assistantMessage([
+    { type: "thinking", thinking: "The" },
+    { type: "text", text: "All" },
   ]);
   return [
     { type: "start", partial: start },
-    { type: "thinking_start", contentIndex: 0, partial: start },
+    { type: "thinking_start", contentIndex: 0, partial: thinkingStart },
     {
       type: "thinking_delta",
       contentIndex: 0,
-      delta: "1.",
+      delta: "The",
       partial: firstThinking,
     },
     {
       type: "thinking_delta",
       contentIndex: 0,
-      delta: "70",
-      partial: completeThinking,
+      delta: " user asked to inspect",
+      partial: firstThinking,
     },
     {
       type: "thinking_end",
       contentIndex: 0,
-      content: "1.70",
-      partial: completeThinking,
+      content: "The user asked to inspect",
+      partial: firstThinking,
     },
-    { type: "text_start", contentIndex: 1, partial: completeThinking },
+    { type: "text_start", contentIndex: 1, partial: textStart },
     {
       type: "text_delta",
       contentIndex: 1,
-      delta: "Done",
-      partial: complete,
+      delta: "All",
+      partial: firstText,
+    },
+    {
+      type: "text_delta",
+      contentIndex: 1,
+      delta: " systems ready",
+      partial: firstText,
     },
     {
       type: "text_end",
       contentIndex: 1,
-      content: "Done",
-      partial: complete,
+      content: "All systems ready",
+      partial: firstText,
     },
-    { type: "done", reason: "stop", message: complete },
+    { type: "done", reason: "stop", message: firstText },
   ];
 }
 
-function toolResponse(name: string, args: Record<string, unknown>): AssistantMessageEvent[] {
+function hostToolResponse(hostId: string, command: string): AssistantMessageEvent[] {
   const call = {
     type: "toolCall" as const,
-    id: `call-${name}`,
-    name,
-    arguments: args,
+    id: "call-host-1",
+    name: "host_exec",
+    arguments: { hostId, command, cwd: "$HOME" },
   };
-  const partial = assistantMessage([call], "toolUse");
+  const start = assistantMessage([]);
+  const partial = { ...assistantMessage([call]), stopReason: "toolUse" as const };
   return [
-    { type: "start", partial: assistantMessage([]) },
-    { type: "toolcall_start", contentIndex: 0, partial: assistantMessage([]) },
+    { type: "start", partial: start },
+    { type: "toolcall_start", contentIndex: 0, partial },
     { type: "toolcall_end", contentIndex: 0, toolCall: call, partial },
     { type: "done", reason: "toolUse", message: partial },
   ];
@@ -377,31 +326,34 @@ function toolResponse(name: string, args: Record<string, unknown>): AssistantMes
 
 function assistantMessage(
   content: AssistantMessage["content"],
-  stopReason: AssistantMessage["stopReason"] = "stop",
 ): AssistantMessage {
   return {
     role: "assistant",
     content,
     api: "openai-completions",
     provider: "terminus:provider-1",
-    model: "model-test",
+    model: "test-model",
     usage: {
-      input: 1, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: 0,
-      totalTokens: 2,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      reasoning: 0,
+      totalTokens: 0,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     },
-    stopReason,
+    stopReason: "stop",
     timestamp: Date.now(),
   };
 }
 
 function model(): Model<string> {
   return {
-    id: "model-test",
+    id: "test-model",
     name: "Test",
     api: "openai-completions",
     provider: "terminus:provider-1",
-    baseUrl: "http://localhost",
+    baseUrl: "https://example.test",
     reasoning: false,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -412,15 +364,7 @@ function model(): Model<string> {
 
 function historyRepository(): AiHistoryRepository {
   return {
-    save: vi.fn(() => ({
-      id: "history-1",
-      title: "Ops agent task",
-      providerConfigId: "cfg-1",
-      sshSessionId: "headless",
-      encryptedBytes: 64,
-      createdAt: "now",
-      updatedAt: "now",
-    })),
+    save: vi.fn(() => ({ id: "history-1" })),
   } as unknown as AiHistoryRepository;
 }
 
@@ -432,52 +376,39 @@ function allowRisk(): AiShellRiskRuntime {
   } as unknown as AiShellRiskRuntime;
 }
 
-function confirmationRisk(): AiShellRiskRuntime {
+function headless(): SshHeadlessRuntime {
   return {
-    assess: vi.fn(() => ({
-      verdict: {
-        kind: "needsConfirmation",
-        level: "high",
-        reason: "Removes a path.",
-        projectedEffect: "Deletes files.",
-      },
-      confirmationToken: "main-process-token",
-      expiresInMs: 60_000,
-    })),
-    authorize: vi.fn(),
-    discard: vi.fn(),
-  } as unknown as AiShellRiskRuntime;
-}
-
-function fakeHeadless() {
-  return {
-    open: vi.fn(async () => undefined),
-    exec: vi.fn(async () => ({
-      stdout: "ok",
-      stderr: "",
-      exitCode: 0,
-      truncated: false,
-    })),
-    close: vi.fn(async () => undefined),
-    closeAll: vi.fn(async () => undefined),
     hosts: vi.fn(() => []),
-    has: vi.fn(() => false),
+    open: vi.fn(),
+    exec: vi.fn(),
+    close: vi.fn(),
   } as unknown as SshHeadlessRuntime;
 }
 
-function resolver(): AgentHostResolver {
+function inventory(): InventoryRepository {
   return {
-    resolveProfile: vi.fn(async (hostId) => ({
-      hostId,
-      hostname: hostId,
-      port: 22,
-      username: "ubuntu",
-      authKind: "password" as const,
-      credentialRef: "cred-1",
-      identityId: null,
-      keepaliveInterval: null,
-    })),
-    groupHosts: vi.fn(() => ({ g1: ["h1", "h2"] })),
-    resolveMentionLabel: vi.fn(() => undefined),
-  };
+    listHosts: vi.fn(() => [
+      {
+        id: "h1",
+        vaultId: "v1",
+        groupId: "g1",
+        name: "Database",
+        address: "db.example.test",
+        username: "root",
+        authKind: "password",
+        credentialRef: "credential-1",
+      },
+      {
+        id: "h2",
+        vaultId: "v1",
+        groupId: "g1",
+        name: "Worker",
+        address: "worker.example.test",
+        username: "root",
+        authKind: "password",
+        credentialRef: "credential-2",
+      },
+    ]),
+    listGroups: vi.fn(() => [{ id: "g1", name: "Production" }]),
+  } as unknown as InventoryRepository;
 }

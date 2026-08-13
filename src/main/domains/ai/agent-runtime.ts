@@ -543,7 +543,7 @@ function serializable<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function mergeAssistantStream(
+export function mergeAssistantStream(
   previous: AssistantMessage | undefined,
   incoming: AssistantMessage,
   update?: AssistantMessageEvent,
@@ -559,65 +559,50 @@ function mergeAssistantStream(
   ).filter((part): part is AssistantMessage["content"][number] => Boolean(part));
   message.content = content;
 
-  if (!update || !(update.type === "text_delta" || update.type === "thinking_delta")) {
-    return message;
-  }
+  if (!update) return message;
 
-  const previousPart = previousContent[update.contentIndex];
-  const incomingPart = incomingContent[update.contentIndex];
-  const mergedPart = content[update.contentIndex];
-  if (update.type === "text_delta") {
+  if (
+    update.type === "text_start" ||
+    update.type === "text_end" ||
+    update.type === "text_delta"
+  ) {
+    const previousPart = previousContent[update.contentIndex];
+    const incomingPart = incomingContent[update.contentIndex];
     const previousText = previousPart?.type === "text" ? previousPart.text : "";
-    const incomingText = incomingPart?.type === "text" ? incomingPart.text : "";
-    const incomingIncludesDelta = incomingText.startsWith(previousText) &&
-      incomingText.length > previousText.length;
-    if (!incomingIncludesDelta) {
-      content[update.contentIndex] = {
-        type: "text",
-        text: `${previousText}${update.delta}`,
-        ...(previousPart?.type === "text" && previousPart.textSignature
-          ? { textSignature: previousPart.textSignature }
-          : incomingPart?.type === "text" && incomingPart.textSignature
-            ? { textSignature: incomingPart.textSignature }
-            : {}),
-      };
-    } else if (mergedPart?.type !== "text") {
-      content[update.contentIndex] = {
-        type: "text",
-        text: incomingText,
-        ...(previousPart?.type === "text" && previousPart.textSignature
-          ? { textSignature: previousPart.textSignature }
-          : incomingPart?.type === "text" && incomingPart.textSignature
-            ? { textSignature: incomingPart.textSignature }
-            : {}),
-      };
-    }
-  } else {
+    content[update.contentIndex] = {
+      type: "text",
+      text: update.type === "text_start"
+        ? ""
+        : update.type === "text_end"
+          ? update.content
+          : `${previousText}${update.delta}`,
+      ...(previousPart?.type === "text" && previousPart.textSignature
+        ? { textSignature: previousPart.textSignature }
+        : incomingPart?.type === "text" && incomingPart.textSignature
+          ? { textSignature: incomingPart.textSignature }
+          : {}),
+    };
+  } else if (
+    update.type === "thinking_start" ||
+    update.type === "thinking_end" ||
+    update.type === "thinking_delta"
+  ) {
+    const previousPart = previousContent[update.contentIndex];
+    const incomingPart = incomingContent[update.contentIndex];
     const previousThinking = previousPart?.type === "thinking" ? previousPart.thinking : "";
-    const incomingThinking = incomingPart?.type === "thinking" ? incomingPart.thinking : "";
-    const incomingIncludesDelta = incomingThinking.startsWith(previousThinking) &&
-      incomingThinking.length > previousThinking.length;
-    if (!incomingIncludesDelta) {
-      content[update.contentIndex] = {
-        type: "thinking",
-        thinking: `${previousThinking}${update.delta}`,
-        ...(previousPart?.type === "thinking" && previousPart.thinkingSignature
-          ? { thinkingSignature: previousPart.thinkingSignature }
-          : incomingPart?.type === "thinking" && incomingPart.thinkingSignature
-            ? { thinkingSignature: incomingPart.thinkingSignature }
-            : {}),
-      };
-    } else if (mergedPart?.type !== "thinking") {
-      content[update.contentIndex] = {
-        type: "thinking",
-        thinking: incomingThinking,
-        ...(previousPart?.type === "thinking" && previousPart.thinkingSignature
-          ? { thinkingSignature: previousPart.thinkingSignature }
-          : incomingPart?.type === "thinking" && incomingPart.thinkingSignature
-            ? { thinkingSignature: incomingPart.thinkingSignature }
-            : {}),
-      };
-    }
+    content[update.contentIndex] = {
+      type: "thinking",
+      thinking: update.type === "thinking_start"
+        ? ""
+        : update.type === "thinking_end"
+          ? update.content
+          : `${previousThinking}${update.delta}`,
+      ...(previousPart?.type === "thinking" && previousPart.thinkingSignature
+        ? { thinkingSignature: previousPart.thinkingSignature }
+        : incomingPart?.type === "thinking" && incomingPart.thinkingSignature
+          ? { thinkingSignature: incomingPart.thinkingSignature }
+          : {}),
+    };
   }
   return message;
 }

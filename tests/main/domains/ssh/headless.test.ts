@@ -1,73 +1,102 @@
+import type { Client } from "ssh2";
 import { describe, expect, it, vi } from "vitest";
-import { DomainError } from "../../../../src/main/ipc/domain-error.js";
-import { SshHeadlessRuntime } from "../../../../src/main/domains/ssh/headless.js";
-import type { SshRuntime } from "../../../../src/main/domains/ssh/runtime.js";
-
-function fakeSsh() {
-  const openHeadless = vi.fn(async () => "headless-h1");
-  const executeHeadless = vi.fn(async () => ({
-    stdout: "ok",
-    stderr: "",
-    exitCode: 0,
-    truncated: false,
-  }));
-  const closeHeadless = vi.fn(async () => undefined);
-  const ssh = {
-    openHeadless,
-    executeHeadless,
-    closeHeadless,
-  } as unknown as SshRuntime;
-  return { ssh, openHeadless, executeHeadless, closeHeadless };
-}
+import { SshHeadlessRuntime } from "../../../../src/main/domains/ssh/headless";
+import type {
+  CreateSshProfile,
+  SshCommandResult,
+  SshRuntime,
+} from "../../../../src/main/domains/ssh/runtime";
 
 describe("SshHeadlessRuntime", () => {
-  it("opens a headless connection and executes a command", async () => {
-    const { ssh, openHeadless, executeHeadless, closeHeadless } = fakeSsh();
-    const rt = new SshHeadlessRuntime(ssh);
-    await rt.open("h1", {
-      hostId: "h1",
-      hostname: "10.0.0.10",
-      port: 22,
-      username: "ubuntu",
-      authKind: "privateKey",
-      credentialRef: "cred-1",
-      identityId: "identity-1",
-      keepaliveInterval: null,
+  it("opens through connectClient and executes on the cached client", async () => {
+    const client = { end: vi.fn() } as unknown as Client;
+    const connectClient = vi.fn(async () => client);
+    const exec = vi.fn(async (): Promise<SshCommandResult> => ({
+      stdout: "ok",
+      stderr: "",
+      exitCode: 0,
+      truncated: false,
+    }));
+    const runtime = new SshHeadlessRuntime(
+      { connectClient } as unknown as SshRuntime,
+      4,
+      exec,
+    );
+
+    await runtime.open("h1", profile("h1"), "stream-1");
+    await expect(runtime.exec("h1", "uptime", { cwd: "/srv", timeoutMs: 5_000 }))
+      .resolves.toMatchObject({ stdout: "ok" });
+
+    expect(connectClient).toHaveBeenCalledWith(
+      profile("h1"),
+      "headless:h1",
+      "stream-1",
+    );
+    expect(exec).toHaveBeenCalledWith(client, "uptime", {
+      cwd: "/srv",
+      timeoutMs: 5_000,
+      signal: undefined,
     });
-    expect(rt.hosts()).toEqual(["h1"]);
-    const result = await rt.exec("h1", "uptime");
-    expect(openHeadless).toHaveBeenCalledWith(
-      expect.objectContaining({ hostId: "h1", hostname: "10.0.0.10" }),
-      "headless-h1",
-    );
-    expect(executeHeadless).toHaveBeenCalledWith(
-      "headless-h1",
-      "$HOME",
-      "uptime",
-      30_000,
-      expect.anything(),
-    );
-    expect(result.stdout).toBe("ok");
-    await rt.closeAll();
-    expect(closeHeadless).toHaveBeenCalledWith("headless-h1");
+    expect(runtime.hosts()).toEqual(["h1"]);
   });
 
-  it("throws for an unopened host", async () => {
-    const rt = new SshHeadlessRuntime(fakeSsh().ssh);
-    await expect(rt.exec("ghost", "uptime")).rejects.toBeInstanceOf(DomainError);
+  it("rejects execution for a host that was not opened", async () => {
+    const runtime = new SshHeadlessRuntime({} as SshRuntime);
+
+    await expect(runtime.exec("missing", "uptime"))
+      .rejects.toMatchObject({ code: "AGENT_HOST_NOT_CONNECTED" });
   });
 
-  it("respects a custom timeout and cwd", async () => {
-    const { ssh, executeHeadless } = fakeSsh();
-    const rt = new SshHeadlessRuntime(ssh);
-    await rt.open("h1");
-    await rt.exec("h1", "sleep 1", { cwd: "/srv", timeoutMs: 5000 });
-    expect(executeHeadless).toHaveBeenCalledWith(
-      "headless-h1",
-      "/srv",
-      "sleep 1",
-      5000,
-      expect.anything(),
+  it("limits concurrent executions", async () => {
+    const client = { end: vi.fn() } as unknown as Client;
+    const connectClient = vi.fn(async () => client);
+    let active = 0;
+    let peak = 0;
+    const releases: Array<() => void> = [];
+    const exec = vi.fn(async (): Promise<SshCommandResult> => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      active -= 1;
+      return { stdout: "", stderr: "", exitCode: 0, truncated: false };
+    });
+    const runtime = new SshHeadlessRuntime(
+      { connectClient } as unknown as SshRuntime,
+      2,
+      exec,
     );
+    await runtime.open("h1", profile("h1"));
+
+    const executions = [1, 2, 3].map((index) => runtime.exec("h1", `cmd-${index}`));
+    await vi.waitFor(() => expect(exec).toHaveBeenCalledTimes(2));
+    releases.splice(0).forEach((release) => release());
+    await vi.waitFor(() => expect(exec).toHaveBeenCalledTimes(3));
+    releases.splice(0).forEach((release) => release());
+    await Promise.all(executions);
+
+    expect(peak).toBe(2);
+  });
+
+  it("closes cached clients", async () => {
+    const client = { end: vi.fn() } as unknown as Client;
+    const runtime = new SshHeadlessRuntime({
+      connectClient: vi.fn(async () => client),
+    } as unknown as SshRuntime);
+    await runtime.open("h1", profile("h1"));
+
+    await runtime.closeAll();
+
+    expect(client.end).toHaveBeenCalledOnce();
+    expect(runtime.hosts()).toEqual([]);
   });
 });
+
+function profile(hostId: string): CreateSshProfile {
+  return {
+    hostId,
+    hostname: `${hostId}.example.test`,
+    username: "root",
+    authKind: "password",
+    credentialRef: `credential-${hostId}`,
+  };
+}

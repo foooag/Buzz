@@ -1,253 +1,313 @@
-"use client";
-
-import { memo, useRef, type ComponentPropsWithoutRef, type FC } from "react";
 import {
   ComposerPrimitive,
-  unstable_defaultDirectiveFormatter,
-  unstable_useTriggerPopoverScopeContext,
   type Unstable_DirectiveFormatter,
+  type Unstable_IconComponent,
   type Unstable_TriggerItem,
+  unstable_useTriggerPopoverScopeContext,
 } from "@assistant-ui/react";
-import { ChevronLeftIcon, ChevronRightIcon, SparklesIcon } from "lucide-react";
-import { cn } from "@/shared/utils/index";
+import { ArrowLeft, Folder, Server } from "lucide-react";
+import { useMemo, type ComponentProps } from "react";
+import { cn } from "@/shared/utils/cn";
 
-type IconComponent = FC<{ className?: string }>;
-
-type DirectiveBehaviorProps = {
-  /** Formatter used to serialize the selected item into composer text. */
-  formatter?: Unstable_DirectiveFormatter | undefined;
-  /** Called after the directive text has been inserted into the composer. */
-  onInserted?: ((item: Unstable_TriggerItem) => void) | undefined;
+type DirectiveBehavior = {
+  directive: {
+    formatter: Unstable_DirectiveFormatter;
+    onInserted?: (item: Unstable_TriggerItem) => void;
+  };
+  action?: never;
 };
 
-type ActionBehaviorProps = {
-  /** Formatter used to serialize the audit-trail chip (when `removeOnExecute` is false). */
-  formatter?: Unstable_DirectiveFormatter | undefined;
-  /** Invoked with the selected item at the moment of selection. */
-  onExecute: (item: Unstable_TriggerItem) => void;
-  /** If `true`, strip the trigger text from the composer after executing. @default false */
-  removeOnExecute?: boolean | undefined;
-};
-
-type ComposerTriggerPopoverBaseProps = Omit<
-  ComponentPropsWithoutRef<typeof ComposerPrimitive.Unstable_TriggerPopover>,
-  "children"
-> & {
-  /**
-   * Maps icon keys to components. Items look up via `item.metadata?.icon`
-   * (string); categories look up via their `id`.
-   */
-  iconMap?: Record<string, IconComponent>;
-  /** Fallback icon when no entry in `iconMap` matches. */
-  fallbackIcon?: IconComponent;
-  /** Label shown on the back button. @default "Back" */
-  backLabel?: string;
-  /** Label shown when no categories are available. @default "No items available" */
-  emptyCategoriesLabel?: string;
-  /** Label shown when no items match. @default "No matching items" */
-  emptyItemsLabel?: string;
-  /** Label shown while an async adapter is resolving items. @default "Loading…" */
-  loadingLabel?: string;
-};
-
-type ComposerTriggerPopoverProps = ComposerTriggerPopoverBaseProps &
-  (
-    | {
-        /** Insert-directive behavior. */
-        directive: DirectiveBehaviorProps;
-        action?: never;
-      }
-    | {
-        /** Action behavior. */
-        action: ActionBehaviorProps;
-        directive?: never;
-      }
-  );
-
-function resolveIcon(
-  iconKey: string | undefined,
-  iconMap: Record<string, IconComponent> | undefined,
-  fallback: IconComponent,
-): IconComponent {
-  if (iconKey && iconMap?.[iconKey]) return iconMap[iconKey]!;
-  return fallback;
-}
-
-type CategoriesProps = {
-  iconMap: Record<string, IconComponent> | undefined;
-  fallbackIcon: IconComponent;
-  emptyLabel: string;
-};
-
-const Categories: FC<CategoriesProps> = ({
-  iconMap,
-  fallbackIcon,
-  emptyLabel,
-}) => (
-  <ComposerPrimitive.Unstable_TriggerPopoverCategories>
-    {(categories) => (
-      <div
-        data-slot="composer-trigger-popover-categories"
-        className="flex flex-col py-1"
-      >
-        {categories.map((cat) => {
-          const Icon = resolveIcon(cat.id, iconMap, fallbackIcon);
-          return (
-            <ComposerPrimitive.Unstable_TriggerPopoverCategoryItem
-              key={cat.id}
-              categoryId={cat.id}
-              className="hover:bg-accent focus:bg-accent data-[highlighted]:bg-accent flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm transition-colors outline-none"
-            >
-              <span className="flex items-center gap-2">
-                <Icon className="text-muted-foreground size-4" />
-                {cat.label}
-              </span>
-              <ChevronRightIcon className="text-muted-foreground size-4" />
-            </ComposerPrimitive.Unstable_TriggerPopoverCategoryItem>
-          );
-        })}
-        {categories.length === 0 && (
-          <div className="text-muted-foreground px-3 py-2 text-sm">
-            {emptyLabel}
-          </div>
-        )}
-      </div>
-    )}
-  </ComposerPrimitive.Unstable_TriggerPopoverCategories>
-);
-
-type ItemsProps = {
-  iconMap: Record<string, IconComponent> | undefined;
-  fallbackIcon: IconComponent;
-  backLabel: string;
-  emptyLabel: string;
-  loadingLabel: string;
-};
-
-const Items: FC<ItemsProps> = ({
-  iconMap,
-  fallbackIcon,
-  backLabel,
-  emptyLabel,
-  loadingLabel,
-}) => {
-  const { isLoading } = unstable_useTriggerPopoverScopeContext();
-  return (
-    <ComposerPrimitive.Unstable_TriggerPopoverItems>
-      {(items) => (
-        <div
-          data-slot="composer-trigger-popover-items"
-          className="flex flex-col"
-        >
-          <ComposerPrimitive.Unstable_TriggerPopoverBack className="text-muted-foreground hover:bg-accent flex cursor-pointer items-center gap-1.5 border-b px-3 py-2 text-xs tracking-wide uppercase transition-colors">
-            <ChevronLeftIcon className="size-3.5" />
-            {backLabel}
-          </ComposerPrimitive.Unstable_TriggerPopoverBack>
-
-          <div className="py-1">
-            {items.map((item, index) => {
-              const iconKey =
-                typeof item.metadata?.icon === "string"
-                  ? item.metadata.icon
-                  : undefined;
-              const Icon = resolveIcon(iconKey, iconMap, fallbackIcon);
-              return (
-                <ComposerPrimitive.Unstable_TriggerPopoverItem
-                  key={item.id}
-                  item={item}
-                  index={index}
-                  className="hover:bg-accent focus:bg-accent data-[highlighted]:bg-accent flex w-full cursor-pointer flex-col items-start gap-0.5 px-3 py-2 text-start transition-colors outline-none"
-                >
-                  <span className="flex items-center gap-2 text-sm font-medium">
-                    <Icon className="text-primary size-3.5" />
-                    {item.label}
-                  </span>
-                  {item.description && (
-                    <span className="text-muted-foreground ms-5.5 text-xs leading-tight">
-                      {item.description}
-                    </span>
-                  )}
-                </ComposerPrimitive.Unstable_TriggerPopoverItem>
-              );
-            })}
-            {items.length === 0 && (
-              <div className="text-muted-foreground px-3 py-2 text-sm">
-                {isLoading ? loadingLabel : emptyLabel}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </ComposerPrimitive.Unstable_TriggerPopoverItems>
-  );
+type ActionBehavior = {
+  action: {
+    onExecute: (item: Unstable_TriggerItem) => void;
+    removeOnExecute?: boolean;
+  };
+  directive?: never;
 };
 
 /**
- * Pre-built popover UI for a trigger-driven picker (mentions, slash commands, etc).
- * Pass exactly one of `directive` (inserts a chip) or `action` (fires a handler).
+ * Structural copy of `Unstable_TriggerAdapter`. The real type lives in
+ * `@assistant-ui/core`, which isn't a direct dependency of this app, so we
+ * re-declare the minimal shape the flat-mode wrapper needs to build a derived
+ * adapter from the categorized one it receives.
  */
-const ComposerTriggerPopoverImpl: FC<ComposerTriggerPopoverProps> = ({
-  iconMap,
-  fallbackIcon = SparklesIcon,
-  backLabel = "Back",
-  emptyCategoriesLabel = "No items available",
-  emptyItemsLabel = "No matching items",
-  loadingLabel = "Loading…",
-  className,
+type FlatTriggerAdapter = {
+  categories(): readonly { id: string; label: string }[];
+  categoryItems(categoryId: string): readonly Unstable_TriggerItem[];
+  search(query: string): readonly Unstable_TriggerItem[];
+};
+
+type TriggerAdapterLike = {
+  categories(): readonly { id: string; label: string }[];
+  categoryItems(categoryId: string): readonly Unstable_TriggerItem[];
+  search?(query: string): readonly Unstable_TriggerItem[];
+};
+
+type ComposerTriggerPopoverProps = Omit<
+  ComponentProps<typeof ComposerPrimitive.Unstable_TriggerPopover>,
+  "children" | "adapter"
+> &
+  (DirectiveBehavior | ActionBehavior) & {
+    adapter?: TriggerAdapterLike;
+    iconMap?: Record<string, Unstable_IconComponent>;
+    fallbackIcon?: Unstable_IconComponent;
+    categoriesLabel?: string;
+    itemsLabel?: string;
+    /** Display mode. `"drilldown"` (default) keeps the two-level category → item flow; `"flat"` shows every item grouped under its category header at once. */
+    variant?: "drilldown" | "flat";
+  };
+
+export function ComposerTriggerPopover({
   directive,
   action,
+  adapter,
+  iconMap,
+  fallbackIcon: FallbackIcon = Server,
+  categoriesLabel = "Targets",
+  itemsLabel = "Items",
+  variant = "drilldown",
   ...props
-}) => {
-  const warnedRef = useRef(false);
-  if (
-    process.env.NODE_ENV !== "production" &&
-    !warnedRef.current &&
-    Boolean(directive) === Boolean(action)
-  ) {
-    warnedRef.current = true;
-    console.warn(
-      "[assistant-ui] ComposerTriggerPopover requires exactly one of `directive` or `action` props.",
+}: ComposerTriggerPopoverProps) {
+  const iconFor = (item: Unstable_TriggerItem) => {
+    const key =
+      typeof item.metadata?.icon === "string" ? item.metadata.icon : item.type;
+    return iconMap?.[key] ?? FallbackIcon;
+  };
+
+  // Flat mode feeds the popover a derived adapter whose `categories()` is
+  // empty. That flips the popover into search mode even on an empty query
+  // (see triggerNavigationResource.ts search-mode gate), so the library's own
+  // keyboard handling navigates one flat item list — no custom keydown needed.
+  const flatPool = useMemo<readonly Unstable_TriggerItem[]>(() => {
+    if (variant !== "flat" || !adapter) return [];
+    const out: Unstable_TriggerItem[] = [];
+    for (const cat of adapter.categories()) {
+      for (const item of adapter.categoryItems(cat.id)) out.push(item);
+    }
+    return out;
+  }, [adapter, variant]);
+
+  const flatAdapter = useMemo<FlatTriggerAdapter | null>(() => {
+    if (variant !== "flat" || !adapter) return null;
+    return {
+      categories: () => [],
+      categoryItems: () => [],
+      // Must return the same filtered list, in the same order, that FlatBody
+      // renders — otherwise scope.highlightedIndex desyncs from the rows.
+      search: (query: string) => filterFlat(flatPool, query),
+    };
+  }, [flatPool, adapter, variant]);
+
+  const effectiveAdapter =
+    variant === "flat" ? (flatAdapter ?? undefined) : adapter;
+
+  return (
+    <ComposerPrimitive.Unstable_TriggerPopover
+      {...props}
+      adapter={effectiveAdapter}
+      className="absolute inset-x-0 bottom-[calc(100%+8px)] z-50 max-h-72 overflow-hidden rounded-xl border border-graphite bg-carbon p-1.5 text-mist shadow-xl"
+    >
+      {directive ? (
+        <ComposerPrimitive.Unstable_TriggerPopover.Directive {...directive} />
+      ) : action ? (
+        <ComposerPrimitive.Unstable_TriggerPopover.Action {...action} />
+      ) : null}
+
+      {variant === "flat" ? (
+        <FlatBody adapter={adapter} iconFor={iconFor} />
+      ) : (
+        <DrilldownBody
+          adapter={adapter}
+          iconFor={iconFor}
+          iconMap={iconMap}
+          categoriesLabel={categoriesLabel}
+          itemsLabel={itemsLabel}
+        />
+      )}
+    </ComposerPrimitive.Unstable_TriggerPopover>
+  );
+}
+
+type BodyProps = {
+  adapter?: TriggerAdapterLike;
+  iconFor: (item: Unstable_TriggerItem) => Unstable_IconComponent;
+  iconMap?: Record<string, Unstable_IconComponent>;
+  categoriesLabel: string;
+  itemsLabel: string;
+};
+
+function DrilldownBody({
+  adapter,
+  iconFor,
+  iconMap,
+  categoriesLabel,
+  itemsLabel,
+}: BodyProps) {
+  return (
+    <>
+      <ComposerPrimitive.Unstable_TriggerPopoverCategories className="space-y-1">
+        {(categories) => (
+          <>
+            <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-fog">
+              {categoriesLabel}
+            </p>
+            {categories.map((category) => {
+              const Icon = iconMap?.[category.id] ?? Folder;
+              return (
+                <ComposerPrimitive.Unstable_TriggerPopoverCategoryItem
+                  key={category.id}
+                  categoryId={category.id}
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12.5px] outline-hidden data-highlighted:bg-graphite data-highlighted:text-paper"
+                >
+                  <Icon className="size-4 text-fog" />
+                  <span>{category.label}</span>
+                </ComposerPrimitive.Unstable_TriggerPopoverCategoryItem>
+              );
+            })}
+          </>
+        )}
+      </ComposerPrimitive.Unstable_TriggerPopoverCategories>
+
+      <ComposerPrimitive.Unstable_TriggerPopoverItems className="space-y-1">
+        {(items) => (
+          <>
+            <div className="flex items-center gap-1 px-1 py-1">
+              <ComposerPrimitive.Unstable_TriggerPopoverBack
+                aria-label="Back to target categories"
+                className="rounded-md p-1.5 text-fog outline-hidden hover:bg-graphite hover:text-paper"
+              >
+                <ArrowLeft className="size-3.5" />
+              </ComposerPrimitive.Unstable_TriggerPopoverBack>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-fog">
+                {itemsLabel}
+              </p>
+            </div>
+            {items.map((item, index) => {
+              const Icon = iconFor(item);
+              return (
+                <ComposerPrimitive.Unstable_TriggerPopoverItem
+                  key={`${item.type}:${item.id}`}
+                  item={item}
+                  index={index}
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left outline-hidden data-highlighted:bg-graphite data-highlighted:text-paper"
+                >
+                  <Icon className="size-4 shrink-0 text-acid-lime" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-[12.5px] text-mist">
+                      {item.label}
+                    </span>
+                    {item.description ? (
+                      <span className="block truncate text-[10.5px] text-fog">
+                        {item.description}
+                      </span>
+                    ) : null}
+                  </span>
+                </ComposerPrimitive.Unstable_TriggerPopoverItem>
+              );
+            })}
+          </>
+        )}
+      </ComposerPrimitive.Unstable_TriggerPopoverItems>
+    </>
+  );
+}
+
+function FlatBody({
+  adapter,
+  iconFor,
+}: {
+  adapter?: TriggerAdapterLike;
+  iconFor: (item: Unstable_TriggerItem) => Unstable_IconComponent;
+}) {
+  const { open, query } = unstable_useTriggerPopoverScopeContext();
+
+  // Group items under their category headers, filtering by the current query.
+  // Each item carries the exact index it occupies in the popover's flat
+  // search-results list (scope.items) so data-highlighted stays accurate.
+  const grouped = useMemo(() => {
+    const lower = query.toLowerCase();
+    let flatIndex = -1;
+    return (adapter?.categories() ?? [])
+      .map((cat) => {
+        const items = (adapter?.categoryItems(cat.id) ?? [])
+          .filter((it) => matchesQuery(it, lower))
+          .map((it) => {
+            flatIndex += 1;
+            return { item: it, index: flatIndex };
+          });
+        return { cat, items };
+      })
+      .filter((group) => group.items.length > 0);
+  }, [adapter, query]);
+
+  // TriggerPopover keeps its children mounted while inactive so behavior
+  // primitives can stay registered. Custom flat-mode content must therefore
+  // hide itself until the trigger character is actually present.
+  if (!open) return null;
+
+  if (grouped.length === 0) {
+    return (
+      <p className="px-2.5 py-3 text-[12px] text-fog">
+        No matching servers or groups.
+      </p>
     );
   }
 
   return (
-    <ComposerPrimitive.Unstable_TriggerPopover
-      data-slot="composer-trigger-popover"
-      className={cn(
-        "aui-composer-trigger-popover bg-popover text-popover-foreground absolute start-0 bottom-full z-50 mb-2 w-64 overflow-hidden rounded-xl border shadow-lg",
-        className,
-      )}
-      {...props}
-    >
-      {directive ? (
-        <ComposerPrimitive.Unstable_TriggerPopover.Directive
-          formatter={directive.formatter ?? unstable_defaultDirectiveFormatter}
-          onInserted={directive.onInserted}
-        />
-      ) : action ? (
-        <ComposerPrimitive.Unstable_TriggerPopover.Action
-          formatter={action.formatter ?? unstable_defaultDirectiveFormatter}
-          onExecute={action.onExecute}
-          removeOnExecute={action.removeOnExecute}
-        />
-      ) : null}
-      <Categories
-        iconMap={iconMap}
-        fallbackIcon={fallbackIcon}
-        emptyLabel={emptyCategoriesLabel}
-      />
-      <Items
-        iconMap={iconMap}
-        fallbackIcon={fallbackIcon}
-        backLabel={backLabel}
-        emptyLabel={emptyItemsLabel}
-        loadingLabel={loadingLabel}
-      />
-    </ComposerPrimitive.Unstable_TriggerPopover>
+    <div className="scroll-thin max-h-72 overflow-y-auto pr-1">
+      {grouped.map(({ cat, items }, groupIndex) => (
+        <div key={cat.id} className="space-y-1">
+          <p
+            className={cn(
+              "px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-fog",
+              groupIndex === 0 ? "pt-0" : "pt-2",
+            )}
+          >
+            {cat.label}
+          </p>
+          {items.map(({ item, index }) => {
+            const Icon = iconFor(item);
+            return (
+              <ComposerPrimitive.Unstable_TriggerPopoverItem
+                key={`${item.type}:${item.id}`}
+                item={item}
+                index={index}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left outline-hidden data-highlighted:bg-graphite data-highlighted:text-paper"
+              >
+                <Icon className="size-4 shrink-0 text-acid-lime" />
+                <span className="min-w-0">
+                  <span className="block truncate text-[12.5px] text-mist">
+                    {item.label}
+                  </span>
+                  {item.description ? (
+                    <span className="block truncate text-[10.5px] text-fog">
+                      {item.description}
+                    </span>
+                  ) : null}
+                </span>
+              </ComposerPrimitive.Unstable_TriggerPopoverItem>
+            );
+          })}
+        </div>
+      ))}
+    </div>
   );
-};
-ComposerTriggerPopoverImpl.displayName = "ComposerTriggerPopover";
+}
 
-export const ComposerTriggerPopover = memo(
-  ComposerTriggerPopoverImpl,
-) as FC<ComposerTriggerPopoverProps>;
+/** Matches the library's matcher (triggerNavigationResource.ts / useMentionAdapter.ts). */
+function matchesQuery(item: Unstable_TriggerItem, lower: string): boolean {
+  return (
+    item.id.toLowerCase().includes(lower) ||
+    item.label.toLowerCase().includes(lower) ||
+    (item.description?.toLowerCase().includes(lower) ?? false)
+  );
+}
+
+function filterFlat(
+  pool: readonly Unstable_TriggerItem[],
+  query: string,
+): readonly Unstable_TriggerItem[] {
+  const lower = query.toLowerCase();
+  // lower === "" → .includes("") is always true → returns the full pool.
+  return pool.filter((item) => matchesQuery(item, lower));
+}

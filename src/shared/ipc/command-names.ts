@@ -22,7 +22,6 @@ export const COMMANDS = {
   aiDeleteSession: "ai_delete_session",
 
   agentCreate: "agent_create",
-  agentPrompt: "agent_prompt",
   agentSteer: "agent_steer",
   agentAbort: "agent_abort",
   agentDecideTool: "agent_decide_tool",

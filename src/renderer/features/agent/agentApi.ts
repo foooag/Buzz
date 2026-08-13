@@ -1,26 +1,20 @@
 import { COMMANDS } from "@shared/ipc/command-names";
-import { callCommand, callFiniteStreamingCommand } from "@/app/ipc";
-import type {
-  AgentClient,
-  AgentCreateInput,
-  AgentEvent,
-  AgentSnapshot,
-} from "./agentTypes";
+import { callCommand } from "@/app/ipc";
+import type { AgentClient, AgentEvent, AgentSnapshot } from "./agentTypes";
 
 export const agentApi: AgentClient = {
-  create: async (input: AgentCreateInput) => {
-    const result = await callCommand<
-      AgentCreateInput,
-      { agentId: string; snapshot: AgentSnapshot }
-    >(COMMANDS.agentCreate, input);
-    return result.snapshot;
+  create: (input) =>
+    callCommand<typeof input, AgentSnapshot>(COMMANDS.agentCreate, input),
+  streamPrompt: (agentId, text, targets, onEvent, vaultId, onClose) => {
+    if (!window.terminus) {
+      throw new Error("The Electron preload bridge is unavailable.");
+    }
+    return window.terminus.streamAgent(
+      { agentId, text, targets, ...(vaultId ? { vaultId } : {}) },
+      (event) => onEvent(event as AgentEvent),
+      onClose,
+    );
   },
-  prompt: (agentId, text, targets, onEvent) =>
-    callFiniteStreamingCommand<
-      { agentId: string; text: string; targets: string[] },
-      AgentEvent,
-      AgentSnapshot
-    >(COMMANDS.agentPrompt, { agentId, text, targets }, onEvent),
   steer: (agentId, text) =>
     callCommand<{ agentId: string; text: string }, void>(
       COMMANDS.agentSteer,
@@ -28,21 +22,12 @@ export const agentApi: AgentClient = {
     ),
   abort: (agentId) =>
     callCommand<{ agentId: string }, void>(COMMANDS.agentAbort, { agentId }),
-  decideTool: (agentId, confirmationId, approved, command) =>
-    callCommand<
-      {
-        agentId: string;
-        confirmationId: string;
-        approved: boolean;
-        command?: string;
-      },
-      void
-    >(COMMANDS.agentDecideTool, {
-      agentId,
-      confirmationId,
-      approved,
-      ...(command ? { command } : {}),
-    }),
+  decideTool: (agentId, confirmationId, approved) =>
+    callCommand<{
+      agentId: string;
+      confirmationId: string;
+      approved: boolean;
+    }, void>(COMMANDS.agentDecideTool, { agentId, confirmationId, approved }),
   close: (agentId) =>
     callCommand<{ agentId: string }, void>(COMMANDS.agentClose, { agentId }),
 };

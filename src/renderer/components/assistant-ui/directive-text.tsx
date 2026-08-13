@@ -1,73 +1,27 @@
-"use client";
-
-import { memo, type FC } from "react";
-import type { TextMessagePartComponent } from "@assistant-ui/react";
-import type { Unstable_DirectiveFormatter } from "@assistant-ui/react";
-import { unstable_defaultDirectiveFormatter } from "@assistant-ui/react";
-import { Badge } from "./badge";
-
-type IconComponent = FC<{ className?: string }>;
-
-export type CreateDirectiveTextOptions = {
-  /** Maps a directive `type` to an icon component. */
-  iconMap?: Record<string, IconComponent>;
-  /** Icon rendered when `iconMap` has no entry for the segment type. */
-  fallbackIcon?: IconComponent;
-};
-
-/** Creates a `Text` message part component that parses directive syntax and renders inline chips. */
-export function createDirectiveText(
-  formatter: Unstable_DirectiveFormatter,
-  options?: CreateDirectiveTextOptions,
-): TextMessagePartComponent {
-  const iconMap = options?.iconMap;
-  const fallbackIcon = options?.fallbackIcon;
-
-  const Component: TextMessagePartComponent = ({ text }) => {
-    const segments = formatter.parse(text);
-
-    if (segments.length === 1 && segments[0]!.kind === "text") {
-      return <>{text}</>;
-    }
-
-    return (
-      <>
-        {segments.map((seg, i) => {
-          if (seg.kind === "text") {
-            return (
-              <span key={i} className="whitespace-pre-wrap">
-                {seg.text}
-              </span>
-            );
-          }
-
-          const Icon = iconMap?.[seg.type] ?? fallbackIcon;
-          return (
-            <Badge
-              key={i}
-              variant="info"
-              size="sm"
-              data-slot="directive-text-chip"
-              data-directive-type={seg.type}
-              data-directive-id={seg.id}
-              aria-label={`${seg.type}: ${seg.label}`}
-              className="aui-directive-chip items-baseline text-[13px] leading-none [&_svg]:self-center"
-            >
-              {Icon && <Icon />}
-              {seg.label}
-            </Badge>
-          );
-        })}
-      </>
-    );
-  };
-  Component.displayName = "DirectiveText";
-  return Component;
-}
-
-const DirectiveTextImpl = createDirectiveText(
+import {
+  type TextMessagePartProps,
   unstable_defaultDirectiveFormatter,
-);
+} from "@assistant-ui/react";
+import { Server } from "lucide-react";
+import { memo } from "react";
 
-/** `Text` message part component that renders directive syntax as inline chips. */
-export const DirectiveText: TextMessagePartComponent = memo(DirectiveTextImpl);
+export const DirectiveText = memo(function DirectiveText({ text }: TextMessagePartProps) {
+  const segments = unstable_defaultDirectiveFormatter.parse(text);
+  return (
+    <span className="whitespace-pre-wrap wrap-break-word">
+      {segments.map((segment, index) => segment.kind === "text" ? (
+        <span key={index}>{segment.text}</span>
+      ) : (
+        <span
+          key={`${segment.type}:${segment.id}:${index}`}
+          className="mx-0.5 inline-flex items-center gap-1 rounded-pill border border-acid-lime/25 bg-acid-lime/8 px-2 py-0.5 align-baseline text-[11px] font-medium text-acid-lime"
+          data-directive-id={segment.id}
+          data-directive-type={segment.type}
+        >
+          <Server className="size-3" />
+          {segment.label}
+        </span>
+      ))}
+    </span>
+  );
+});

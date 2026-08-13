@@ -1,84 +1,94 @@
+import type { Client } from "ssh2";
 import { DomainError } from "../../ipc/domain-error.js";
-import type { CreateSshProfile, SshRuntime } from "./runtime.js";
+import {
+  executeOnClient,
+  type CreateSshProfile,
+  type SshCommandResult,
+  type SshRuntime,
+} from "./runtime.js";
 
-export type HeadlessExecResult = {
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  truncated: boolean;
+export type HeadlessExecResult = SshCommandResult;
+
+type HeadlessConnection = {
+  connectionId: string;
+  client: Client;
 };
 
-type HeadlessExecOptions = {
-  cwd?: string;
-  timeoutMs?: number;
-};
-
-const DEFAULT_TIMEOUT_MS = 30_000;
-const HEADLESS_PREFIX = "headless-";
-
-function placeholderProfile(hostId: string): CreateSshProfile {
-  return {
-    hostId,
-    hostname: hostId,
-    port: 22,
-    username: "placeholder",
-    authKind: "password",
-    credentialRef: "",
-  };
-}
+type HeadlessExec = typeof executeOnClient;
 
 export class SshHeadlessRuntime {
   readonly #ssh: SshRuntime;
-  readonly #connections = new Map<string, string>();
+  readonly #concurrency: number;
+  readonly #exec: HeadlessExec;
+  readonly #connections = new Map<string, HeadlessConnection>();
+  readonly #active = new Set<Promise<unknown>>();
 
-  constructor(ssh: SshRuntime) {
+  constructor(
+    ssh: SshRuntime,
+    concurrency = 4,
+    exec: HeadlessExec = executeOnClient,
+  ) {
     this.#ssh = ssh;
+    this.#concurrency = Math.max(1, Math.floor(concurrency));
+    this.#exec = exec;
   }
 
-  async open(hostId: string, profile?: CreateSshProfile): Promise<void> {
+  async open(
+    hostId: string,
+    profile: CreateSshProfile,
+    streamId?: string,
+  ): Promise<void> {
     if (this.#connections.has(hostId)) return;
-    const connectionId = `${HEADLESS_PREFIX}${hostId}`;
-    await this.#ssh.openHeadless(profile ?? placeholderProfile(hostId), connectionId);
-    this.#connections.set(hostId, connectionId);
+    const connectionId = `headless:${hostId}`;
+    const client = await this.#ssh.connectClient(profile, connectionId, streamId);
+    const existing = this.#connections.get(hostId);
+    if (existing) {
+      client.end();
+      return;
+    }
+    this.#connections.set(hostId, { connectionId, client });
   }
 
   async exec(
     hostId: string,
     command: string,
-    opts: HeadlessExecOptions = {},
+    opts: { cwd?: string; timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<HeadlessExecResult> {
-    const connectionId = this.#connections.get(hostId);
-    if (!connectionId) {
+    const connection = this.#connections.get(hostId);
+    if (!connection) {
       throw new DomainError(
-        "HEADLESS_NOT_CONNECTED",
-        `No headless SSH connection for host ${hostId}.`,
+        "AGENT_HOST_NOT_CONNECTED",
+        "The Agent host connection is unavailable.",
       );
     }
-    return this.#ssh.executeHeadless(
-      connectionId,
-      opts.cwd ?? "$HOME",
-      command,
-      opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      new AbortController().signal,
-    );
+    while (this.#active.size >= this.#concurrency) {
+      await Promise.race(this.#active);
+    }
+    const execution = this.#exec(connection.client, command, {
+      cwd: opts.cwd,
+      timeoutMs: opts.timeoutMs ?? 30_000,
+      signal: opts.signal,
+    });
+    this.#active.add(execution);
+    try {
+      return await execution;
+    } finally {
+      this.#active.delete(execution);
+    }
   }
 
   async close(hostId: string): Promise<void> {
-    const connectionId = this.#connections.get(hostId);
-    if (!connectionId) return;
+    const connection = this.#connections.get(hostId);
+    if (!connection) return;
     this.#connections.delete(hostId);
-    await this.#ssh.closeHeadless(connectionId).catch(() => undefined);
+    connection.client.end();
   }
 
   async closeAll(): Promise<void> {
-    await Promise.all([...this.#connections.keys()].map((hostId) => this.close(hostId)));
+    await Promise.all(this.hosts().map((hostId) => this.close(hostId)));
   }
 
   hosts(): string[] {
     return [...this.#connections.keys()];
-  }
-
-  has(hostId: string): boolean {
-    return this.#connections.has(hostId);
   }
 }

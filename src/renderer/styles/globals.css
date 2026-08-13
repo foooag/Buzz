@@ -1,6 +1,138 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Streamdown (markdown renderer) writes its controls, code-block chrome, and
+   streaming caret as Tailwind utility class strings inside node_modules; scan
+   them so Tailwind v4 generates those utilities. */
+@source "../../../node_modules/streamdown/dist/*.js";
+@source "../../../node_modules/@streamdown/code/dist/*.js";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@utility container {
+  margin-inline: auto;
+  padding-inline: 2rem;
+  @media (width >= --theme(--breakpoint-sm)) {
+    max-width: none;
+  }
+  @media (width >= 1400px) {
+    max-width: 1400px;
+  }
+}
+
+@theme inline {
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+}
+
+@theme {
+  --color-void: #08090a;
+  --color-carbon: #0f1011;
+  --color-obsidian: #161718;
+  --color-graphite: #23252a;
+  --color-smoke: #383b3f;
+  --color-ash: #62666d;
+  --color-fog: #8a8f98;
+  --color-mist: #d0d6e0;
+  --color-bone: #e5e5e6;
+  --color-paper: #ffffff;
+  --color-acid-lime: #e4f222;
+  --color-pulse-green: #27a644;
+  --color-coral-red: #eb5757;
+  --color-signal-teal: #02b8cc;
+  --color-iris-violet: #6366f1;
+  --color-lavender: #8b5cf6;
+
+  --font-sans:
+    "Inter Variable", ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono:
+    "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo,
+    Monaco, Consolas, monospace;
+
+  --text-caption: 13px;
+  --text-caption--line-height: 1.2;
+  --text-body-sm: 15px;
+  --text-body-sm--line-height: 1.6;
+  --text-body-sm--letter-spacing: -0.011em;
+  --text-body-lg: 20px;
+  --text-body-lg--line-height: 1.33;
+  --text-body-lg--letter-spacing: -0.012em;
+  --text-subheading: 24px;
+  --text-subheading--line-height: 1.33;
+  --text-subheading--letter-spacing: -0.012em;
+  --text-heading-sm: 32px;
+  --text-heading-sm--line-height: 1.13;
+  --text-heading-sm--letter-spacing: -0.022em;
+  --text-heading: 48px;
+  --text-heading--line-height: 1;
+  --text-heading--letter-spacing: -0.022em;
+  --text-heading-lg: 64px;
+  --text-heading-lg--line-height: 1;
+  --text-heading-lg--letter-spacing: -0.022em;
+  --text-display: 72px;
+  --text-display--line-height: 1;
+  --text-display--letter-spacing: -0.022em;
+
+  --tracking-tightest: -0.022em;
+  --tracking-tight: -0.011em;
+
+  --font-weight-light: 300;
+  --font-weight-regular: 400;
+  --font-weight-w510: 510;
+  --font-weight-w590: 590;
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-pill: 9999px;
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
 
 /*
  * Design standard: docs/DESIGN.md (Linear "midnight precision instrument").
@@ -26,6 +158,9 @@
   --foreground: 217 21% 85%;
   --card: 210 6% 6%;
   --card-foreground: 217 21% 85%;
+  --sidebar: 210 4% 9%;
+  --sidebar-foreground: 217 21% 85%;
+  --sidebar-border: 223 9% 15%;
   --popover: 210 4% 9%;
   --popover-foreground: 217 21% 85%;
   --primary: 64 89% 54%;
@@ -44,20 +179,22 @@
   --radius: 0.5rem;
 }
 
-* { box-sizing: border-box; }
+@layer base {
+  * { box-sizing: border-box; }
 
-html, body, #root { min-width: 960px; min-height: 100%; margin: 0; }
+  html, body, #root { min-width: 960px; min-height: 100%; margin: 0; }
 
-button, input { font: inherit; }
+  button, input { font: inherit; }
 
-button, a { -webkit-tap-highlight-color: transparent; }
+  button, a { -webkit-tap-highlight-color: transparent; }
 
-button:focus-visible, a:focus-visible, input:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--ring) 65%, transparent);
-  outline-offset: 2px;
+  button:focus-visible, a:focus-visible, input:focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--ring) 65%, transparent);
+    outline-offset: 2px;
+  }
+
+  button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
-
-button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .sr-only {
   position: absolute;

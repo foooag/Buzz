@@ -132,6 +132,68 @@ describe("Termius-compatible terminal workspace", () => {
     expect(first).toHaveAttribute("aria-current", "page");
   });
 
+  it("keeps both sessions' terminals mounted (no black screen) when switching", async () => {
+    const harness = createHarness();
+    render(<App {...harness} />);
+
+    fireEvent.keyDown(document, { key: "l", metaKey: true });
+    await screen.findByRole("button", { name: "Local Terminal 1" });
+    fireEvent.keyDown(document, { key: "l", metaKey: true });
+    await screen.findByRole("button", { name: "Local Terminal 2" });
+
+    // Both sessions' panes stay mounted simultaneously (keep-alive), rather
+    // than the inactive one being unmounted — which is what caused the
+    // black-screen-after-switch bug.
+    const panes = screen.getAllByTestId("terminal-pane");
+    expect(panes).toHaveLength(2);
+    // Only the active session's pane is visible; the hidden one is display:none.
+    expect(panes[0]).not.toBeVisible();
+    expect(panes[1]).toBeVisible();
+
+    // Switch back to session 1.
+    fireEvent.keyDown(document, { key: "1", metaKey: true });
+    expect(panes[0]).toBeVisible();
+    expect(panes[1]).not.toBeVisible();
+
+    // Switching must not have disposed the first session's xterm runtime —
+    // disposal destroyed the scrollback and produced the empty black terminal.
+    expect(harness.runtimes[0]?.dispose).not.toHaveBeenCalled();
+    expect(screen.getAllByTestId("terminal-pane")).toHaveLength(2);
+  });
+
+  it("resizes the host PTY when switching back to a session whose size changed", async () => {
+    const harness = createHarness();
+    render(<App {...harness} />);
+
+    fireEvent.keyDown(document, { key: "l", metaKey: true });
+    await screen.findByRole("button", { name: "Local Terminal 1" });
+    fireEvent.keyDown(document, { key: "l", metaKey: true });
+    await screen.findByRole("button", { name: "Local Terminal 2" });
+
+    // While session 1 is hidden its PTY keeps the cols it was opened with. Make
+    // the refit on re-activation report a different size so we can assert the
+    // host is notified; otherwise the remote shell wraps to the stale width.
+    const firstRuntime = harness.runtimes[0];
+    (harness.api.resize as ReturnType<typeof vi.fn>).mockClear();
+    firstRuntime.fit = vi.fn(() => ({ cols: 118, rows: 30 }));
+
+    fireEvent.keyDown(document, { key: "1", metaKey: true });
+    await waitFor(() =>
+      expect(harness.api.resize).toHaveBeenCalledWith("session-1", {
+        cols: 118,
+        rows: 30,
+      }),
+    );
+
+    // When the refit finds no size change (undefined) the host is left alone.
+    (harness.api.resize as ReturnType<typeof vi.fn>).mockClear();
+    firstRuntime.fit = vi.fn(() => undefined);
+    fireEvent.keyDown(document, { key: "2", metaKey: true });
+    fireEvent.keyDown(document, { key: "1", metaKey: true });
+    await waitFor(() => expect(firstRuntime.fit).toHaveBeenCalled());
+    expect(harness.api.resize).not.toHaveBeenCalled();
+  });
+
   it("creates an independent split and returns to Servers after final close", async () => {
     const harness = createHarness();
     render(<App {...harness} />);

@@ -142,7 +142,7 @@ export function CommandDrawer({
                 aria-label="Command"
                 value={command}
                 onChange={(event) => setCommand(event.target.value)}
-                className="min-h-24 rounded-md border border-graphite bg-obsidian p-2.5 font-mono text-[12px] text-mist outline-none focus:border-acid-lime"
+                className="min-h-24 rounded-md border border-graphite bg-obsidian p-2.5 font-mono text-[12px] text-mist outline-hidden focus:border-acid-lime"
               />
             </label>
             <div className="flex justify-end gap-2">

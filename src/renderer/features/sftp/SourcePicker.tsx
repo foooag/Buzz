@@ -84,7 +84,7 @@ export function SourcePicker({ source, sources, onSelect }: SourcePickerProps) {
                   ) : null}
                 </span>
                 {s.online === false ? (
-                  <span className="shrink-0 rounded-pill bg-coral-red/15 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.05em] text-coral-red">
+                  <span className="shrink-0 rounded-pill bg-coral-red/15 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-coral-red">
                     offline
                   </span>
                 ) : active ? (

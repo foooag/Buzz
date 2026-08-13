@@ -191,7 +191,7 @@ export function SshConnectForm({
                 type="checkbox"
                 checked={saveAsServer}
                 onChange={(event) => setSaveAsServer(event.target.checked)}
-                className="h-3.5 w-3.5 accent-[#e4f222]"
+                className="h-3.5 w-3.5 accent-acid-lime"
               />
               Save this connection as a server so it appears in the list
             </label>

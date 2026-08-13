@@ -107,7 +107,7 @@ export function OpenWithDialog({
       aria-modal="true"
       aria-label={`Open with: ${leaf}`}
       tabIndex={-1}
-      className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-6 outline-none"
+      className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-6 outline-hidden"
       data-testid="sftp-open-with-dialog"
     >
       <div className="grid w-full max-w-[460px] gap-4 rounded-lg border border-graphite bg-card p-6 shadow-[0_24px_90px_rgba(0,0,0,0.55)]">

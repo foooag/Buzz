@@ -7,8 +7,8 @@ export default defineConfig({
   reporter: "list",
   timeout: 30_000,
   webServer: {
-    command: "pnpm dev:web",
-    url: "http://127.0.0.1:1420",
-    reuseExistingServer: true,
+    command: "pnpm exec vite --force --port 1421",
+    url: "http://127.0.0.1:1421",
+    reuseExistingServer: false,
   },
 });

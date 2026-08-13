@@ -1,1473 +1,536 @@
 # Agent 栏（左侧多主机运维 Agent）Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **关联：** 需求见 [PRD](../../prd/2026-08-05-agent-sidebar.md)。本计划取代 `2026-08-10-replace-assistant-ui-with-ai-sdk-ui.md`（该方案曾改为 Vercel AI SDK `useChat`，已实现又整体回退删除，见 commit `ae5339f`/`2d169ff`）；回到 PRD §4 的原选型 **Assistant UI**，UI 原语参考官方示例 `xulux-base-demo`（`@assistant-ui/react@0.15.13`），Electron↔assistant-ui 通信参考 [官方 Electron 指南](https://www.assistant-ui.com/docs/guides/electron) Pattern 2（local main process）。
 
-**Goal:** 在 Buzz 客户端左侧新增「Agent」栏：用户在输入框用 `@` 选择服务器/分组下达运维命令，Agent 经主进程无头 SSH 通道对多台主机自主执行，右侧按主机展示操作进度。
+**Goal:** 在 Buzz 客户端左侧新增「Agent」栏：用户在输入框用 `@` 选择服务器/分组下达运维命令，Agent 经主进程无头 SSH 通道对多台主机自主执行，右侧按主机展示操作进度。交互层采用 **Assistant UI（`@assistant-ui/react@0.15.13`）** 的聊天原语与 `@` 提及；渲染层经官方 Electron 指南推荐的 **`useLocalRuntime` + `ChatModelAdapter`** 接入主进程，IPC 走 **`MessagePort` 预加载桥**（per-request 专用通道，port-close → 主进程 abort）。
 
-**Architecture:** 复用现有自研 AI Agent 栈（`AiAgentRuntime` + `pi-agent-core`/`pi-ai` + `AiShellRiskRuntime` + 加密配置/历史 + 流式 IPC），交互层采用 **Assistant UI（`@assistant-ui/react`）** 的聊天原语与 `@` 提及（`unstable_useMentionAdapter`/`ComposerPrimitive.Unstable_TriggerPopover`），核心新增为主进程的 **无头（headless）SSH 主机通道**（`SshHeadlessRuntime`）与 `host_exec`/`host_list` 工具。左侧 `Agent` destination 与右侧按主机分组的进度区为自建 UI，沿用 Buzz 设计 token 与 `AiAssistantPanel` 模式。
+**Architecture:** 后端复用自研 AI Agent 栈（`AiAgentRuntime` + `pi-agent-core`/`pi-ai` + `AiShellRiskRuntime` + 加密历史），新增主进程 **无头 SSH 主机通道**（`SshHeadlessRuntime`，缓存 `connectClient` 返回的 ssh2 `Client`、按需 `exec`）与 `host_exec`/`host_list` 工具、目标白名单。**通信层（参考官方 Electron 指南）：** 主进程 `registerAgentStreamIpc` 在 `agent:stream` 通道上接收 `MessagePort`，校验 sender+payload 后跑 `MultiHostAgentRuntime.prompt(...)`，事件经 `port.postMessage` 回流；preload 暴露窄接口 `window.terminus.streamAgent(request, onEvent): () => void`（`MessageChannel`+`postMessage`+`[port2]`，返回 stop）。**渲染层：** `AgentPage` 建 agent（`agent_create` invoke）→ `useLocalRuntime(ipcAgentModel)` 里 `ChatModelAdapter.run` 把用户消息+targets 经 `streamAgent` 发出，消费 `AgentEvent` 流并 yield 累积的 `ThreadMessageLike` 快照（text + tool-call parts）；同时 tee 非转录事件（确认/进度）给侧状态。`@` 提及用 `unstable_useMentionAdapter` + `ComposerPrimitive.Unstable_TriggerPopover*`。
 
-**Tech Stack:** Electron ^43 · React ^19 · TypeScript ^5.6 · Vite ^5 · Zustand ^5 · Tailwind 3.4 · ssh2 · `@earendil-works/pi-agent-core`/`pi-ai` 0.83 · `@assistant-ui/react`（新依赖，pin 精确版本）· Vitest
+**Tech Stack:** Electron ^43 · React ^19 · TypeScript ^5.6 · Vite ^5（electron-vite）· Zustand ^5 · **Tailwind ^4**（Task 1 先行全渲染层迁移）· shadcn/ui（new-york，Radix）· ssh2 · `@earendil-works/pi-agent-core`/`pi-ai` 0.83（**替代指南示例里的 `ai`/`@ai-sdk/openai`，不装 ai-sdk**）· `@assistant-ui/react` 0.15.13 + `@assistant-ui/react-lexical` 0.2.9（**pin 精确版本**）· Vitest。
+
+---
+
+## 与官方示例 / 指南的关系（重要）
+
+- **`xulux-base-demo`（UI 原语参考）** 是 `Tailwind v4 + @base-ui/react + lucide@1 + zod@4` 的 Next 应用。Task 1 把 Buzz 升到 **Tailwind v4** 后，示例的 v4 className 可直接借鉴；但 Buzz 仍是 **Radix + lucide@0.468 + zod@3**，**不引 `@base-ui/react`/lucide@1/zod@4**，所以示例的 `badge.tsx`/`select.tsx`/`model-selector.tsx`（Base UI 实现）不拷贝，用 Buzz 现有 shadcn 原语。我们从示例只借 **headless assistant-ui 原语**（`ComposerPrimitive.Unstable_TriggerPopover*`、`unstable_useMentionAdapter`、`Unstable_DirectiveFormatter`/`unstable_defaultDirectiveFormatter`、`createDirectiveText`、`ThreadPrimitive`/`MessagePrimitive`、`useAssistantToolUI`、`LexicalComposerInput`）+ 组装结构 + directive 语法（`:type[label]{name=id}`）。
+- **官方 Electron 指南（通信参考）** Pattern 2「local main process」：`MessagePort` 预加载桥 + data-only 协议 + `useLocalRuntime`/`ChatModelAdapter` + main 校验 sender/payload + `contextIsolation`/`sandbox`/`nodeIntegration:false`。**不通过 IPC 传 SDK client / runtime / callback / AbortSignal / File**。指南 main 用 `streamText`（ai-sdk），Buzz 用 `MultiHostAgentRuntime.prompt`（pi-agent-core）——**采纳指南的通信范式，不采纳其模型后端**。指南说「tools/reasoning 需显式扩展协议」——Buzz 的 `AgentEvent`（`toolStart`/`toolUpdate`/`toolEnd`/`toolConfirmationRequired`/...）正是这种扩展。
+
+---
 
 ## Global Constraints
 
-- 凭据永不跨 IPC：SSH 认证材料解析与建连全部在主进程完成，IPC 只传 `hostId`。
-- 所有远程命令执行必须经 `AiShellRiskRuntime` 评估；危险命令必须经用户确认。
-- 新 IPC 命令必须：加入 `electron/command-names.ts` allowlist + 对应 domain `commands.ts` zod schema + 契约测试（`AGENTS.md`）。
-- 版本约束：Electron ^43、React ^19、TS ^5.6、Vite ^5；新增依赖须满足现有约束。
-- `@assistant-ui/react` 使用 `unstable_` API（mentions/trigger-popover）时 **pin 精确版本**，且封装在 `src/features/agent/composer/` 薄适配器内。
-- UI 沿用 Buzz 设计 token（`tailwind.config.ts` 的 `void/carbon/…/acid-lime`）与 shadcn 风格。
-- 并发上限：同一任务内主机连接并发数 ≤ 4；单条命令默认 30s 超时（1s–300s 可覆盖）。
-- 测试目录沿用：主进程 → `tests/electron/domains/agent/`，渲染层 → `tests/src/features/agent/`。
+- **凭据永不跨 IPC。** SSH 认证材料解析与建连全部在主进程；`SshRuntime.connectClient` 已在内部经 `SshCredentialVault.get(profile.credentialRef)` 解析，IPC 只传 `hostId`/`targets`。与 `AGENTS.md` Security 节一致。
+- **Electron↔assistant-ui 通信遵循官方 Electron 指南 Pattern 2：** `MessagePort` 预加载桥（per-request 专用通道）+ data-only 协议（`src/shared/agent-stream.ts`，三端共享）+ `useLocalRuntime`/`ChatModelAdapter`（`@assistant-ui/react`）；`BrowserWindow` 保持 `contextIsolation:true`/`sandbox:true`/`nodeIntegration:false`；main 校验 sender（`event.sender === mainWindow.webContents && senderFrame === mainFrame`）+ payload（zod）；**不通过 IPC 传 callback/`AbortSignal`/`File`**；Stop = port-close → 主进程 `agentRuntime.abort`。Buzz 用 `pi-agent-core` 替代指南的 ai-sdk 后端（不装 `ai`/`@ai-sdk/*`）。
+- **风险门控必须经过。** 所有远程命令经 `AiShellRiskRuntime.assess`；`reject` 抛错，`needsConfirmation` 走 60s 单次确认令牌（复用 `AiAgentRuntime.#confirm`）；UI 侧 `agentClient.decideTool`（invoke）回执。
+- **IPC 三件套：** 生命周期命令（`agent_create`/`agent_steer`/`agent_abort`/`agent_decide_tool`/`agent_close`）加入 `src/shared/ipc/command-names.ts` 的 `COMMANDS` + domain `commands.ts` zod schema + 契约测试；**流式 prompt 不走 dispatcher**，走专用 `agent:stream` `MessagePort` 通道（`src/shared/agent-stream.ts` 协议 + `src/main/domains/agent/stream-ipc.ts` handler + `src/preload/index.cjs` 的 `streamAgent`）。
+- **Tailwind v4（Task 1 先行）。** 全渲染层升 v4（CSS-first `@theme`、`@import "tailwindcss"`、`@tailwindcss/postcss`、重命名工具类 `shadow-sm`→`shadow-xs` 等）。**Task 1 必须先合并**（独立 PR 推荐），后续 agent UI 任务方可直接用 demo 的 v4 className。
+- **版本约束：** 新增依赖满足 Electron ^43/React ^19/TS ^5.6/Vite ^5；`@assistant-ui/*` pin 精确版本（`0.15.13`/`0.2.9`），`unstable_` 符号封装在 `src/renderer/features/agent/composer/` 与 `src/renderer/components/assistant-ui/` 薄适配器内。
+- **不引入：** `ai`/`@ai-sdk/*`（用 pi-agent-core，不装 ai-sdk）、`@assistant-ui/react-ai-sdk`（不用 HTTP `AssistantChatTransport`，用 `useLocalRuntime`+`ChatModelAdapter`）、`@assistant-ui/react-markdown`（本期不做富文本 markdown，见 PRD 非目标）、`@base-ui/react`（与现有 Radix 重复）。
+- **并发与超时：** 同一任务内主机连接并发 ≤ 4（`SshHeadlessRuntime` 信号量）；单条命令默认 30s（1s–300s 可覆盖，沿用 `SshRuntime.executeCommand` 的 `Math.min(300_000, Math.max(1_000, t))`）。
+- **样式：** 两空格、双引号、分号、strict TS；`PascalCase` 组件、`camelCase` hook；复用 `@/` 与 `cn()`；shadcn/ui new-york 原语置于 `src/renderer/components/ui/`；`lucide-react` 图标；Tailwind v4 token（`@theme` 的 `--color-*`），不用 ad-hoc 色。保留既有自定义 CSS（`stream-caret`/`standby-dot`/`rise-in`/`pop-in`/`scroll-thin`/`spin`/`c-dim`）。
+- **测试目录沿用 `AGENTS.md`：** 主进程 → `tests/main/domains/{ssh,agent}/`；渲染层 → `tests/renderer/features/agent/`。渲染层测试用 `@/` 别名注入 fake；主进程测试用相对路径 import `src/main`。
+- **TDD：** 先写失败测试，看它失败，实现，看它通过，提交。每个任务收绿（`pnpm typecheck && pnpm test`）。
+
+---
+
+## Architecture (data flow)
+
+```mermaid
+flowchart LR
+  subgraph Main["Electron main (contextIsolation + sandbox)"]
+    RT["MultiHostAgentRuntime<br/>pi-agent-core Agent loop"]
+    HD["SshHeadlessRuntime<br/>cached Client + exec"]
+    SIP["registerAgentStreamIpc<br/>agent:stream MessagePort handler"]
+    RT -- "host_exec tool" --> HD
+    SIP -- "validated request --> prompt(emit=port.postMessage)" --> RT
+  end
+
+  subgraph Pre["Preload (window.terminus)"]
+    BR["streamAgent(req, onEvent)<br/>MessageChannel + [port2]"]
+  end
+
+  subgraph Renderer["Renderer (agent feature)"]
+    ADP["ChatModelAdapter.run<br/>consumes AgentEvent, yields snapshots"]
+    LRT["useLocalRuntime"]
+    AUI["AssistantRuntimeProvider<br/>ThreadPrimitive / MessagePrimitive"]
+    SIDE["side state<br/>hosts rail + ConfirmCard"]
+    COMP["MentionComposer<br/>@ trigger popover + lexical chips"]
+
+    BR -- "AgentEvent on port1" --> ADP
+    ADP -- "tee non-transcript" --> SIDE
+    ADP --> LRT --> AUI
+    COMP -- "thread.append" --> LRT
+  end
+
+  SIP -- "transferred port2" --> BR
+```
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant C as MentionComposer
+  participant L as useLocalRuntime / ChatModelAdapter
+  participant P as preload streamAgent
+  participant S as registerAgentStreamIpc (main)
+  participant M as MultiHostAgentRuntime
+  participant H as SshHeadlessRuntime
+  U->>C: @server + 任务（directive chip）
+  C->>L: thread.append(userMessage)
+  L->>L: resolveTargets（parse directives + group 展开）
+  L->>P: streamAgent({agentId,text,targets,vaultId}, onEvent)
+  P->>S: postMessage(agent:stream, req, [port2])
+  S->>S: 校验 sender + payload（zod）
+  S->>M: prompt(ownerId, agentId, text, targets, emit=port.postMessage)
+  M->>M: agent.prompt（pi-agent-core loop）
+  M-->>S: AgentEvent（message/tool/confirmation/agentEnd）
+  S-->>P: port1.onmessage
+  P-->>L: onEvent(event)
+  L-->>L: yield 累积 ThreadMessageLike（text + tool-call parts）
+  L-->>U: assistant-ui 渲染消息流 + 工具卡
+  Note over L,S: tee：toolConfirmationRequired/hosts 进度 → 侧状态
+  M->>H: host_exec（risk.assess → exec）
+  H-->>M: stdout / exitCode
+  Note over U,S: Stop = port.close → S 捕获 → agentRuntime.abort
+```
+
+**两条通路（与 `docs/agent-dataflow.md` 一致）：** 转录通路（`ChatModelAdapter.run` 消费 `AgentEvent`、yield 累积快照 → assistant-ui 渲染消息流+工具卡）与执行通路（adapter 把 `toolConfirmationRequired`/`hosts` 事件 tee 给 AgentPage 侧状态 → ProgressPanel + ConfirmCard）。assistant-ui 拥有 thread 状态；侧状态由事件派生，不存第二份转录副本。
 
 ---
 
 ## File Structure
 
+**通信层（新增）：**
+- Create `src/shared/agent-stream.ts` — data-only 协议：`AGENT_STREAM_CHANNEL = "agent:stream"`、`AgentStreamRequest`、`AgentStreamEvent = AgentEvent`（三端共享，三 bundle 都能 import）。
+- Modify `src/preload/index.cjs` — `window.terminus.streamAgent(request, onEvent): () => void`（`MessageChannel`+`ipcRenderer.postMessage(channel, req, [port2])`+`port1.onmessage`，返回 stop；per 官方指南）。
+- Modify `src/renderer/app/electron.d.ts` — 给 `TerminusDesktopBridge` 加 `streamAgent<AgentStreamEvent>(req, onEvent): () => void`。
+- Create `src/main/domains/agent/stream-ipc.ts` — `registerAgentStreamIpc(mainWindow, agentRuntime)`：`ipcMain.on(AGENT_STREAM_CHANNEL)`，校验 sender+payload，`port.start()`，跑 `agentRuntime.prompt(...)` 以 `port.postMessage` 为 emit，`port.once("close")→abort`，`mainWindow.once("closed")→removeListener`。
+
 **主进程（新增/修改）：**
-- Create `electron/domains/ssh/headless.ts` — `SshHeadlessRuntime`：无头 SSH 主机通道 + 连接池 + 并发闸。
-- Modify `electron/domains/ssh/runtime.ts` — 把 `connectClient`/`hostKey` 相关内部逻辑导出供 headless 复用（或仅添加 `openHeadless`）。
-- Create `electron/domains/agent/agent-runtime.ts` — `MultiHostAgentRuntime`（多主机 agent，替代/包装现有 `AiAgentRuntime` 的 `ssh_exec` 单工具）。
-- Modify `electron/domains/ai/agent-runtime.ts` — 抽出共享的 directive 解析/工具构造；或让多主机 runtime 复用。
-- Modify `electron/domains/ai/commands.ts` — `agent_prompt` 的 schema 增加 `targets?: string[]`。
-- Modify `electron/command-names.ts` — 新增 `agent_create`/`agent_prompt`/`agent_steer`/`agent_abort`/`agent_decide_tool`/`agent_close`。
-- Modify `electron/main.cts` — 构造 `SshHeadlessRuntime`、`MultiHostAgentRuntime`、注册 handlers。
+- Create `src/main/domains/ssh/headless.ts` — `SshHeadlessRuntime`：缓存 `connectClient` 的 `Client`、并发闸、按需 `exec`。
+- Modify `src/main/domains/ssh/runtime.ts` — 导出 `executeOnClient(client, command, opts)`（从既有私有 `#executeOnClient` 抽出）。
+- Create `src/main/domains/agent/{agent-types,directives,host-resolution,agent-runtime,commands}.ts`。
+- Modify `src/shared/ipc/command-names.ts` — `COMMANDS` 新增 `agent_create`/`agent_steer`/`agent_abort`/`agent_decide_tool`/`agent_close`（**无 `agent_prompt`**——走 MessagePort）。
+- Modify `src/main/index.ts` — 构造 headless/agentRuntime；`registerAgentStreamIpc(mainWindow, agentRuntime)`；handler 表追加 `...createAgentCommandHandlers(agentRuntime)`。
 
 **渲染层（新增/修改）：**
-- Create `src/features/agent/AgentPage.tsx` — 主内容区 Agent 面板（`Destination === "agent"`）。
-- Create `src/features/agent/agentApi.ts` — IPC 客户端（`agent_create`/`agent_prompt`/…）。
-- Create `src/features/agent/agentTypes.ts` — 与主进程对齐的 wire 类型。
-- Create `src/features/agent/composer/` — `@` 提及适配器 + 输入框（薄封装 assistant-ui）。
-- Create `src/features/agent/ProgressPanel.tsx` — 右侧按主机分组的进度区。
-- Create `src/features/agent/MentionPickerData.ts` — 从 `useInventoryStore` 组装 mentionable 数据源。
-- Modify `src/features/workspace/PrimaryNavigation.tsx` — 新增 `agent` destination 条目。
-- Modify `src/features/workspace/WorkspaceShell.tsx` — `Destination` 增加 `"agent"`。
-- Modify `src/app/App.tsx` — 渲染 `AgentPage`；传递 `agentApi`/`inventory`。
+- Create `src/renderer/components/assistant-ui/{composer-trigger-popover,directive-text}.tsx` — 本地包原语，Buzz 主题（v4 className 可借 demo）。
+- Create `src/renderer/features/agent/{agentTypes,agentApi,directiveText,agentItems}.ts`。
+- Create `src/renderer/features/agent/composer/{mentionAdapter,MentionComposer}.tsx`。
+- Create `src/renderer/features/agent/useAgentRuntime.ts` — `useLocalRuntime(ipcAgentModel)` + `ChatModelAdapter`（消费 `streamAgent` 事件、yield 快照、tee 侧状态）+ `useAssistantToolUI` 注册 `host_exec`。
+- Create `src/renderer/features/agent/{AgentPage,MessageViews,ProgressPanel,ConfirmCard,HostErrorBanner,HistoryDropdown}.tsx`。
+- Modify `src/renderer/features/workspace/{WorkspaceShell,PrimaryNavigation}.tsx` + `src/renderer/app/App.tsx` — `Destination` 加 `"agent"` + 导航 + render 分支。
+
+**Tailwind v4 迁移（Task 1）：** `package.json`、`postcss.config.js`、`tailwind.config.ts`、`src/renderer/styles/globals.css`、`components.json`、全渲染层 className。
+
+**测试：** `tests/main/domains/{ssh/headless,agent/*}.test.ts`、`tests/renderer/features/agent/**/*.test.tsx`、`tests/preload/agent-stream.test.ts`（可选）。
 
 ---
 
-### Task 1: 主进程无头 SSH 通道 `SshHeadlessRuntime`
+### Task 1: Tailwind v3 → v4 迁移（全渲染层，前置）
+
+> **全渲染层变更**（每个用 Tailwind 的组件都受影响），与 agent 功能正交。**必须先合并**（推荐独立 PR），后续 agent UI 任务才能直接用 demo 的 v4 className。
 
 **Files:**
-- Create: `electron/domains/ssh/headless.ts`
-- Modify: `electron/domains/ssh/runtime.ts`（导出 `connectClient` 相关复用点）
-- Test: `tests/electron/domains/ssh/headless.test.ts`
+- Modify: `package.json`（`tailwindcss` ^3.4 → ^4，加 `@tailwindcss/postcss`，去 `autoprefixer`，`tailwindcss-animate` → `tw-animate-css`）
+- Modify: `postcss.config.js`（`tailwindcss`+`autoprefixer` → `@tailwindcss/postcss`）
+- Modify/Delete: `tailwind.config.ts`（CSS-first `@theme` 迁移；或 `@config "./tailwind.config.ts"` 过渡）
+- Modify: `src/renderer/styles/globals.css`（`@tailwind base/components/utilities` → `@import "tailwindcss"` + `@theme`/`@theme inline` + `@custom-variant dark`）
+- Modify: `components.json`（shadcn tailwind 指向 v4）
+- Modify: 全渲染层 className（重命名 `shadow-sm`→`shadow-xs`、`rounded-sm`→`rounded-xs`、`ring`→`ring-3`、`outline-none`→`outline-hidden`、`blur`→`blur-sm` 等）
 
 **Interfaces:**
-- Consumes: `SshRuntime.connectClient(input, connectionId, streamId)`（已存在，`runtime.ts:125`）；`SshCredentialVault.get(credentialRef)`；`CreateSshProfile` 类型。
-- Produces:
-  - `type HeadlessExecResult = { stdout: string; stderr: string; exitCode: number | null; truncated: boolean }`
-  - `class SshHeadlessRuntime { constructor(ssh: SshRuntime) }`
-  - `async open(hostId: string): Promise<void>` — 建立/复用一个连接（连接建立失败抛 `DomainError`）
-  - `async exec(hostId: string, command: string, opts?: { cwd?: string; timeoutMs?: number }): Promise<HeadlessExecResult>`
-  - `async close(hostId: string): Promise<void>` — 关闭该主机连接
-  - `async closeAll(): Promise<void>`
-  - `hosts(): string[]` — 当前持有连接的主机集合
+- Consumes: 现有 `tailwind.config.ts`（`darkMode:["class"]`、content globs、`theme.extend.colors`＝shadcn HSL `hsl(var(--*))` + brand hex、fontFamily、fontSize scale、letterSpacing、fontWeight `w510`/`w590`、borderRadius、`tailwindcss-animate` 插件）、`postcss.config.js`（`tailwindcss`+`autoprefixer`）、`globals.css`（`@tailwind base/components/utilities` + `:root` HSL vars + 自定义类）。
+- Produces: Tailwind v4 渲染层（CSS-first `@theme`、`@import "tailwindcss"`、`@tailwindcss/postcss`、重命名工具类已迁移、`var(--color-acid-lime)` 等主题变量生效、既有视觉零回归）。
 
-- [ ] **Step 1: 写失败测试**
-
-```ts
-// tests/electron/domains/ssh/headless.test.ts
-import { describe, expect, it, vi } from "vitest";
-import { DomainError } from "../../../electron/ipc/domain-error.js";
-import { SshHeadlessRuntime } from "../../../electron/domains/ssh/headless.js";
-import type { SshRuntime } from "../../../electron/domains/ssh/runtime.js";
-
-function fakeSsh(execResult: unknown = { stdout: "ok", stderr: "", exitCode: 0, truncated: false }) {
-  const exec = vi.fn(async (_sessionId: string, _cwd: string, command: string, _t: number, _s?: AbortSignal) => {
-    return execResult;
-  });
-  const ssh = {
-    connectClient: vi.fn(async () => ({})),
-    has: vi.fn(() => true),
-    host: vi.fn(() => "host.example"),
-    executeCommand: exec,
-  } as unknown as SshRuntime;
-  return { ssh, exec };
-}
-
-describe("SshHeadlessRuntime", () => {
-  it("opens a headless connection and executes a command", async () => {
-    const { ssh, exec } = fakeSsh();
-    const rt = new SshHeadlessRuntime(ssh);
-    await rt.open("host-1");
-    const result = await rt.exec("host-1", "uptime");
-    expect(exec).toHaveBeenCalledWith("host-1", "$HOME", "uptime", 30_000, expect.anything());
-    expect(result.stdout).toBe("ok");
-    await rt.closeAll();
-  });
-
-  it("throws for an unopened host", async () => {
-    const rt = new SshHeadlessRuntime(fakeSsh().ssh);
-    await expect(rt.exec("ghost", "uptime")).rejects.toBeInstanceOf(DomainError);
-  });
-
-  it("respects a custom timeout", async () => {
-    const { ssh, exec } = fakeSsh();
-    const rt = new SshHeadlessRuntime(ssh);
-    await rt.open("host-1");
-    await rt.exec("host-1", "sleep 1", { timeoutMs: 5000 });
-    expect(exec).toHaveBeenCalledWith("host-1", "$HOME", "sleep 1", 5000, expect.anything());
-  });
-});
-```
-
-- [ ] **Step 2: 运行测试确认失败**
-
-Run: `npx vitest run tests/electron/domains/ssh/headless.test.ts`
-Expected: FAIL — `Cannot find module .../headless.js`（模块不存在）
-
-- [ ] **Step 3: 最小实现**
-
-```ts
-// electron/domains/ssh/headless.ts
-import { DomainError } from "../../ipc/domain-error.js";
-import type { SshRuntime } from "./runtime.js";
-
-export type HeadlessExecResult = {
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  truncated: boolean;
-};
-
-const DEFAULT_TIMEOUT_MS = 30_000;
-
-export class SshHeadlessRuntime {
-  readonly #ssh: SshRuntime;
-  readonly #connections = new Map<string, { sessionId: string }>();
-
-  constructor(ssh: SshRuntime) {
-    this.#ssh = ssh;
-  }
-
-  async open(hostId: string): Promise<void> {
-    if (this.#connections.has(hostId)) return;
-    const client = await this.#ssh.connectClient(
-      { hostId, hostname: hostId, port: 22, username: "placeholder", authKind: "password", credentialRef: "" },
-      `headless-${hostId}`,
-    );
-    // NOTE: 正式实现中 hostname/port/username/authKind/credentialRef 由库存主机 +
-    // savedCredentials 解析后传入（Task 5 接入真实凭据解析）。
-    this.#connections.set(hostId, { sessionId: client as unknown as string });
-  }
-  // …（exec / close / closeAll / hosts 见 Step 4）
-}
-```
-
-- [ ] **Step 4: 补充 exec/close/closeAll/hosts 并让测试通过**
-
-```ts
-  async exec(
-    hostId: string,
-    command: string,
-    opts?: { cwd?: string; timeoutMs?: number },
-  ): Promise<HeadlessExecResult> {
-    const conn = this.#connections.get(hostId);
-    if (!conn) throw new DomainError("HEADLESS_NOT_CONNECTED", `No headless SSH connection for host ${hostId}.`);
-    return this.#ssh.executeCommand(
-      conn.sessionId,
-      opts?.cwd ?? "$HOME",
-      command,
-      opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      new AbortController().signal,
-    );
-  }
-
-  async close(hostId: string): Promise<void> {
-    const conn = this.#connections.get(hostId);
-    if (!conn) return;
-    await this.#ssh.close?.(conn.sessionId).catch(() => undefined);
-    this.#connections.delete(hostId);
-  }
-
-  async closeAll(): Promise<void> {
-    await Promise.all([...this.#connections.keys()].map((hostId) => this.close(hostId)));
-  }
-
-  hosts(): string[] {
-    return [...this.#connections.keys()];
-  }
-```
-
-> 实现说明：真实的无头连接**不开启交互式 shell**——`connectClient` 只建立 ssh2 `Client` 并验证 host key / 凭据，`executeCommand` 内部对未建 shell 的 client 会走 `exec`。当 Task 5 接入真实凭据后，`open` 由 `MultiHostAgentRuntime` 依据库存 `Host` + `savedCredentials` 传入完整 `CreateSshProfile`。此处以占位 profile 通过单元测试，保证并发闸/生命周期逻辑先行可测。
-
-- [ ] **Step 5: 运行测试确认通过**
-
-Run: `npx vitest run tests/electron/domains/ssh/headless.test.ts`
-Expected: PASS（3 个用例）
-
-- [ ] **Step 6: 提交**
+- [ ] **Step 1: 官方升级工具自动迁移**（干净 git 状态，暂存所有改动）
 
 ```bash
-git add electron/domains/ssh/headless.ts electron/domains/ssh/runtime.ts tests/electron/domains/ssh/headless.test.ts
-git commit -m "feat(ssh): add headless host channel for agent-side multi-host exec"
+npx @tailwindcss/upgrade@next
 ```
+该工具自动：升 `tailwindcss` 到 v4、PostCSS 改 `@tailwindcss/postcss`、`@tailwind`→`@import "tailwindcss"`、把 `tailwind.config.ts` 的 theme 迁到 `@theme`（或留 `@config` 过渡）、重命名 `shadow-sm`→`shadow-xs` 等破坏性工具类。审阅 diff。
+
+- [ ] **Step 2: 手动收尾 `globals.css` 的 `@theme`**
+  - brand hex 直接进 `@theme`：`--color-void:#08090a`/`--color-carbon`/.../`--color-acid-lime:#e4f222`/...（生成 `bg-void`/`text-acid-lime` 等）。
+  - shadcn HSL token 用 `@theme inline { --color-background: hsl(var(--background)); --color-primary: hsl(var(--primary)); ... }`（保留 `:root` 的 HSL channel vars 与 dark 切换；`inline` 使工具类保留 `var()` 引用而非 resolve）。
+  - fontFamily/fontSize/fontWeight/borderRadius 进 `@theme`（`--font-sans`/`--text-caption`/`--radius` 等）。
+  - `darkMode:["class"]` → `@custom-variant dark (&:where(.dark, .dark *))`（Buzz dark-only，确认 `<html class="dark">`）。
+  - 动画插件：`pnpm add tw-animate-css`，`globals.css` 顶部 `@import "tw-animate-css"`（替代 `tailwindcss-animate`）；若 `tailwindcss-animate` 在 v4 兼容则保留，二选一。
+
+- [ ] **Step 3: 修正 v3 悬空引用**
+  - `globals.css:119` 的 `.stream-caret::after { color: var(--color-acid-lime); }` —— v3 下 `--color-acid-lime` 不自动暴露（悬空），**v4 的 `@theme` 会自动暴露 `--color-*`**，升级后此引用生效。确认 caret 颜色正确。
+
+- [ ] **Step 4: `components.json`**
+  - shadcn 的 `tailwind.config`/`css` 指向 v4 结构；`cssVariables: true` 保留。确认 `pnpm dlx shadcn@latest add ...` 仍可正常添加原语。
+
+- [ ] **Step 5: 视觉回归**
+  - Run: `pnpm typecheck` → PASS
+  - Run: `pnpm test` → PASS（既有渲染层测试全绿；若有快照/类名断言失败，按重命名表更新）
+  - Run: `unset ELECTRON_RUN_AS_NODE && pnpm test:electron` → 真实启动冒烟
+  - `pnpm dev` 逐屏比对（Servers/SFTP/Forwarding/History/Terminal/Settings），重点查阴影/圆角/ring/outline 是否因重命名走样。
+
+- [ ] **Step 6: 提交**（建议拆 2 commit：`chore(tailwind): upgrade to v4` + `style(tailwind): migrate renamed utilities`）
 
 ---
 
-### Task 2: 指令（directive）解析与目标展开
+### Task 2: 主进程无头 SSH 通道 `SshHeadlessRuntime`
 
 **Files:**
-- Create: `electron/domains/agent/directives.ts`
-- Test: `tests/electron/domains/agent/directives.test.ts`
+- Modify: `src/main/domains/ssh/runtime.ts`（导出 `executeOnClient`）
+- Create: `src/main/domains/ssh/headless.ts`
+- Test: `tests/main/domains/ssh/headless.test.ts`
 
 **Interfaces:**
-- Consumes: 无（纯函数）。
+- Consumes: `SshRuntime.connectClient(input: CreateSshProfile, connectionId: string, streamId?: string): Promise<Client>`（`runtime.ts:125`，内部经 `#credentials.get(profile.credentialRef)` 解析凭据、`#knownHosts` 校验 host key）；`CreateSshProfile`（`runtime.ts:18`）；`SshCommandResult = { stdout; stderr; exitCode: number|null; truncated }`（`runtime.ts:50`）。
 - Produces:
-  - `type MentionTarget = { type: "host" | "group"; id: string; label: string }`
-  - `parseDirectives(text: string): MentionTarget[]` — 从用户消息中解析 `:host[label]{name=id}` / `:group[label]{name=id}`
-  - `expandTargets(targets: MentionTarget[], groupHosts: Record<string, string[]>): string[]` — 分组展开为主机 id 列表（去重、保序）
-  - `assertNoUnknownTargets(hostIds: string[], allowedHostIds: Set<string>): void` — 目标越权保护（抛出 `DomainError("AGENT_TARGET_NOT_ALLOWED")`）
+  - `export async function executeOnClient(client: Client, command: string, opts: { cwd?: string; timeoutMs: number; signal?: AbortSignal }): Promise<SshCommandResult>`（从既有 `#executeOnClient` 抽出，**无 PTY、无终端 preamble**；超时 `AI_TIMEOUT`、中止 `AI_ABORTED`，沿用截断）
+  - `export type HeadlessExecResult = SshCommandResult`
+  - `export class SshHeadlessRuntime { constructor(ssh: SshRuntime, concurrency = 4, exec = executeOnClient); async open(hostId: string, profile: CreateSshProfile, streamId?: string): Promise<void>; async exec(hostId: string, command: string, opts?: { cwd?: string; timeoutMs?: number }): Promise<HeadlessExecResult>; async close(hostId: string): Promise<void>; async closeAll(): Promise<void>; hosts(): string[] }`
 
-- [ ] **Step 1: 写失败测试**
+> **修正原方案 bug：** headless 不能调 `ssh.executeCommand(sessionId,…)`——`connectClient` **不注册 session**（只有 `open()` 才注册）。正确做法：缓存 `connectClient` 返回的 `Client`，经 `executeOnClient` 直接 `client.exec`。
 
-```ts
-// tests/electron/domains/agent/directives.test.ts
-import { describe, expect, it } from "vitest";
-import { parseDirectives, expandTargets, assertNoUnknownTargets } from "../../../electron/domains/agent/directives.js";
-import { DomainError } from "../../../electron/ipc/domain-error.js";
-
-describe("parseDirectives", () => {
-  it("parses host and group directives", () => {
-    const text = "把 @:host[db-primary]{name=h1} 的容器跑到 @:group[prod]{name=g1}";
-    expect(parseDirectives(text)).toEqual([
-      { type: "host", id: "h1", label: "db-primary" },
-      { type: "group", id: "g1", label: "prod" },
-    ]);
-  });
-  it("returns [] when no directives", () => {
-    expect(parseDirectives("没有任何目标")).toEqual([]);
-  });
-});
-
-describe("expandTargets", () => {
-  it("expands groups and dedupes host ids in order", () => {
-    expect(expandTargets(
-      [{ type: "host", id: "a", label: "A" }, { type: "group", id: "g", label: "G" }],
-      { g: ["a", "b"] },
-    )).toEqual(["a", "b"]);
-  });
-});
-
-describe("assertNoUnknownTargets", () => {
-  it("throws when a host id is not allowed", () => {
-    expect(() => assertNoUnknownTargets(["a"], new Set(["b"]))).toThrow(DomainError);
-  });
-  it("passes when all host ids are allowed", () => {
-    expect(() => assertNoUnknownTargets(["a", "b"], new Set(["a", "b"]))).not.toThrow();
-  });
-});
-```
-
-- [ ] **Step 2: 运行测试确认失败**
-
-Run: `npx vitest run tests/electron/domains/agent/directives.test.ts`
-Expected: FAIL — 模块不存在
-
-- [ ] **Step 3: 最小实现**
-
-```ts
-// electron/domains/agent/directives.ts
-import { DomainError } from "../../ipc/domain-error.js";
-
-export type MentionTarget = { type: "host" | "group"; id: string; label: string };
-
-const DIRECTIVE_RE = /:(host|group)\[([^\]]*)\]\{name=([^}]+)\}/g;
-
-export function parseDirectives(text: string): MentionTarget[] {
-  const targets: MentionTarget[] = [];
-  for (const match of text.matchAll(DIRECTIVE_RE)) {
-    targets.push({
-      type: match[1] as "host" | "group",
-      label: match[2],
-      id: match[3],
-    });
-  }
-  return targets;
-}
-
-export function expandTargets(
-  targets: MentionTarget[],
-  groupHosts: Record<string, string[]>,
-): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const target of targets) {
-    const ids = target.type === "group" ? (groupHosts[target.id] ?? []) : [target.id];
-    for (const id of ids) {
-      if (!seen.has(id)) {
-        seen.add(id);
-        out.push(id);
-      }
-    }
-  }
-  return out;
-}
-
-export function assertNoUnknownTargets(hostIds: string[], allowedHostIds: Set<string>): void {
-  for (const hostId of hostIds) {
-    if (!allowedHostIds.has(hostId)) {
-      throw new DomainError("AGENT_TARGET_NOT_ALLOWED", `Target host is not part of this task.`);
-    }
-  }
-}
-```
-
-- [ ] **Step 4: 运行测试确认通过**
-
-Run: `npx vitest run tests/electron/domains/agent/directives.test.ts`
-Expected: PASS
-
-- [ ] **Step 5: 提交**
-
-```bash
-git add electron/domains/agent/directives.ts tests/electron/domains/agent/directives.test.ts
-git commit -m "feat(agent): parse @-mention directives and expand targets"
-```
+- [ ] **Step 1: 写失败测试**（`tests/main/domains/ssh/headless.test.ts`：open 走 `connectClient`、exec 用缓存的 client、未开主机抛 `DomainError`、并发上限 ≤ concurrency）。示例见原 `fakeSsh()`+`profile()` 结构（fake `connectClient` 返回 `{ end }`；`execSpy` 注入断言并发峰值）。
+- [ ] **Step 2: 运行确认失败** — `npx vitest run tests/main/domains/ssh/headless.test.ts`
+- [ ] **Step 3: 抽出 `executeOnClient`（runtime.ts）** — 把既有私有 `#executeOnClient` 提为模块级 `export async function`，签名同上，**不带终端 preamble**（`\r\n$ ${command}\r\n` 广播留在 `executeCommand` 内）。让 `executeCommand` 改为 `return executeOnClient(client, command, {...})`，保持既有行为。若与 preamble/会话耦合深，最小可行：新增 `executeOnClient`（独立实现，复用 cwd 包装+截断常量），`executeCommand` 不改。
+- [ ] **Step 4: 实现 `SshHeadlessRuntime`** — `#conns: Map<hostId, {connectionId, client}>`；`open` 调 `connectClient(profile, "headless:"+hostId, streamId)`、缓存 client；`exec` 经 `#gate`（信号量，`while active.size>=limit await race`）调 `executeOnClient`；`close` 调 `client.end()`。
+- [ ] **Step 5: 运行确认通过**
+- [ ] **Step 6: 提交** — `git commit -m "feat(ssh): add headless host channel for agent multi-host exec"`
 
 ---
 
-### Task 3: 多主机 Agent Runtime（`MultiHostAgentRuntime`）
+### Task 3: 指令（directive）解析与目标展开
 
 **Files:**
-- Create: `electron/domains/agent/agent-runtime.ts`
-- Test: `tests/electron/domains/agent/agent-runtime.test.ts`
+- Create: `src/main/domains/agent/directives.ts`
+- Test: `tests/main/domains/agent/directives.test.ts`
 
 **Interfaces:**
-- Consumes: `AiModelRuntime`（`electron/domains/ai/model-runtime.ts`）、`AiHistoryRepository`、`AiShellRiskRuntime`、`SshHeadlessRuntime`（Task 1）、`parseDirectives`/`expandTargets`/`assertNoUnknownTargets`（Task 2）、`pi-agent-core` 的 `Agent`。
-- Produces:
-  - `type AgentCreateInput = { providerConfigId: string; targets?: string[] }`
-  - `type AgentSnapshot = { agentId: string; providerConfigId: string; status: "idle" | "running" | "waitingForConfirmation"; hosts: string[]; messages: AgentWireMessage[]; errorMessage?: string }`
-  - `class MultiHostAgentRuntime { create(ownerId, input): AgentSnapshot; prompt(ownerId, agentId, text, opts: { targets?: string[] }, emit): Promise<AgentSnapshot>; steer(...); abort(...); decideTool(...); close(...); closeOwner(ownerId); closeAll(); }`
-  - 事件类型复用 `AiAgentEvent` 结构，`toolStart/toolEnd` 的 `args` 携带 `hostId`。
+- Produces: `MentionTarget = { type:"host"|"group"; id; label }`；`parseDirectives(text): MentionTarget[]`（regex `:(host|group)\[([^\]]*)\]\{name=([^}]+)\}`，与 `unstable_defaultDirectiveFormatter` 一致）；`expandTargets(targets, groupHosts): string[]`（去重保序）；`assertAllowedTargets(hostIds, allowed: Set): void`（越权抛 `DomainError("AGENT_TARGET_NOT_ALLOWED")`）。
 
-- [ ] **Step 1: 写失败测试**
-
-```ts
-// tests/electron/domains/agent/agent-runtime.test.ts
-import { describe, expect, it, vi } from "vitest";
-import { MultiHostAgentRuntime } from "../../../electron/domains/agent/agent-runtime.js";
-import type { SshHeadlessRuntime } from "../../../electron/domains/ssh/headless.js";
-import type { AiModelRuntime } from "../../../electron/domains/ai/model-runtime.js";
-import type { AiHistoryRepository } from "../../../electron/domains/ai/history.js";
-import type { AiShellRiskRuntime } from "../../../electron/domains/ai/risk.js";
-
-function fakeModel() { return vi.fn() as unknown as AiModelRuntime; }
-function fakeHistory() { return { save: vi.fn(() => ({ id: "s1" })) } as unknown as AiHistoryRepository; }
-function fakeRisk() {
-  return {
-    assess: vi.fn(() => ({ verdict: { kind: "allow" } })),
-    authorize: vi.fn(),
-    discard: vi.fn(),
-  } as unknown as AiShellRiskRuntime;
-}
-function fakeHeadless() {
-  return {
-    open: vi.fn(async () => undefined),
-    exec: vi.fn(async () => ({ stdout: "ok", stderr: "", exitCode: 0, truncated: false })),
-    close: vi.fn(async () => undefined),
-    closeAll: vi.fn(async () => undefined),
-    hosts: vi.fn(() => []),
-  } as unknown as SshHeadlessRuntime;
-}
-
-describe("MultiHostAgentRuntime", () => {
-  it("creates an agent and prompts with host targets", async () => {
-    const rt = new MultiHostAgentRuntime(fakeModel(), fakeHistory(), fakeRisk(), fakeHeadless());
-    const snap = rt.create("owner-1", { providerConfigId: "cfg-1", targets: ["h1"] });
-    expect(snap.agentId).toBeTruthy();
-    expect(snap.hosts).toEqual(["h1"]);
-
-    const events: unknown[] = [];
-    await rt.prompt("owner-1", snap.agentId, "run uptime on h1", { targets: ["h1"] }, (e) => events.push(e));
-    expect(events.some((e) => (e as { type: string }).type === "agentEnd")).toBe(true);
-    await rt.close("owner-1", snap.agentId);
-  });
-
-  it("rejects a target not in the turn targets", async () => {
-    const rt = new MultiHostAgentRuntime(fakeModel(), fakeHistory(), fakeRisk(), fakeHeadless());
-    const snap = rt.create("owner-1", { providerConfigId: "cfg-1", targets: ["h1"] });
-    await expect(
-      rt.prompt("owner-1", snap.agentId, "do something on @:host[B]{name=h2}", { targets: ["h1"] }, () => undefined),
-    ).rejects.toThrow(/not allowed/i);
-    await rt.close("owner-1", snap.agentId);
-  });
-});
-```
-
-- [ ] **Step 2: 运行测试确认失败**
-
-Run: `npx vitest run tests/electron/domains/agent/agent-runtime.test.ts`
-Expected: FAIL — 模块不存在
-
-- [ ] **Step 3: 最小实现（骨架 + host_exec/host_list 工具 + 风险门控 + 确认流）**
-
-```ts
-// electron/domains/agent/agent-runtime.ts
-import { randomUUID } from "node:crypto";
-import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
-import { Type } from "@earendil-works/pi-ai";
-import { DomainError } from "../../ipc/domain-error.js";
-import { assertNoUnknownTargets, expandTargets, parseDirectives } from "./directives.js";
-import type { AiHistoryRepository } from "../ai/history.js";
-import type { AiModelRuntime } from "../ai/model-runtime.js";
-import type { AiShellRiskRuntime } from "../ai/risk.js";
-import type { SshHeadlessRuntime } from "../ssh/headless.js";
-
-const SYSTEM_PROMPT =
-  "You are the Buzz multi-host ops agent. You may only operate on the hosts explicitly mentioned in the user's request. Use host_exec to run commands and host_list to enumerate hosts in a group. Always pass cwd. Explain risky actions before requesting confirmation.";
-
-export type AgentCreateInput = { providerConfigId: string; targets?: string[] };
-
-type Emit = (event: Record<string, unknown>) => void;
-
-type Pending = {
-  id: string;
-  token: string;
-  settle(approved: boolean): void;
-};
-
-type Entry = {
-  id: string;
-  ownerId: string;
-  providerConfigId: string;
-  hosts: string[];
-  agent: Agent;
-  pending?: Pending;
-  closed: boolean;
-};
-
-export class MultiHostAgentRuntime {
-  readonly #models: AiModelRuntime;
-  readonly #history: AiHistoryRepository;
-  readonly #risk: AiShellRiskRuntime;
-  readonly #headless: SshHeadlessRuntime;
-  readonly #entries = new Map<string, Entry>();
-
-  constructor(
-    models: AiModelRuntime,
-    history: AiHistoryRepository,
-    risk: AiShellRiskRuntime,
-    headless: SshHeadlessRuntime,
-  ) {
-    this.#models = models;
-    this.#history = history;
-    this.#risk = risk;
-    this.#headless = headless;
-  }
-
-  create(ownerId: string, input: AgentCreateInput): { agentId: string; snapshot: AgentSnapshot } {
-    const model = this.#models.model(input.providerConfigId);
-    const id = randomUUID();
-    const targets = input.targets ?? [];
-    const allowed = new Set(targets);
-    const tools = this.#tools(id, allowed);
-    const agent = new Agent({
-      initialState: {
-        systemPrompt: SYSTEM_PROMPT,
-        model,
-        thinkingLevel: model.reasoning ? "medium" : "off",
-        tools,
-      },
-      streamFn: (_m, ctx, opts) => this.#models.stream(input.providerConfigId, ctx, opts),
-      steeringMode: "one-at-a-time",
-      followUpMode: "one-at-a-time",
-      toolExecution: "sequential",
-    });
-    const entry: Entry = { id, ownerId, providerConfigId: input.providerConfigId, hosts: targets, agent, closed: false };
-    agent.subscribe((event) => void this.#handleEvent(entry, event));
-    this.#entries.set(id, entry);
-    return { agentId: id, snapshot: snapshotOf(entry) };
-  }
-
-  async prompt(
-    ownerId: string,
-    agentId: string,
-    text: string,
-    opts: { targets?: string[] },
-    emit: Emit,
-  ): Promise<AgentSnapshot> {
-    const entry = this.#entry(ownerId, agentId);
-    if (entry.agent.state.isStreaming) throw busy();
-    const targets = opts.targets ?? [];
-    const allowed = new Set(expandTargets(
-      parseDirectives(text).length ? parseDirectives(text) : targets.map((t) => ({ type: "host", id: t, label: t })),
-      {}, // groupHosts 由主进程从库存解析后传入（Task 5）
-    ));
-    entry.allowedHosts = allowed;
-    await entry.agent.prompt(text);
-    return snapshotOf(entry);
-  }
-  // …（steer / abort / decideTool / close / closeOwner / closeAll / #handleEvent / #tools / #confirm 见 Step 4）
-}
-```
-
-- [ ] **Step 4: 补全 `#tools`、`#handleEvent`、确认流，通过测试**
-
-```ts
-  #tools(agentId: string, allowed: Set<string>): AgentTool[] {
-    const headless = this.#headless;
-    const risk = this.#risk;
-    return [
-      {
-        name: "host_exec",
-        label: "Run command on a target host",
-        description: "Execute a non-interactive command on one target host. hostId must be a target of this task.",
-        parameters: Type.Object({
-          hostId: Type.String({ minLength: 1 }),
-          command: Type.String({ minLength: 1 }),
-          cwd: Type.Optional(Type.String({ minLength: 1 })),
-          timeoutMs: Type.Optional(Type.Number({ minimum: 1_000, maximum: 300_000 })),
-        }),
-        executionMode: "sequential",
-        execute: async (_callId, raw) => {
-          const p = raw as { hostId: string; command: string; cwd?: string; timeoutMs?: number };
-          assertNoUnknownTargets([p.hostId], allowed);
-          await headless.open(p.hostId);
-          const cwd = p.cwd?.trim() || "$HOME";
-          const assessment = risk.assess(agentId, p.hostId, p.hostId, cwd, p.command);
-          if (assessment.verdict.kind === "reject") throw new Error(assessment.verdict.reason);
-          // 确认流（#confirm）复用现有 AiAgentRuntime 模式：emit toolConfirmationRequired
-          const result = await headless.exec(p.hostId, p.command, { cwd, timeoutMs: p.timeoutMs });
-          return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
-        },
-      },
-      {
-        name: "host_list",
-        label: "List hosts in a group",
-        description: "Return the host ids in a target group.",
-        parameters: Type.Object({ groupId: Type.String({ minLength: 1 }) }),
-        executionMode: "sequential",
-        execute: async (_callId, raw) => {
-          const p = raw as { groupId: string };
-          return { content: [{ type: "text", text: JSON.stringify(this.#groupHosts[p.groupId] ?? []) }] };
-        },
-      },
-    ];
-  }
-
-  #handleEvent(entry: Entry, event: { type: string; [k: string]: unknown }): void {
-    // 事件转发为 AiAgentEvent 结构；toolStart/toolEnd 的 args 携带 hostId；
-    // agentEnd 时写入 history（title: "Ops agent task"）并 emit agentEnd snapshot。
-  }
-
-  #confirm(entry: Entry, token: string): Promise<void> {
-    // 复用 AiAgentRuntime.#confirm 模式：pending + emit toolConfirmationRequired + 60s TTL。
-    return Promise.resolve();
-  }
-```
-
-> **说明**：`#tools`/`#handleEvent`/`#confirm` 的完整实现与现有 `AiAgentRuntime`（`electron/domains/ai/agent-runtime.ts:179-350`）同构——事件按 `agent_start/message_start/message_update/message_end/tool_execution_start/update/end/agent_end` 转发为 `AiAgentEvent`，危险命令走 `#confirm` 60s 单次确认令牌。Step 4 的最小实现先以通过单测为目标，Step 5 集成时再对齐事件细节。
-
-- [ ] **Step 5: 运行测试确认通过**
-
-Run: `npx vitest run tests/electron/domains/agent/agent-runtime.test.ts`
-Expected: PASS
-
-- [ ] **Step 6: 提交**
-
-```bash
-git add electron/domains/agent/agent-runtime.ts tests/electron/domains/agent/agent-runtime.test.ts
-git commit -m "feat(agent): add multi-host agent runtime with host_exec/host_list tools"
-```
+- [ ] **Step 1–5:** TDD（host+group 解析、去重保序、越权、空串→`[]`）。实现即上方 regex + Set 去重。提交 `feat(agent): parse @-mention directives and expand targets`。
 
 ---
 
-### Task 4: IPC 命令与契约测试（`agent_*`）
+### Task 4: `MultiHostAgentRuntime`（镜像 `AiAgentRuntime`）
 
 **Files:**
-- Modify: `electron/command-names.ts`
-- Create: `electron/domains/agent/commands.ts`
-- Modify: `electron/main.cts`
-- Test: `tests/electron/domains/agent/commands.test.ts`
+- Create: `src/main/domains/agent/agent-types.ts`
+- Create: `src/main/domains/agent/agent-runtime.ts`
+- Test: `tests/main/domains/agent/agent-runtime.test.ts`
 
 **Interfaces:**
-- Consumes: `MultiHostAgentRuntime`（Task 3）、`CommandDispatcher`（`electron/ipc/dispatcher.ts`）、`createCommand` 模式。
+- Consumes: `AiModelRuntime`（`model`/`stream`）、`AiHistoryRepository`（`save: AiSessionSummary`，同步）、`AiShellRiskRuntime`（`assess`/`authorize`/`discard`）、`SshHeadlessRuntime`、`InventoryRepository.listHosts(vaultId)`/`listGroups(vaultId)`、`parseDirectives`/`expandTargets`/`assertAllowedTargets`、pi-agent-core `Agent`、pi-ai `Type`、`createActiveContextCompactor`（`ai/agent-runtime.ts:381`）。
 - Produces:
-  - 命令名：`agent_create` / `agent_prompt` / `agent_steer` / `agent_abort` / `agent_decide_tool` / `agent_close`
-  - `createAgentCommandHandlers(runtime: MultiHostAgentRuntime, emit: (streamId, event) => void): CommandHandlers`
+  - `agent-types.ts`：
+    ```ts
+    import type { AiAgentMessage, AiToolConfirmation } from "../ai/agent-types.js";
+    export type AgentSnapshot = { agentId: string; providerConfigId: string; status: "idle" | "running" | "waitingForConfirmation"; hosts: string[]; messages: AiAgentMessage[]; errorMessage?: string };
+    export type AgentEvent =
+      | { type: "agentStart" } | { type: "messageStart"; message: AiAgentMessage }
+      | { type: "messageUpdate"; message: AiAgentMessage } | { type: "messageEnd"; message: AiAgentMessage }
+      | { type: "toolStart"; toolCallId: string; toolName: string; args: unknown }
+      | { type: "toolUpdate"; toolCallId: string; toolName: string; partialResult: unknown }
+      | { type: "toolEnd"; toolCallId: string; toolName: string; result: unknown; isError: boolean }
+      | { type: "toolConfirmationRequired"; confirmation: AiToolConfirmation }
+      | { type: "agentEnd"; snapshot: AgentSnapshot } | { type: "historySaveFailed" };
+    export type AgentCreateInput = { providerConfigId: string; vaultId?: string; targets?: string[] };
+    ```
+    （复用 AI 域 `AiAgentMessage`/`AiToolConfirmation`——wire 格式就是 `AiAgentMessage`，**不**发明 `AgentWireMessage`。）
+  - `class MultiHostAgentRuntime { constructor(models, history, risk, headless, inventory); create(ownerId, input): AgentSnapshot; async prompt(ownerId, agentId, text, targets: string[], emit): Promise<AgentSnapshot>; steer/abort/decideTool/close/closeOwner/closeAll }`
 
-- [ ] **Step 1: 写失败测试**
+> **结构与 `AiAgentRuntime` 同构**：相同 `Agent` 构造（`initialState`/`streamFn`/`transformContext: createActiveContextCompactor(...)`/`steeringMode:"one-at-a-time"`/`followUpMode:"one-at-a-time"`/`toolExecution:"sequential"`）、相同 `#confirm`（60s 单次令牌、emit `toolConfirmationRequired`）、相同 `#handleEvent`（pi-agent-core 事件 → `AgentEvent`，`agent_end` 时 `history.save({ title:"Ops agent task", providerConfigId, sshSessionId:"", messages })`）。差异：(1) 工具 `host_exec`/`host_list`；(2) `prompt` 接 `targets`、写 `entry.allowedHosts`、`entry.vaultId`；(3) `host_exec` 先 `assertAllowedTargets([hostId], allowed)`→`#findHost`→`headless.open`→`risk.assess`→`#confirm`→`risk.authorize`→`headless.exec`。
 
-```ts
-// tests/electron/domains/agent/commands.test.ts
-import { describe, expect, it, vi } from "vitest";
-import { createAgentCommandHandlers } from "../../../electron/domains/agent/commands.js";
-import { isCommandName } from "../../../electron/command-names.js";
-
-const runtime = {
-  create: vi.fn(() => ({ agentId: "a1", snapshot: {} })),
-  prompt: vi.fn(async () => ({})),
-  steer: vi.fn(),
-  abort: vi.fn(),
-  decideTool: vi.fn(),
-  close: vi.fn(async () => undefined),
-  closeOwner: vi.fn(async () => undefined),
-  closeAll: vi.fn(async () => undefined),
-};
-const emit = vi.fn();
-const handlers = createAgentCommandHandlers(runtime as never, emit);
-const ctx = { ownerId: "o1", streamId: "s1" };
-
-describe("agent commands", () => {
-  it("registers command names in the allowlist", () => {
-    for (const name of ["agent_create", "agent_prompt", "agent_steer", "agent_abort", "agent_decide_tool", "agent_close"]) {
-      expect(isCommandName(name)).toBe(true);
-    }
-  });
-  it("agent_prompt validates targets and emits events", async () => {
-    const result = await handlers.agent_prompt({ agentId: "a1", text: "hi", targets: ["h1"] }, ctx as never);
-    expect(result.ok).toBe(true);
-    expect(runtime.prompt).toHaveBeenCalledWith("o1", "a1", "hi", { targets: ["h1"] }, expect.any(Function));
-  });
-  it("rejects invalid agent_prompt input", async () => {
-    const result = await handlers.agent_prompt({ agentId: "a1" }, ctx as never);
-    expect(result.ok).toBe(false);
-  });
-});
-```
-
-- [ ] **Step 2: 运行测试确认失败**
-
-Run: `npx vitest run tests/electron/domains/agent/commands.test.ts`
-Expected: FAIL — 命令不存在
-
-- [ ] **Step 3: 注册命令 + 最小实现**
-
-```ts
-// electron/command-names.ts — 在列表末尾新增
-  "agent_create",
-  "agent_prompt",
-  "agent_steer",
-  "agent_abort",
-  "agent_decide_tool",
-  "agent_close",
-```
-
-```ts
-// electron/domains/agent/commands.ts
-import { z, type ZodType } from "zod";
-import { DomainError } from "../../ipc/domain-error.js";
-import type { CommandContext, CommandHandler, CommandHandlers } from "../../ipc/dispatcher.js";
-import { failure, success } from "../../ipc/result.js";
-import type { MultiHostAgentRuntime } from "./agent-runtime.js";
-
-const id = z.string().trim().min(1);
-const prompt = z.string().trim().min(1);
-const targets = z.array(id).max(64).optional();
-
-export function createAgentCommandHandlers(
-  runtime: MultiHostAgentRuntime,
-  emit: (streamId: string | undefined, event: unknown) => void,
-): CommandHandlers {
-  return {
-    agent_create: command(
-      z.object({ providerConfigId: id, targets }),
-      ({ providerConfigId, targets }, context) =>
-        runtime.create(context.ownerId, { providerConfigId, targets }).snapshot,
-    ),
-    agent_prompt: command(
-      z.object({ agentId: id, text: prompt, targets }),
-      ({ agentId, text, targets }, context) => {
-        if (!context.streamId) throw new DomainError("AGENT_PROTOCOL", "The agent prompt requires a finite event stream.");
-        return runtime.prompt(
-          context.ownerId,
-          agentId,
-          text,
-          { targets: targets ?? [] },
-          (event) => emit(context.streamId, event),
-        );
-      },
-    ),
-    agent_steer: command(
-      z.object({ agentId: id, text: prompt }),
-      ({ agentId, text }, context) => runtime.steer(context.ownerId, agentId, text),
-    ),
-    agent_abort: command(
-      z.object({ agentId: id }),
-      ({ agentId }, context) => runtime.abort(context.ownerId, agentId),
-    ),
-    agent_decide_tool: command(
-      z.object({ agentId: id, confirmationId: id, approved: z.boolean() }),
-      ({ agentId, confirmationId, approved }, context) =>
-        runtime.decideTool(context.ownerId, agentId, confirmationId, approved),
-    ),
-    agent_close: command(
-      z.object({ agentId: id }),
-      ({ agentId }, context) => runtime.close(context.ownerId, agentId),
-    ),
-  };
-}
-
-function command<Input, Output>(
-  schema: ZodType<Input>,
-  operation: (input: Input, context: CommandContext) => Output | Promise<Output>,
-): CommandHandler {
-  return async (raw, context) => {
-    try {
-      return success(await operation(schema.parse(raw ?? {}), context));
-    } catch (error) {
-      if (error instanceof DomainError) return error.toResult();
-      if (error instanceof z.ZodError) return failure("IPC_INVALID_INPUT", "The desktop operation received invalid input.");
-      throw error;
-    }
-  };
-}
-```
-
-- [ ] **Step 4: 在 main.cts 接线**
-
-```ts
-// electron/main.cts — start() 内新增
-import { MultiHostAgentRuntime } from "./domains/agent/agent-runtime.js";
-import { SshHeadlessRuntime } from "./domains/ssh/headless.js";
-import { createAgentCommandHandlers } from "./domains/agent/commands.js";
-// 构造（在 sshRuntime 之后）
-const headless = new SshHeadlessRuntime(sshRuntime);
-// 注入库存分组→主机映射到 MultiHostAgentRuntime（供 host_list 与 targets 展开）
-const agentRuntime = new MultiHostAgentRuntime(aiService.models, aiService.history, aiService.risk, headless, inventoryRepository);
-// 注册 handlers（与现有 createAiCommandHandlers 平级）
-...createAgentCommandHandlers(agentRuntime, emitStreamEvent),
-```
-
-- [ ] **Step 5: 运行测试确认通过**
-
-Run: `npx vitest run tests/electron/domains/agent/commands.test.ts`
-Expected: PASS
-
-- [ ] **Step 6: 提交**
-
-```bash
-git add electron/command-names.ts electron/domains/agent/commands.ts electron/main.cts tests/electron/domains/agent/commands.test.ts
-git commit -m "feat(agent): register agent_* IPC commands with contract tests"
-```
+- [ ] **Step 1: 写失败测试** — fake models/history/risk/headless/inventory；断言 `create` 返回 `snapshot.hosts`、`prompt` 触发 `agentEnd`、`targets` 越权被拒（最小覆盖；完整工具链路在 Task 13 集成测试）。
+- [ ] **Step 2: 运行确认失败**
+- [ ] **Step 3: 实现 `agent-types.ts`**
+- [ ] **Step 4: 实现 `agent-runtime.ts`** — `host_exec` 工具（`Type.Object({hostId, command, cwd?, timeoutMs?})`、`execute` 内 `assertAllowedTargets`→`#findHost`→`resolveHeadlessProfile`→`headless.open`→`risk.assess`→`#confirm`→`risk.authorize`→`headless.exec`→`{content:[{type:"text",text:JSON.stringify(result)}], details:result}`）+ `host_list` 工具；`#confirm`/`#handleEvent`/`#findHost`/`#groupHosts` 照搬 `AiAgentRuntime` 同名结构；`entry` 加 `allowedHosts: Set<string>`、`vaultId?: string`。
+- [ ] **Step 5: 运行确认通过**
+- [ ] **Step 6: 提交** — `git commit -m "feat(agent): add multi-host agent runtime with host_exec/host_list tools"`
 
 ---
 
-### Task 5: 接入真实凭据与库存解析（无头通道落地）
+### Task 5: 库存主机解析（Host → headless profile）
 
 **Files:**
-- Modify: `electron/domains/ssh/headless.ts`
-- Modify: `electron/domains/agent/agent-runtime.ts`
-- Modify: `electron/main.cts`
-- Test: `tests/electron/domains/agent/host-resolution.test.ts`
+- Create: `src/main/domains/agent/host-resolution.ts`
+- Test: `tests/main/domains/agent/host-resolution.test.ts`
 
 **Interfaces:**
-- Consumes: `InventoryRepository.listHosts(vaultId)`（`electron/domains/inventory/repository.ts:348`）、`SshCredentialVault`、`CreateSshProfile`。
-- Produces:
-  - `resolveHeadlessProfile(host: Host, credential: SavedCredentialLike): CreateSshProfile` — 由库存主机 + 凭据解析为 `SshRuntime.open` 可用的 profile（`hostId/address/username/authKind/credentialRef`）。
-  - `MultiHostAgentRuntime.openHost(hostId: string): Promise<void>` — 打开无头连接（解析 profile → `headless.open`）；凭据缺失抛 `DomainError("AGENT_HOST_CREDENTIAL_MISSING")`。
+- Produces: `resolveHeadlessProfile(host: Host): CreateSshProfile`（`Host.address`→`hostname`、`Host.identity?`→`identityId`、`port?`/`authKind?`/`credentialRef?` 默认值；凭据不在此解析——`connectClient` 内部经 `credentialRef` 取，缺失抛 `SSH_CREDENTIAL_UNAVAILABLE`→`MultiHostAgentRuntime.openHost` 转 `AGENT_HOST_CREDENTIAL_MISSING`）。
 
-- [ ] **Step 1: 写失败测试**
-
-```ts
-// tests/electron/domains/agent/host-resolution.test.ts
-import { describe, expect, it, vi } from "vitest";
-import { resolveHeadlessProfile } from "../../../electron/domains/agent/host-resolution.js";
-import type { Host } from "../../../electron/domains/inventory/models.js";
-
-const host = {
-  id: "h1", address: "192.168.1.10", username: "root", authKind: "password",
-  credentialRef: "cred-1", port: 22,
-} as unknown as Host;
-
-describe("resolveHeadlessProfile", () => {
-  it("builds an SSH profile from inventory host + credential", () => {
-    expect(resolveHeadlessProfile(host, { authKind: "password", credentialRef: "cred-1" })).toEqual({
-      hostId: "h1", hostname: "192.168.1.10", port: 22, username: "root",
-      authKind: "password", credentialRef: "cred-1", identityId: null,
-    });
-  });
-});
-```
-
-- [ ] **Step 2: 运行测试确认失败**
-
-Run: `npx vitest run tests/electron/domains/agent/host-resolution.test.ts`
-Expected: FAIL — 模块不存在
-
-- [ ] **Step 3: 实现 host-resolution**
-
-```ts
-// electron/domains/agent/host-resolution.ts
-import type { CreateSshProfile } from "../ssh/runtime.js";
-import type { Host } from "../inventory/models.js";
-
-export type SavedCredentialLike = {
-  authKind: "password" | "privateKey";
-  credentialRef: string;
-};
-
-export function resolveHeadlessProfile(host: Host, credential: SavedCredentialLike): CreateSshProfile {
-  return {
-    hostId: host.id,
-    hostname: host.address,
-    port: host.port ?? 22,
-    username: host.username,
-    authKind: credential.authKind,
-    credentialRef: credential.credentialRef,
-    identityId: host.identity ?? null,
-    keepaliveInterval: null,
-  };
-}
-```
-
-- [ ] **Step 4: 接线到 agent-runtime 的 `openHost`（凭据缺失抛 `AGENT_HOST_CREDENTIAL_MISSING`）**
-
-```ts
-  // agent-runtime.ts 内：MultiHostAgentRuntime 增加 inventory/credentials 注入
-  async openHost(hostId: string): Promise<void> {
-    const host = this.#inventory?.listHosts("").find((h) => h.id === hostId);
-    if (!host) throw new DomainError("AGENT_HOST_NOT_FOUND", "Target host is not in the inventory.");
-    const credential = this.#credentials?.get(host.credentialRef); // 主进程注入 SshCredentialVault
-    if (!credential) throw new DomainError("AGENT_HOST_CREDENTIAL_MISSING", "No saved credential for this host. Connect once from the Servers page.");
-    await this.#headless.open(host.id, resolveHeadlessProfile(host, { authKind: host.authKind, credentialRef: host.credentialRef }));
-  }
-```
-
-- [ ] **Step 5: 运行测试确认通过 + 全量 agent 相关测试**
-
-Run: `npx vitest run tests/electron/domains/agent`
-Expected: PASS（directives / agent-runtime / commands / host-resolution 全部通过）
-
-- [ ] **Step 6: 提交**
-
-```bash
-git add electron/domains/agent/host-resolution.ts electron/domains/agent/agent-runtime.ts electron/domains/ssh/headless.ts electron/main.cts tests/electron/domains/agent/host-resolution.test.ts
-git commit -m "feat(agent): resolve saved credentials for headless host connections"
-```
+- [ ] **Step 1–5:** TDD。`resolveHeadlessProfile` 实现：`{ hostId: host.id, hostname: host.address, port: host.port ?? 22, username: host.username, authKind: host.authKind ?? "password", credentialRef: host.credentialRef ?? "", identityId: host.identity ?? null, keepaliveInterval: null }`。接入 `MultiHostAgentRuntime`：`entry.vaultId` 决定库存作用域（渲染层传 `useInventoryStore.activeVaultId`），`#findHost` 从 `inventory.listHosts(entry.vaultId)` 找（`AGENT_HOST_NOT_FOUND`），`#groupHosts()` 由 `listGroups`+`listHosts` 反查（`Host.groupId`→组内 hostIds），`openHost` catch `SSH_CREDENTIAL_UNAVAILABLE`/`SSH_PROFILE_INVALID` 转 `AGENT_HOST_CREDENTIAL_MISSING`。提交 `feat(agent): resolve inventory hosts into headless ssh profiles`。
 
 ---
 
-### Task 6: 引入 Assistant UI 并搭建 `@` 提及输入框
+### Task 6: 通信层 + IPC（MessagePort stream + 生命周期命令）+ 主进程接线
+
+> **参考 [官方 Electron 指南](https://www.assistant-ui.com/docs/guides/electron) Pattern 2。** 流式 prompt 走 `MessagePort`（指南机制），生命周期走 dispatcher。
+
+**Files:**
+- Create: `src/shared/agent-stream.ts` — data-only 协议（三端共享）
+- Create: `src/main/domains/agent/stream-ipc.ts` — `MessagePort` handler
+- Modify: `src/preload/index.cjs` — `window.terminus.streamAgent`
+- Modify: `src/renderer/app/electron.d.ts` — `streamAgent` 类型
+- Modify: `src/shared/ipc/command-names.ts` — `COMMANDS` 加 `agent_create`/`agent_steer`/`agent_abort`/`agent_decide_tool`/`agent_close`（**无 `agent_prompt`**）
+- Create: `src/main/domains/agent/commands.ts` — `createAgentCommandHandlers(runtime)`（生命周期 only）
+- Modify: `src/main/index.ts` — 构造 + 注册
+- Test: `tests/main/domains/agent/{commands,stream-ipc}.test.ts`
+
+**Interfaces:**
+- Consumes: `MultiHostAgentRuntime`、`CommandDispatcher`/`CommandContext`（`src/main/ipc/dispatcher.ts`）、zod、`success`/`failure`/`DomainError`。
+- Produces:
+  ```ts
+  // src/shared/agent-stream.ts
+  export const AGENT_STREAM_CHANNEL = "agent:stream";
+  export type AgentStreamRequest = { agentId: string; text: string; targets: string[]; vaultId?: string };
+  export type AgentStreamEvent = AgentEvent; // 复用 src/main/domains/agent/agent-types.ts（或镜像定义于 shared）
+  ```
+  ```ts
+  // preload（window.terminus.streamAgent）—— per 官方指南 step 2
+  streamAgent(request: AgentStreamRequest, onEvent: (e: AgentStreamEvent) => void): () => void;
+  //   实现：new MessageChannel → port1.addEventListener("message", e=>onEvent(e.data)) → port1.start()
+  //        → ipcRenderer.postMessage(AGENT_STREAM_CHANNEL, request, [port2])
+  //        → 返回 () => { port1.removeEventListener; port1.close() }
+  ```
+  ```ts
+  // src/main/domains/agent/stream-ipc.ts —— per 官方指南 step 3
+  export function registerAgentStreamIpc(mainWindow: BrowserWindow, runtime: MultiHostAgentRuntime): void;
+  //   ipcMain.on(AGENT_STREAM_CHANNEL, (event, request: unknown) => {
+  //     const [port] = event.ports; if (!port) return;
+  //     if (event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) { port.close(); return; }
+  //     if (!isAgentStreamRequest(request)) { port.postMessage({ type: "agentEnd", snapshot: {...isError} }); port.close(); return; } // 或专用 error 事件
+  //     port.start();
+  //     const ownerId = String(event.sender.id);
+  //     const ac = new AbortController();
+  //     port.once("close", () => ac.abort());
+  //     void runtime.prompt(ownerId, request.agentId, request.text, request.targets, (e) => port.postMessage(e))
+  //       .finally(() => port.close());
+  //   });
+  //   mainWindow.once("closed", () => ipcMain.removeListener(AGENT_STREAM_CHANNEL, handler));
+  ```
+  生命周期 handler（dispatcher）：`agent_create`（`z.object({providerConfigId, vaultId: id.optional(), targets})`→`runtime.create`）、`agent_steer`/`agent_abort`/`agent_decide_tool`（`{agentId, confirmationId, approved}`）/`agent_close`——直传，无 `emit`/`streamId`。
+
+- [ ] **Step 1: 写失败测试**（`commands.test.ts`：`isCommandName` 对 5 个生命周期名 true，`agent_create` 透传 `vaultId`，无 `agent_prompt`；`stream-ipc.test.ts`：fake `BrowserWindow`+`ipcMain`+port，校验 sender 不匹配→`port.close`、payload 非法→拒、合法→`runtime.prompt` 用 `port.postMessage` 作 emit 且 port-close 触发 abort）。
+- [ ] **Step 2: 运行确认失败**
+- [ ] **Step 3: 实现 `src/shared/agent-stream.ts`**（data-only 协议；`AgentStreamEvent` 在 shared 镜像 `AgentEvent` 字段，避免 shared 反向依赖 main——或把 `AgentEvent` 提到 shared）。
+- [ ] **Step 4: 实现 `stream-ipc.ts`**（per 指南 step 3，把 `streamText` 换成 `runtime.prompt`；`isAgentStreamRequest` zod 校验 sender+payload；port-close→abort）。
+- [ ] **Step 5: preload + electron.d.ts** 加 `streamAgent`（per 指南 step 2）。
+- [ ] **Step 6: 注册命令名 + 实现 `commands.ts`**（5 个生命周期；`command(schema,op)` 照搬 `ai/commands.ts`）。
+- [ ] **Step 7: 主进程接线**（`src/main/index.ts` 的 `start()`）：`const headless = new SshHeadlessRuntime(sshRuntime); const agentRuntime = new MultiHostAgentRuntime(aiService.models, aiService.history, aiService.risk, headless, inventoryRepository);`；handler 表追加 `...createAgentCommandHandlers(agentRuntime)`；`createWindow()` 内 `registerAgentStreamIpc(mainWindow, agentRuntime)`（创建 trusted window 后）；`destroyed`/`before-quit` 加 `agentRuntime.closeOwner(ownerId)`/`closeAll()`+`headless.closeAll()`（顺序 AI→agent→terminal）。
+- [ ] **Step 8: 运行确认通过**
+- [ ] **Step 9: 提交** — `git commit -m "feat(agent): messageport stream ipc + lifecycle commands (per electron guide)"`
+
+---
+
+### Task 7: 引入 assistant-ui 依赖 + 本地原语封装
 
 **Files:**
 - Modify: `package.json`
-- Create: `src/features/agent/composer/MentionComposer.tsx`
-- Create: `src/features/agent/composer/mentionAdapter.ts`
-- Create: `src/features/agent/agentTypes.ts`
-- Test: `tests/src/features/agent/composer/MentionComposer.test.tsx`
+- Create: `src/renderer/components/assistant-ui/{composer-trigger-popover,directive-text}.tsx`
+- Test: `tests/renderer/components/assistant-ui/composer-trigger-popover.test.tsx`
 
 **Interfaces:**
-- Consumes: `unstable_useMentionAdapter` / `ComposerPrimitive.Unstable_TriggerPopover`（`@assistant-ui/react`，**pin 版本**）；`useInventoryStore`。
-- Produces:
-  - `type AgentMentionItem = { id: string; type: "host" | "group"; label: string }`
-  - `buildMentionItems(hosts, groups): { categories: { id: "hosts"|"groups"; label: string; items: AgentMentionItem[] } }`
-  - `MentionComposer({ onSend(text): void })` — 受控文本 + `@` 弹层 + directive 插入 + Enter 发送。
+- Consumes（**精确版本**）：`@assistant-ui/react@0.15.13`、`@assistant-ui/react-lexical@0.2.9`。`ComposerPrimitive.Unstable_TriggerPopoverRoot`/`.Unstable_TriggerPopover`（`{char,adapter?,isLoading?}`）/`.Directive`/`.Action`/`.Unstable_TriggerPopoverCategories`/`CategoryItem`/`Items`/`Item`/`Back`；`unstable_useMentionAdapter({categories,items?,formatter?,onInserted?,iconMap?,fallbackIcon?})→{adapter,directive:{formatter,onInserted?},iconMap?,fallbackIcon?}`；`unstable_defaultDirectiveFormatter`（`serialize(item):string`+`parse(text):readonly({kind:"text",text}|{kind:"mention",type,label,id})[]`）；`createDirectiveText(formatter,{iconMap?,fallbackIcon?}):TextMessagePartComponent`；`unstable_useTriggerPopoverScopeContext()`。
+- Produces: 本地 `ComposerTriggerPopover`（`char`、`directive|action` 二选一、`iconMap`/`fallbackIcon`/labels）——结构照搬示例，**Tailwind v4 className 可直接借**（Task 1 后），换 Buzz token（`bg-carbon`/`border-graphite`/`text-paper`/`text-fog`/`text-acid-lime`/active `data-[highlighted]:bg-graphite`），chip 用 Buzz `Badge`；本地 `DirectiveText`（`createDirectiveText(unstable_defaultDirectiveFormatter,...)` 的 memo 版，不依赖 markdown）。
 
-> **实际落地（`@assistant-ui/react@0.15.4`）**：`ComposerTriggerPopover` 已拆分为
-> `ComposerPrimitive.Unstable_TriggerPopoverRoot / Unstable_TriggerPopover / Unstable_TriggerPopover.Directive`；
-> 聊天流用 `useExternalStoreRuntime` + `AssistantRuntimeProvider` 接入既有
-> `AgentClient` 事件流，消息与工具卡经 `ThreadPrimitive.Messages` / `MessagePrimitive.Root` 渲染。
-
-- [x] **Step 1: 安装依赖**
-
-Run: `pnpm add @assistant-ui/react@<精确版本>` （安装后记录实际版本并固定）
-Expected: package.json 增加 `@assistant-ui/react`（精确版本）
-
-- [x] **Step 2: 写失败测试**
-
-```ts
-// tests/src/features/agent/composer/MentionComposer.test.tsx
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { MentionComposer } from "@/features/agent/composer/MentionComposer";
-import { useInventoryStore } from "@/features/inventory/inventoryStore";
-
-describe("MentionComposer", () => {
-  it("renders and sends text on Enter", async () => {
-    useInventoryStore.getState().setResources(
-      { g1: { id: "g1", name: "prod" } } as never,
-      { h1: { id: "h1", name: "web-1", address: "192.168.1.10" } } as never,
-      {},
-    );
-    let sent = "";
-    render(<MentionComposer onSend={(text) => { sent = text; }} />);
-    await userEvent.type(screen.getByLabelText("Message agent"), "uptime{Enter}");
-    expect(sent).toBe("uptime");
-  });
-});
-```
-
-- [x] **Step 3: 运行测试确认失败**
-
-Run: `npx vitest run tests/src/features/agent/composer/MentionComposer.test.tsx`
-Expected: FAIL — 模块不存在
-
-- [x] **Step 4: 最小实现（直接使用 assistant-ui 原语；`@` 弹层 + directive 插入）**
-
-```tsx
-// src/features/agent/composer/mentionAdapter.ts
-import { unstable_useMentionAdapter } from "@assistant-ui/react";
-import { useInventoryStore } from "@/features/inventory/inventoryStore";
-
-export function useAgentMentionAdapter() {
-  const hosts = useInventoryStore((s) => Object.values(s.hosts));
-  const groups = useInventoryStore((s) => Object.values(s.groups));
-  const mention = unstable_useMentionAdapter({
-    includeModelContextTools: false,
-    categories: [
-      { id: "hosts", label: "Servers", items: hosts.map((h) => ({ id: h.id, type: "host" as const, label: h.name })) },
-      { id: "groups", label: "Groups", items: groups.map((g) => ({ id: g.id, type: "group" as const, label: g.name })) },
-    ],
-    formatter: {
-      format: (item) => (item.type === "host" ? `:host[${item.label}]{name=${item.id}}` : `:group[${item.label}]{name=${item.id}}`),
-      parse: (text) => text, // 透传；后端 parseDirectives 统一解析
-    },
-  });
-  return mention;
-}
-```
-
-```tsx
-// src/features/agent/composer/MentionComposer.tsx
-import { useRef, useState } from "react";
-import { ComposerPrimitive, ComposerTriggerPopover } from "@assistant-ui/react";
-import { useAgentMentionAdapter } from "./mentionAdapter";
-
-export function MentionComposer({ onSend }: { onSend: (text: string) => void }) {
-  const [input, setInput] = useState("");
-  const mention = useAgentMentionAdapter();
-
-  return (
-    <ComposerPrimitive.Root>
-      <ComposerTriggerPopover char="@" adapter={mention.adapter} directive={mention.directive}>
-        <ComposerPrimitive.Input
-          aria-label="Message agent"
-          value={input}
-          onChange={(event) => setInput(event.currentTarget.value)}
-          placeholder="@ 选择服务器或分组，描述要执行的运维操作…"
-        />
-      </ComposerTriggerPopover>
-      <ComposerPrimitive.Send
-        aria-label="Send"
-        disabled={!input.trim()}
-        onClick={() => { onSend(input); setInput(""); }}
-      />
-    </ComposerPrimitive.Root>
-  );
-}
-```
-
-- [x] **Step 5: 运行测试确认通过**
-
-Run: `npx vitest run tests/src/features/agent/composer/MentionComposer.test.tsx`
-Expected: PASS
-
-- [ ] **Step 6: 提交**
-
-```bash
-git add package.json pnpm-lock.yaml src/features/agent/composer/ src/features/agent/agentTypes.ts tests/src/features/agent/composer/MentionComposer.test.tsx
-git commit -m "feat(agent): add assistant-ui @-mention composer for host/group targets"
-```
+- [ ] **Step 1: 安装依赖（pin 精确版本）** — `pnpm add @assistant-ui/react@0.15.13 @assistant-ui/react-lexical@0.2.9`；`pnpm list` 确认版本与 react 19 peer。
+- [ ] **Step 2: 核对安装版 API 面**（落地前校验，避免 unstable_/runtime 符号漂移）：
+  ```bash
+  grep -rn "useLocalRuntime\|ChatModelAdapter\|unstable_useMentionAdapter\|Unstable_TriggerPopover\|createDirectiveText\|useAssistantToolUI" node_modules/@assistant-ui/react/dist/index.d.ts | head
+  ```
+  确认 `useLocalRuntime`、`ChatModelAdapter`、`ThreadMessageLike`、上述 `unstable_` 符号都在。若安装版与本文不符，以安装版为准并更新适配器。
+- [ ] **Step 3–6:** TDD（`ComposerTriggerPopover` 接 `char="@"`+`directive={{}}` 渲染外层；`DirectiveText` 把 `:host[db]{name=h1}` 渲染为含 `db` 的 chip）。实现用 v4 className + Buzz token。提交 `feat(agent): add assistant-ui deps + buzz-styled wrappers`。
 
 ---
 
-### Task 7: 左侧 `Agent` destination + 面板骨架 + 事件流接入
+### Task 8: 渲染层 wire 类型 + `AgentClient`（MessagePort）+ 指令解析
 
 **Files:**
-- Modify: `src/features/workspace/WorkspaceShell.tsx`
-- Modify: `src/features/workspace/PrimaryNavigation.tsx`
-- Create: `src/features/agent/AgentPage.tsx`
-- Create: `src/features/agent/agentApi.ts`
-- Modify: `src/app/App.tsx`
-- Test: `tests/src/features/workspace/PrimaryNavigation.test.tsx`、`tests/src/features/agent/AgentPage.test.tsx`
+- Create: `src/renderer/features/agent/{agentTypes,agentApi,directiveText}.ts`
+- Test: `tests/renderer/features/agent/{agentTypes,agentApi,directiveText}.test.ts`
 
 **Interfaces:**
-- Consumes: `MentionComposer`（Task 6）、`aiAgentApi` 的 `AiAgentClient` 形状（`src/features/ai/aiAgentApi.ts`）、`AiAgentEvent`/`AiAgentMessage`（`src/features/ai/aiAgentTypes.ts`）。
+- Consumes: `window.terminus.streamAgent`（Task 6）、`callCommand`/`unwrapResult`（`src/renderer/app/ipc.ts`）、`COMMANDS.agent*`（5 个生命周期）、`AiAgentMessage`/`AiToolConfirmation`（`@/features/ai/aiAgentTypes`，复用）、`AgentStreamRequest`/`AgentStreamEvent`（`@shared/agent-stream`）。
 - Produces:
-  - `Destination` 增加 `"agent"`。
-  - `AgentPage({ agentClient, inventory })` — 消息流 + 工具卡 + 底部 `MentionComposer`；按 `AiAgentEvent` 驱动 `useState`（沿用 `AiAssistantPanel.applyAgentEvent` 模式）。
+  ```ts
+  // agentTypes.ts —— 与 src/shared/agent-stream.ts + src/main/domains/agent/agent-types.ts 对齐
+  export type AgentSnapshot = { agentId; providerConfigId; status: "idle"|"running"|"waitingForConfirmation"; hosts: string[]; messages: AiAgentMessage[]; errorMessage?: string };
+  export type AgentEvent = AgentStreamEvent; export type AgentToolConfirmation = AiToolConfirmation;
+  export type AgentClient = {
+    create(input: { providerConfigId: string; vaultId?: string; targets?: string[] }): Promise<AgentSnapshot>;
+    streamPrompt(agentId: string, text: string, targets: string[], onEvent: (e: AgentEvent) => void): () => void; // 返回 stop
+    steer(agentId: string, text: string): Promise<void>;
+    abort(agentId: string): Promise<void>;
+    decideTool(agentId: string, confirmationId: string, approved: boolean): Promise<void>;
+    close(agentId: string): Promise<void>;
+  };
+  ```
+  ```ts
+  // directiveText.ts —— 与主进程 directives.ts 对称的纯函数
+  export function parseDirectives(text: string): MentionTarget[];
+  export function expandTargets(targets: MentionTarget[], groupHosts: Record<string, string[]>): string[];
+  export function resolveTargets(text: string, groupHosts: Record<string,string[]>): string[];
+  ```
 
-- [ ] **Step 1: 写失败测试**
+> **`streamPrompt` 不走 `callFiniteStreamingCommand`**（那是旧的 invoke+streamId 通道），改走 `window.terminus.streamAgent`（MessagePort，per 指南），返回 stop 函数（`ChatModelAdapter` 的 cleanup 调它）。
 
-```tsx
-// tests/src/features/agent/AgentPage.test.tsx
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { AgentPage } from "@/features/agent/AgentPage";
-import type { AiAgentClient } from "@/features/ai/aiAgentApi";
-
-function fakeClient() {
-  return {
-    create: vi.fn(async () => ({ agentId: "a1", status: "idle", hosts: [], messages: [], providerConfigId: "cfg" })),
-    prompt: vi.fn(async () => ({ agentId: "a1", status: "idle", hosts: [], messages: [], providerConfigId: "cfg" })),
-    steer: vi.fn(async () => undefined),
-    abort: vi.fn(async () => undefined),
-    decideTool: vi.fn(async () => undefined),
-    close: vi.fn(async () => undefined),
-  } as unknown as AiAgentClient;
-}
-
-describe("AgentPage", () => {
-  it("creates an agent and renders the composer", async () => {
-    const client = fakeClient();
-    render(<AgentPage agentClient={client} />);
-    await screen.findByLabelText("Message agent");
-    expect(client.create).toHaveBeenCalled();
-  });
-
-  it("sends a prompt with parsed targets on submit", async () => {
-    const client = fakeClient();
-    render(<AgentPage agentClient={client} />);
-    const input = await screen.findByLabelText("Message agent");
-    await userEvent.type(input, "uptime{Enter}");
-    expect(client.prompt).toHaveBeenCalledWith("a1", "uptime", expect.any(Function));
-  });
-});
-```
-
-- [ ] **Step 2: 运行测试确认失败**
-
-Run: `npx vitest run tests/src/features/agent/AgentPage.test.tsx`
-Expected: FAIL — 模块不存在
-
-- [ ] **Step 3: 实现 AgentPage（复用 AiAssistantPanel 的事件驱动模式）**
-
-```tsx
-// src/features/agent/AgentPage.tsx
-import { useEffect, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
-import { aiAgentApi, type AiAgentClient } from "@/features/ai/aiAgentApi";
-import type { AiAgentEvent, AiAgentMessage, AiAgentSnapshot, AiToolConfirmation } from "@/features/ai/aiAgentTypes";
-import { MentionComposer } from "./composer/MentionComposer";
-import { parseDirectives } from "./directiveText";
-import { useInventoryStore } from "@/features/inventory/inventoryStore";
-
-export function AgentPage({ agentClient = aiAgentApi }: { agentClient?: AiAgentClient }) {
-  const [agentId, setAgentId] = useState<string>();
-  const [messages, setMessages] = useState<AiAgentMessage[]>([]);
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState<string>();
-  const [confirmation, setConfirmation] = useState<AiToolConfirmation>();
-  const [hosts, setHosts] = useState<string[]>([]);
-  const agentIdRef = useRef<string | undefined>(undefined);
-  const groupHosts = useInventoryStore((s) => Object.values(s.groups).reduce<Record<string, string[]>>((acc, g) => {
-    acc[g.id] = Object.values(s.hosts).filter((h) => h.groupId === g.id).map((h) => h.id);
-    return acc;
-  }, {}));
-
-  useEffect(() => {
-    void agentClient.create({ providerConfigId: "" }).then(
-      (snap) => { agentIdRef.current = snap.agentId; setAgentId(snap.agentId); setHosts(snap.hosts ?? []); },
-      () => setError("The agent could not be created."),
-    );
-    return () => { const id = agentIdRef.current; if (id) void agentClient.close(id); };
-  }, [agentClient]);
-  // …（send / applyEvent / confirm 流与 AiAssistantPanel 同构，send 内先 parseDirectives 得到 targets 再调 prompt）
-  return (
-    <div data-testid="agent-page" className="flex h-full flex-col bg-carbon">
-      <header className="flex h-14 shrink-0 items-center gap-2.5 border-b border-graphite px-4">
-        <Sparkles size={16} className="text-acid-lime" />
-        <h2 className="m-0 text-[13px] font-semibold text-paper">Agent</h2>
-        <span className="text-[10px] text-fog">{running ? "Working…" : "Ready"}</span>
-      </header>
-      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 py-3">
-        {messages.map((m, i) => <MessageBubble key={`${m.timestamp}-${i}`} message={m} />)}
-      </div>
-      <div className="shrink-0 border-t border-graphite px-3 pb-3 pt-2">
-        <MentionComposer onSend={(text) => send(text)} />
-      </div>
-      {confirmation ? <ConfirmCard confirmation={confirmation} onDecide={(ok) => resolveConfirmation(ok)} /> : null}
-    </div>
-  );
-}
-```
-
-- [ ] **Step 4: 接线到 WorkspaceShell / PrimaryNavigation / App**
-
-```ts
-// src/features/workspace/WorkspaceShell.tsx — Destination 增加
-export type Destination = "servers" | "sftp" | "forwarding" | "history" | "terminal" | "agent";
-```
-
-```tsx
-// src/features/workspace/PrimaryNavigation.tsx — destinations 增加
-{ id: "agent", label: "Agent", icon: Sparkles },
-```
-
-```tsx
-// src/app/App.tsx — render 分支新增
-) : destination === "agent" ? (
-  <AgentPage agentClient={aiAgentApi} />
-) :
-```
-
-- [ ] **Step 5: 运行测试确认通过**
-
-Run: `npx vitest run tests/src/features/agent/AgentPage.test.tsx tests/src/features/workspace/PrimaryNavigation.test.tsx`
-Expected: PASS
-
-- [ ] **Step 6: 提交**
-
-```bash
-git add src/features/workspace/WorkspaceShell.tsx src/features/workspace/PrimaryNavigation.tsx src/features/agent/AgentPage.tsx src/features/agent/agentApi.ts src/features/agent/directiveText.ts src/app/App.tsx tests/src/features/agent/AgentPage.test.tsx
-git commit -m "feat(agent): add left-sidebar Agent destination with panel skeleton"
-```
+- [ ] **Step 1: 写失败测试** — `agentApi.streamPrompt` 调 `window.terminus.streamAgent` 且透传 `{agentId,text,targets,vaultId}`、返回 stop；`create`/`decideTool` 等走 `callCommand`+`COMMANDS.agent*`；`resolveTargets` 对 `:group[prod]{name=g1}` 在 `groupHosts={g1:["a","b"]}` 下返回 `["a","b"]`。注入 jsdom + fake `window.terminus`。
+- [ ] **Step 2: 运行确认失败**
+- [ ] **Step 3: 实现** — `agentApi.ts`（`create`/`steer`/`abort`/`decideTool`/`close` → `callCommand`；`streamPrompt` → `window.terminus.streamAgent`）；`directiveText.ts`（regex 与主进程一致）。
+- [ ] **Step 4: 运行确认通过**
+- [ ] **Step 5: 提交** — `git commit -m "feat(agent): renderer agent client (messageport) + directive resolution"`
 
 ---
 
-### Task 8: 右侧操作进度区（按主机分组）
+### Task 9: `@` 提及输入框（`MentionComposer`）
 
 **Files:**
-- Create: `src/features/agent/ProgressPanel.tsx`
-- Modify: `src/features/agent/AgentPage.tsx`
-- Test: `tests/src/features/agent/ProgressPanel.test.tsx`
+- Create: `src/renderer/features/agent/composer/{mentionAdapter,MentionComposer}.tsx`
+- Test: `tests/renderer/features/agent/composer/MentionComposer.test.tsx`
 
 **Interfaces:**
-- Consumes: `AiAgentEvent` 流（`toolStart/toolUpdate/toolEnd` 的 `args.hostId`）。
+- Consumes: `unstable_useMentionAdapter`（返回 `{adapter,directive,fallbackIcon}` 直接 spread 进本地 `ComposerTriggerPopover`）、`ComposerPrimitive.Unstable_TriggerPopoverRoot`/`.Root`/`.Send`/`.Cancel`、`LexicalComposerInput`（`directiveChip`/`placeholder`/`submitMode`/`cancelOnEscape`/`formatter`）、本地 `ComposerTriggerPopover`（Task 7）、`DirectiveChip`、`useInventoryStore`。
+- Produces: `MentionComposer`；`useAgentMentionAdapter()` 组装 hosts/groups 为 categories（`{id:"hosts",label:"Servers",items:hosts.map(h=>({id:h.id,type:"host",label:h.name,description:h.address,icon:"server"}))}`+groups）；**默认 formatter**（即吐 `:host[name]{name=id}`/`:group[name]{name=id}`）。
+
+- [ ] **Step 1–5:** TDD（注入 inventory；键入 `uptime`+Enter→`onSend("uptime")`；选 `@` host→`onSend` 含 `:host[...]{name=h1}`）。`mentionAdapter.ts` 用 `unstable_useMentionAdapter({categories,iconMap:{server:Server,folder:Folder,...},fallbackIcon:Server})`；`MentionComposer.tsx` 结构同示例（`Unstable_TriggerPopoverRoot`>`Root`>`LexicalComposerInput`+`Send`，外挂 `ComposerTriggerPopover char="@" {...mention}`），v4 className + Buzz token。提交 `feat(agent): assistant-ui @-mention composer`。
+
+---
+
+### Task 10: `AgentPage` + `useLocalRuntime`/`ChatModelAdapter` + 消息/工具渲染
+
+> **参考 [官方 Electron 指南](https://www.assistant-ui.com/docs/guides/electron) Pattern 2 step 4。** 用 `useLocalRuntime`+`ChatModelAdapter` 把 IPC 事件流适配为 assistant-ui 快照（替代旧方案的 `useExternalStoreRuntime`）。
+
+**Files:**
+- Create: `src/renderer/features/agent/useAgentRuntime.ts`
+- Create `src/renderer/features/agent/{MessageViews,AgentPage,agentItems}.tsx`
+- Test: `tests/renderer/features/agent/{agentItems,AgentPage}.test.tsx`
+
+**Interfaces:**
+- Consumes: `useLocalRuntime`+`ChatModelAdapter`+`AssistantRuntimeProvider`+`ThreadPrimitive`/`MessagePrimitive`+`useAssistantToolUI`（`@assistant-ui/react`）、本地 `DirectiveText`、`MentionComposer`、`AgentClient`、`AgentStreamEvent`、`aiConfigApi`/`aiSessionApi`、`useInventoryStore`。
 - Produces:
-  - `type HostProgress = { hostId: string; phase: "connecting" | "executing" | "done" | "error"; commands: CommandStep[]; error?: string }`
-  - `type CommandStep = { id: string; command: string; status: "running" | "ok" | "error"; output?: string; awaitingConfirmation?: boolean }`
-  - `useHostProgress(events: AiAgentEvent[]): Map<string, HostProgress>` — 从事件流聚合按主机的进度骨架。
-
-- [ ] **Step 1: 写失败测试**
-
-```ts
-// tests/src/features/agent/ProgressPanel.test.tsx
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
-import { ProgressPanel } from "@/features/agent/ProgressPanel";
-
-describe("ProgressPanel", () => {
-  it("groups tool events by host", () => {
-    const progress = new Map([
-      ["h1", {
-        hostId: "h1", phase: "done",
-        commands: [{ id: "c1", command: "uptime", status: "ok", output: " 1:00 up 3 days" }],
-      }],
-    ]);
-    render(<ProgressPanel progress={progress} />);
-    expect(screen.getByText("h1")).toBeInTheDocument();
-    expect(screen.getByText("uptime")).toBeInTheDocument();
-  });
-
-  it("shows an awaiting-confirmation command", () => {
-    const progress = new Map([
-      ["h1", {
-        hostId: "h1", phase: "executing",
-        commands: [{ id: "c1", command: "rm -rf /var/log/old/*", status: "running", awaitingConfirmation: true }],
-      }],
-    ]);
-    render(<ProgressPanel progress={progress} onDecide={() => undefined} />);
-    expect(screen.getByText("rm -rf /var/log/old/*")).toBeInTheDocument();
-  });
-});
-```
-
-- [ ] **Step 2: 运行测试确认失败**
-
-Run: `npx vitest run tests/src/features/agent/ProgressPanel.test.tsx`
-Expected: FAIL — 模块不存在
-
-- [ ] **Step 3: 实现 ProgressPanel**
-
-```tsx
-// src/features/agent/ProgressPanel.tsx
-import { Check, Circle, Loader2, TriangleAlert } from "lucide-react";
-import type { HostProgress } from "./progressTypes";
-
-export function ProgressPanel({
-  progress,
-  onDecide,
-}: {
-  progress: Map<string, HostProgress>;
-  onDecide?: (hostId: string, commandId: string, approved: boolean) => void;
-}) {
-  const hosts = [...progress.values()];
-  if (!hosts.length) return null;
-  return (
-    <aside data-testid="progress-panel" aria-label="Operation progress" className="w-[300px] shrink-0 overflow-y-auto border-l border-graphite bg-obsidian/40 p-3">
-      <h3 className="m-0 pb-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-fog/70">Progress</h3>
-      <div className="grid gap-3">
-        {hosts.map((host) => (
-          <section key={host.hostId} className="rounded-lg border border-graphite bg-carbon p-2.5">
-            <div className="flex items-center gap-2 text-[12px] text-paper">
-              {host.phase === "done" ? <Check size={13} className="text-pulse-green" />
-                : host.phase === "error" ? <TriangleAlert size={13} className="text-coral-red" />
-                : <Loader2 size={13} className="animate-spin text-acid-lime" />}
-              <span className="font-medium">{host.hostId}</span>
-              <span className="ml-auto text-[10px] text-fog">{host.phase}</span>
-            </div>
-            <div className="mt-2 grid gap-1.5">
-              {host.commands.map((cmd) => (
-                <div key={cmd.id} className="rounded border border-graphite bg-black/30 px-2 py-1.5">
-                  <code className="block truncate text-[11px] text-mist">{cmd.command}</code>
-                  {cmd.output ? <pre className="mt-1 max-h-24 overflow-auto text-[10px] text-fog">{cmd.output}</pre> : null}
-                  {cmd.awaitingConfirmation && onDecide ? (
-                    <div className="mt-1.5 flex gap-1.5">
-                      <button className="rounded bg-coral-red/90 px-2 py-0.5 text-[10px] text-black" onClick={() => onDecide(host.hostId, cmd.id, true)}>Approve</button>
-                      <button className="rounded bg-graphite px-2 py-0.5 text-[10px] text-fog" onClick={() => onDecide(host.hostId, cmd.id, false)}>Deny</button>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-            {host.error ? <p className="mt-1.5 text-[10.5px] text-coral-red">{host.error}</p> : null}
-          </section>
-        ))}
-      </div>
-    </aside>
-  );
-}
-```
-
-- [ ] **Step 4: 聚合逻辑 `useHostProgress` + 接入 AgentPage（右侧分栏）**
-
-```ts
-// src/features/agent/progressTypes.ts
-export type CommandStep = {
-  id: string; command: string; status: "running" | "ok" | "error";
-  output?: string; awaitingConfirmation?: boolean;
-};
-export type HostProgress = {
-  hostId: string; phase: "connecting" | "executing" | "done" | "error";
-  commands: CommandStep[]; error?: string;
-};
-```
-
-```ts
-// src/features/agent/useHostProgress.ts — 从 AiAgentEvent[] 聚合
-export function useHostProgress(events: AiAgentEvent[]): Map<string, HostProgress> {
-  const map = new Map<string, HostProgress>();
-  for (const event of events) {
-    if (event.type === "toolStart" || event.type === "toolUpdate" || event.type === "toolEnd") {
-      const hostId = (event.args as { hostId?: string } | undefined)?.hostId ?? (event as { args?: { hostId?: string } }).args?.hostId ?? "unknown";
-      const entry = map.get(hostId) ?? { hostId, phase: "executing", commands: [] };
-      // …按事件类型推进 phase / 追加 command step / 写 output
-      map.set(hostId, entry);
+  - `agentItems.ts`：`HostProgress`（进度轨模型）、`reduceHostProgress(event, hosts)`（从 `toolStart/Update/End` 的 `args.hostId` 聚合每主机命令/输出/状态）、`reduceConfirmation(event, confirmation)`、`deriveCredentialHostIds(toolEvents)`。**注意**：转录状态（消息/工具卡）由 assistant-ui runtime 拥有，不再自维护 `items`；本文件只负责**侧状态** reducer（hosts/confirmation）。
+  - `useAgentRuntime.ts`：
+    ```ts
+    const ipcAgentModel: ChatModelAdapter = {
+      async *run({ messages, abortSignal }) {
+        // 1) 取最新 user message 文本
+        const last = messages[messages.length-1];
+        const text = last.content.filter(p=>p.type==="text").map(p=>p.text).join("\n");
+        // 2) resolveTargets（parse directives + inventory groupHosts）
+        const targets = resolveTargets(text, groupHostsRef.current);
+        // 3) streamAgent（MessagePort）+ 侧 tee
+        let stop: (() => void) | undefined;
+        const stream = new ReadableStream<AgentStreamEvent>({ start(controller) {
+          stop = agentClient.streamPrompt(agentIdRef.current!, text, targets, (e) => {
+            controller.enqueue(e);            // 转录
+            sideDispatch(e);                   // 侧状态 tee（hosts/confirmation）
+          });
+          abortSignal.addEventListener("abort", () => { stop?.(); controller.error(abortSignal.reason); }, { once:true });
+        }, cancel() { stop?.(); } });
+        // 4) 消费累积 → yield ThreadMessageLike（text + tool-call parts）
+        const reader = stream.getReader(); let acc: ThreadMessageLike = { role:"assistant", content:[] };
+        while (true) { const { done, value: e } = await reader.read(); if (done) break;
+          acc = applyEventToSnapshot(acc, e);   // messageStart/Update/End 累积 text；toolStart/End 追加 tool-call part
+          yield { content: acc.content, status: e.type==="agentEnd" ? { type:"complete" } : { type:"running" } }; }
+      }
+    };
+    export function useAgentRuntime(agentClient, agentIdRef, groupHostsRef, sideDispatch) {
+      return useLocalRuntime(ipcAgentModel);
     }
-  }
-  return map;
-}
-```
+    ```
+    （per 指南 step 4：`ChatModelAdapter` yield 完整快照；renderer 累积；cleanup 关 port = Stop。）
+  - `MessageViews.tsx`：`ThreadPrimitive.Messages` render-prop 分派 user/assistant；user `MessagePrimitive.Parts components={{Text:DirectiveText}}`；assistant `MessagePrimitive.GroupedParts` 内 `text`→文本、`tool-call`→`part.toolUI ?? <ToolFallback/>`；`useAssistantToolUI({toolName:"host_exec", render:HostExecCard})` 注册工具卡（从 part 的 `args.hostId`/`args.command`/`result`/`state` 渲染命令/输出/状态）。
+  - `AgentPage.tsx`：状态拥有者（`agentIdRef`/`hosts`/`confirmation`/`providers`/`providerId`/`sessions`）；effect 建 agent（`agentClient.create({providerConfigId, vaultId, targets})`，`vaultId` 取 `useInventoryStore.activeVaultId`）、cleanup close；`sideDispatch` 用 `reduceHostProgress`/`reduceConfirmation` 更新侧状态；`AssistantRuntimeProvider runtime={useAgentRuntime(...)}` 包面板；`aiSessionApi` 历史加载（用 assistant-ui thread API 把 saved `AiAgentMessage[]` 灌入 thread）；右侧 `ProgressPanel`、`ConfirmCard`、`HostErrorBanner`。
 
-> 说明：`useHostProgress` 的完整推进逻辑（connecting→executing→done/error、command step 的 id 用 `toolCallId`、output 截断、等待确认标记）与 `AiAssistantPanel` 对 `toolStart/toolUpdate/toolEnd/toolConfirmationRequired` 的处理一致；此处以最小实现通过单测，交互细节在 M3 验收阶段细化。
+> **转录 vs 执行双通路：** 转录由 assistant-ui runtime 拥有（`ChatModelAdapter` yield 快照），执行（hosts/confirmation）由 adapter 的 `sideDispatch(e)` tee 到 AgentPage 侧状态。**不存第二份转录副本**。确认流：`toolConfirmationRequired`（tee 到侧状态）→ ConfirmCard → 用户决定 → `agentClient.decideTool`（invoke）→ 主进程 `decideTool` → agent 继续 → 流恢复 → adapter yield 更新后的 tool-call part。
 
-- [ ] **Step 5: 运行测试确认通过**
-
-Run: `npx vitest run tests/src/features/agent/ProgressPanel.test.tsx`
-Expected: PASS
-
-- [ ] **Step 6: 提交**
-
-```bash
-git add src/features/agent/ProgressPanel.tsx src/features/agent/progressTypes.ts src/features/agent/useHostProgress.ts src/features/agent/AgentPage.tsx tests/src/features/agent/ProgressPanel.test.tsx
-git commit -m "feat(agent): add per-host operation progress panel"
-```
+- [ ] **Step 1: 写失败测试** — `agentItems.test.ts`：喂 `toolStart`(hostId=h1)+`toolEnd` 序列，断言 `reduceHostProgress` 产出 h1 的命令步/状态。`AgentPage.test.tsx`：注入 fake `AgentClient`（`streamPrompt` 推 fake `AgentEvent` 流），渲染后 `client.create` 被调；composer 键入 `uptime{Enter}` 后 assistant 消息出现、`streamPrompt` 收到 `["h1"]` 之类 targets、`agentEnd` 后 assistant-ui 进入 idle。**覆盖 `agentEnd` 缺失时由 prompt resolve/abort 同步 phase** 的边角（commit `30c521c`/`94b4050` 修复过的回归：只推 `messageEnd` 不推 `agentEnd`，stream 结束后 running 也应变 false）。
+- [ ] **Step 2: 运行确认失败**
+- [ ] **Step 3: 实现 `agentItems.ts`**（侧状态 reducer，纯函数单测）。
+- [ ] **Step 4: 实现 `useAgentRuntime.ts` + `MessageViews.tsx` + `AgentPage.tsx`**；`HostExecCard`（Buzz token，`<code>`/`<pre>`+`scroll-thin`）。
+- [ ] **Step 5: 运行确认通过** — `npx vitest run tests/renderer/features/agent`
+- [ ] **Step 6: 提交** — `git commit -m "feat(agent): agentpage on useLocalRuntime/ChatModelAdapter (electron guide pattern)"`
 
 ---
 
-### Task 9: 确认卡片 + 凭据缺失引导（UX 补全）
+### Task 11: 左侧 `Agent` destination + 导航接线
 
 **Files:**
-- Create: `src/features/agent/ConfirmCard.tsx`
-- Create: `src/features/agent/HostErrorBanner.tsx`
-- Modify: `src/features/agent/AgentPage.tsx`
-- Test: `tests/src/features/agent/ConfirmCard.test.tsx`
+- Modify: `src/renderer/features/workspace/{WorkspaceShell,PrimaryNavigation}.tsx`
+- Modify: `src/renderer/app/App.tsx`
+- Test: `tests/renderer/features/workspace/PrimaryNavigation.test.tsx`、`tests/renderer/features/agent/AgentPage.destination.test.tsx`
 
 **Interfaces:**
-- Consumes: `AiToolConfirmation`、`toolConfirmationRequired` 事件、`agent_end` 的 `errorMessage`。
-- Produces: `ConfirmCard({ confirmation, onDecide })`、`HostErrorBanner({ hostId, errorCode, onConnect })`。
+- Consumes: `Destination = "servers"|"sftp"|"forwarding"|"history"|"terminal"`（`WorkspaceShell.tsx:18`）；`destinations` 数组（`{id:Destination,label,icon:LucideIcon}`，`PrimaryNavigation.tsx:9`）；`App.tsx` 三元 render 链（`App.tsx:306` 起）+ `api?:...=realApi` 注入默认（`App.tsx:55`）。
+- Produces: `Destination` 加 `"agent"`；`destinations` 加 `{id:"agent",label:"Agent",icon:Sparkles}`；`App.tsx` render 链加 `: destination==="agent" ? <AgentPage agentClient={agentApi} providerApi={aiConfigApi} /> :`。
 
-- [ ] **Step 1: 写失败测试**
-
-```tsx
-// tests/src/features/agent/ConfirmCard.test.tsx
-import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { ConfirmCard } from "@/features/agent/ConfirmCard";
-
-describe("ConfirmCard", () => {
-  it("shows reason and approves on button click", async () => {
-    const onDecide = vi.fn();
-    render(<ConfirmCard confirmation={{ confirmationId: "c1", level: "high", reason: "destructive", projectedEffect: "deletes logs" }} onDecide={onDecide} />);
-    expect(screen.getByText(/destructive/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /approve/i }));
-    expect(onDecide).toHaveBeenCalledWith(true);
-  });
-});
-```
-
-- [ ] **Step 2: 运行测试确认失败**
-
-Run: `npx vitest run tests/src/features/agent/ConfirmCard.test.tsx`
-Expected: FAIL
-
-- [ ] **Step 3: 实现 ConfirmCard 与 HostErrorBanner（沿用 AiAssistantPanel 确认弹层样式）**
-
-```tsx
-// src/features/agent/ConfirmCard.tsx
-import { AlertTriangle } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import type { AiToolConfirmation } from "@/features/ai/aiAgentTypes";
-
-export function ConfirmCard({ confirmation, onDecide }: { confirmation: AiToolConfirmation; onDecide: (approved: boolean) => void }) {
-  return (
-    <div role="dialog" aria-modal="true" aria-label="Confirm command" className="absolute inset-0 grid place-items-center bg-black/70 p-5">
-      <div className="w-full max-w-sm rounded-xl border border-coral-red/40 bg-obsidian p-4 shadow-xl">
-        <div className="flex items-center gap-2 text-coral-red"><AlertTriangle size={16} /> Confirmation required</div>
-        <p className="mt-3 text-sm text-mist">{confirmation.reason}</p>
-        <p className="mt-1 text-xs text-fog">{confirmation.projectedEffect}</p>
-        <div className="mt-4 flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={() => onDecide(false)}>Deny</Button>
-          <Button type="button" onClick={() => onDecide(true)}>Approve</Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-```
-
-- [ ] **Step 4: 运行测试确认通过**
-
-Run: `npx vitest run tests/src/features/agent/ConfirmCard.test.tsx`
-Expected: PASS
-
-- [ ] **Step 5: 接入 AgentPage（`toolConfirmationRequired` → ConfirmCard；`AGENT_HOST_CREDENTIAL_MISSING` → HostErrorBanner）**
-
-- [ ] **Step 6: 提交**
-
-```bash
-git add src/features/agent/ConfirmCard.tsx src/features/agent/HostErrorBanner.tsx src/features/agent/AgentPage.tsx tests/src/features/agent/ConfirmCard.test.tsx
-git commit -m "feat(agent): add confirmation card and credential-missing guidance"
-```
+- [ ] **Step 1–5:** TDD（`PrimaryNavigation` 渲染 `Agent` 链接；点击切 `"agent"`；`AgentPage` 挂载）。注意 `"terminal"` 不在 nav（仅程序可达），`"agent"` 进 nav。提交 `feat(agent): add left-sidebar agent destination + nav entry`。
 
 ---
 
-### Task 10: 供应商/会话管理 + 键盘与空态 + 全量测试
+### Task 12: ProgressPanel + ConfirmCard + 凭据缺失 + 供应商/会话/空态
 
 **Files:**
-- Modify: `src/features/agent/AgentPage.tsx`
-- Test: `tests/src/features/agent/AgentPage.test.tsx`（扩展）
+- Create: `src/renderer/features/agent/{ProgressPanel,ConfirmCard,HostErrorBanner,HistoryDropdown}.tsx`
+- Modify: `src/renderer/features/agent/AgentPage.tsx`
+- Test: `tests/renderer/features/agent/{ProgressPanel,ConfirmCard}.test.tsx`、扩展 `AgentPage.test.tsx`
 
 **Interfaces:**
-- Consumes: `aiConfigApi.list`（`src/features/ai/aiApi.ts`）、`aiSessionApi`（`src/features/ai/aiSessionApi.ts`）、`AiAssistantPanel` 的供应商下拉/历史交互模式（`src/features/ai/AiAssistantPanel.tsx:72-133, 170-260`）。
+- Produces: `ProgressPanel({hosts, onDecide?})`（按主机分组，phase 用 `Check`/`TriangleAlert`/`Loader2 spin`，命令卡可展开 output，`awaitingConfirmation` 显 Approve/Deny）；`ConfirmCard({confirmation,onDecide})`（沿用 `AiAssistantPanel` 确认弹层样式，`agentClient.decideTool`）；`HostErrorBanner({hostIds,onConnect})`（凭据缺失引导去 Servers 页）；`HistoryDropdown`（new/load/delete/rename）；供应商 `<select>` + 空态（无可用供应商→"Configure an AI provider in Settings…"）+ 加载态。
 
-- [ ] **Step 1: 扩展测试（供应商加载 + 空态 + 会话历史）**
-
-```tsx
-// tests/src/features/agent/AgentPage.test.tsx 追加
-it("shows a configure-providers empty state when none usable", async () => {
-  const client = fakeClient();
-  // 注入空供应商列表的 fake providerApi
-  render(<AgentPage agentClient={client} providerApi={{ list: vi.fn(async () => []) }} />);
-  expect(await screen.findByText(/configure an ai provider/i)).toBeInTheDocument();
-});
-```
-
-- [ ] **Step 2: 运行测试确认失败**
-
-Run: `npx vitest run tests/src/features/agent/AgentPage.test.tsx`
-Expected: FAIL（空态文案缺失）
-
-- [ ] **Step 3: 实现供应商加载 + 会话历史 + 键盘快捷键 + 空态/加载态**
-
-```tsx
-// AgentPage.tsx 内
-//  1) 顶部供应商 select（复用 AiAssistantPanel:482-494 的 select 样式）
-//  2) 新建会话（agentClient.create）与历史（aiSessionApi.list/load/delete）
-//  3) MentionComposer 已处理 Enter 发送；补齐 Esc 关闭弹层（ComposerPrimitive 自带）
-//  4) 空态：无可用供应商时显示 "Configure an AI provider in Settings…"
-//  5) 加载态：loading 时显示 "Loading providers…"
-```
-
-- [ ] **Step 4: 运行测试确认通过**
-
-Run: `npx vitest run tests/src/features/agent`
-Expected: PASS
-
-- [ ] **Step 5: 全量测试 + typecheck**
-
-Run: `pnpm typecheck`
-Expected: PASS（无 TS 错误）
-
-Run: `pnpm test`
-Expected: PASS（全量 vitest 通过）
-
-- [ ] **Step 6: 提交**
-
-```bash
-git add src/features/agent/AgentPage.tsx tests/src/features/agent/AgentPage.test.tsx
-git commit -m "feat(agent): add provider selection, session history, and empty states"
-```
+- [ ] **Step 1–5:** TDD（`ProgressPanel` 按主机分组、`awaitingConfirmation` 卡有 Approve/Deny；`ConfirmCard` 显 reason 且 Approve 触发 `onDecide(true)`；`AgentPage` 空供应商列表显配置引导）。实现接入 `AgentPage`（侧状态 `confirmation`→ConfirmCard；派生 `credentialHostIds`→HostErrorBanner）。提交 `feat(agent): progress panel, confirm card, credential guidance, ux`。
 
 ---
 
-### Task 11: 集成验收（走通核心场景）与 e2e 冒烟
+### Task 13: 集成验收 + e2e 冒烟 + 回归保护
 
 **Files:**
-- Modify: `e2e/agent.spec.ts`（新建）与 `e2e-electron/`（冒烟）
-- Test: `tests/electron/domains/agent/integration.test.ts`
+- Test: `tests/main/domains/agent/integration.test.ts`、`tests/renderer/features/agent/agent.e2e.test.tsx`
+- Create: `e2e/agent.spec.ts`（曾在 `2d169ff` 被删，重建）
 
-**Interfaces:**
-- Consumes: 全部已实现任务。
-
-- [ ] **Step 1: 写集成测试（多主机编排冒烟）**
-
-```ts
-// tests/electron/domains/agent/integration.test.ts
-// 用 fake SshHeadlessRuntime 记录 exec 调用顺序，断言「在 h1 采集 docker ps → 在 h2 执行 docker run」的工具调用序列
-```
-
-- [ ] **Step 2: 运行集成测试**
-
-Run: `npx vitest run tests/electron/domains/agent/integration.test.ts`
-Expected: PASS（确认跨主机工具调用序列成立）
-
-- [ ] **Step 3: e2e 冒烟（打开 Agent 面板 + `@` 弹出选择器）**
-
-```ts
-// e2e/agent.spec.ts
-test("opens the Agent panel and shows the mention picker on @", async ({ page }) => {
-  await page.goto("/");
-  await page.getByRole("link", { name: "Agent" }).click();
-  await page.getByLabel("Message agent").fill("@");
-  await expect(page.getByText("Servers")).toBeVisible();
-  await expect(page.getByText("Groups")).toBeVisible();
-});
-```
-
-- [ ] **Step 4: 运行 e2e 冒烟**
-
-Run: `pnpm test:e2e -- e2e/agent.spec.ts`
-Expected: PASS
-
-- [ ] **Step 5: 走查验收清单（对照 PRD §7）**
-
-- [ ] M1 无头通道 + host_exec + targets 经风险门控 → 完成
-- [ ] M2 `@` 提及 + 面板骨架 → 完成
-- [ ] M3 右侧进度区 + 确认卡 + 凭据缺失引导 → 完成
-- [ ] M4 供应商/会话/键盘/空态 → 完成
-
-- [ ] **Step 6: 提交**
-
-```bash
-git add e2e/agent.spec.ts e2e-electron/ tests/electron/domains/agent/integration.test.ts
-git commit -m "test(agent): integration and e2e smoke for multi-host ops"
-```
+- [ ] **Step 1: 主进程集成测试** — fake `SshHeadlessRuntime` 记录 exec 序列，断言「h1 `docker ps` → h2 `docker run`」跨主机调用序列成立、白名单生效（越权主机不执行）。
+- [ ] **Step 2: 渲染层 e2e 组件测试** — fake `streamPrompt` 推完整 `AgentEvent` 流（`agentStart`→`messageStart`→`toolStart`→`toolEnd`→`agentEnd`），断言消息流+工具卡+ProgressPanel+收尾 phase 正确；port-close（stop）触发 abort。
+- [ ] **Step 3: Playwright 冒烟**（`e2e/agent.spec.ts`）— 打开 Agent 面板、`@` 弹 Servers/Groups、选 host 后输入框含 directive、发送后面板 running。
+- [ ] **Step 4: 走查验收清单（对照 PRD §7）**
+  - [ ] **M1** 后端多主机：无头通道+`host_exec`/`host_list`+targets+风险门控+契约测试（Task 2–6）
+  - [ ] **M2** `@` 提及+面板骨架+消息/工具卡渲染（Task 7–11）
+  - [ ] **M3** 右侧进度区+确认卡+凭据缺失引导（Task 12）
+  - [ ] **M4** 供应商/会话/键盘/空态/中止（Task 12）
+- [ ] **Step 5: 全量门禁**
+  - `pnpm typecheck` → PASS
+  - `pnpm test` → PASS
+  - `unset ELECTRON_RUN_AS_NODE && pnpm test:electron` → 真实启动冒烟通过（见 memory `electron-run-as-node-env`）
+  - `pnpm test:e2e` 的 `e2e/agent.spec.ts` 与 `ai-providers`/`sftp` 有已知 baseline 失败（见 memory `browser-e2e-preexisting-failures`），非回归。
+- [ ] **Step 6: 提交** — `git commit -m "test(agent): multi-host integration + e2e smoke + acceptance"`
 
 ---
 
 ## Self-Review
 
-**1. Spec 覆盖：** PRD 的 F1–F9 / N1–N7 / M1–M4 均有对应任务——F1（Task 7）、F2（Task 6）、F3（Task 3/11）、F4（Task 8）、F5（Task 1/5）、F6（Task 9 + agent-runtime 确认流）、F7（Task 10）、F8（Task 9）、F9（无头通道复用 `SshRuntime` host key 机制，未单列任务——已在 Task 1 实现说明与 PRD 6.2 注明沿用现有 `#pending`/`HostKeyDialog` 流程）。N1–N7 写入 Global Constraints。
+**1. Spec 覆盖：** PRD F1–F9/N1–N7/M1–M4 均有对应——F1（Task 11）、F2（Task 7/9）、F3（Task 4/13）、F4（Task 12）、F5（Task 2/5）、F6（Task 4 `#confirm` + Task 12 ConfirmCard）、F7（Task 12）、F8（Task 12 HostErrorBanner）、F9（Task 2 `connectClient` 复用 `#knownHosts`/`hostKeyVerificationRequired` + Task 12 对话框；P1）。N1–N7 写入 Global Constraints（含通信安全：contextIsolation/sandbox/校验 sender+payload/不传 callback）。
 
-**2. 占位符扫描：** 无「TBD/TODO」。所有代码步骤给出真实代码；`#tools`/`#handleEvent`/`#confirm`（Task 3 Step 4）与 `useHostProgress`（Task 8 Step 4）给出行为说明并明确复用现有实现（`AiAgentRuntime.ts:179-350`、`AiAssistantPanel.applyAgentEvent`），因其完整实现依赖现有同构代码，计划内以最小实现 + 单测锁定接口。
+**2. 通信对齐官方 Electron 指南：** Pattern 2「local main process」——`MessagePort` 预加载桥（`src/preload/index.cjs:streamAgent` 用 `MessageChannel`+`postMessage([port2])`）+ data-only 协议（`src/shared/agent-stream.ts`）+ `useLocalRuntime`/`ChatModelAdapter`（Task 10）+ main 校验 sender+payload（`stream-ipc.ts`）+ port-close→abort。Buzz 用 `pi-agent-core` 替代指南的 ai-sdk 后端（不装 `ai`/`@ai-sdk/*`）。指南「tools/reasoning 扩展协议」即 Buzz 的 `AgentEvent`。
 
-**3. 类型一致性：** `host_exec(hostId, command, cwd?, timeoutMs?)` 在 Task 3 定义、Task 5 的 `resolveHeadlessProfile`/`openHost` 与 Task 1 的 `HeadlessExecResult` 类型对齐；`parseDirectives` 返回 `MentionTarget[]` 在 Task 2 定义、Task 3 `expandTargets` 使用；`AiAgentEvent`/`AiAgentMessage`/`AiToolConfirmation` 直接复用 `src/features/ai/aiAgentTypes.ts`，Task 7/8/9 均引用同一类型。`Destination` 增加 `"agent"` 在 Task 7 定义，`PrimaryNavigation`/`App` 使用一致。
+**3. Tailwind v4 纳入：** Task 1 先行全渲染层迁移（`@tailwindcss/upgrade` + `@theme`/`@theme inline`/`@custom-variant dark` + 重命名工具类 + 修正 `var(--color-acid-lime)` 悬空引用），后续 agent UI 任务可直接借 demo v4 className；不引 `@base-ui/react`/lucide@1/zod@4。
+
+**4. 与真实代码对齐：** 路径 `src/main`/`src/renderer`/`src/shared`/`src/preload`；wire 用 `AiAgentMessage`（非 `AgentWireMessage`）；`SshHeadlessRuntime` 用真实 `connectClient`（缓存 `Client`）+ 抽出的 `executeOnClient`（修正原 `executeCommand` bug）；`resolveHeadlessProfile` 用真实 `Host.address`/`identity`；`vaultId` 贯通（Task 4/5/6/8/10）；assistant-ui 0.15.13 真实 API（`unstable_useMentionAdapter` spread、`serialize`/`parse` formatter、`useLocalRuntime`/`ChatModelAdapter`、`Unstable_TriggerPopover*`、`useAssistantToolUI`、`LexicalComposerInput`）；Task 7 Step 2 落地前复核安装版 `.d.ts`。
+
+**5. 占位符：** 无 TBD/TODO。`#confirm`/`#handleEvent` 与 `AiAgentRuntime` 同构（注明照搬行号）；`ChatModelAdapter.run` 的 `applyEventToSnapshot` 给出语义 + 单测锁定接口。
+
+**6. 类型一致性：** `host_exec(hostId,command,cwd?,timeoutMs?)` 在 Task 4 定义、Task 5 `resolveHeadlessProfile` 与 Task 2 `HeadlessExecResult` 对齐；`AgentEvent` 在 shared（`agent-stream.ts`）/main（`agent-types.ts`）/renderer（`agentTypes.ts`）三处同构；`Destination` 加 `"agent"`（Task 11）在 `WorkspaceShell`/`PrimaryNavigation`/`App` 一致。
 
 ---
 
 ## Execution Handoff
 
-**Plan complete and saved to `docs/superpowers/plans/2026-08-05-agent-sidebar.md`. Two execution options:**
+Plan saved to `docs/superpowers/plans/2026-08-05-agent-sidebar.md`（按官方示例 + 官方 Electron 指南 + 真实代码全量重写，纳入 Tailwind v4 升级，取代已删除的 `2026-08-10-replace-assistant-ui-with-ai-sdk-ui.md`）。
 
-**1. Subagent-Driven (recommended)** — 每个任务派发全新 subagent，任务间评审，快速迭代
+**建议顺序（独立 PR 策略）：**
+1. **Task 1（Tailwind v4）独立 PR 先合** —— 全渲染层影响，与 agent 功能正交，单独回归。
+2. **Task 2–6（后端 + 通信层）** —— 可独立绿；Task 6 的 MessagePort stream-ipc 是通信核心。
+3. **Task 7（assistant-ui 依赖 + API 复核）** —— 落地前 `.d.ts` 校验。
+4. **Task 8–12（渲染层）** —— 依赖 Task 7；Task 10 是 runtime 桥核心。
+5. **Task 13（集成/e2e/验收）**。
 
-**2. Inline Execution** — 在本会话按 executing-plans 批量执行，带检查点
-
-**Which approach?**
+**Two execution options:** (1) Subagent-Driven（推荐，`superpowers:subagent-driven-development`）；(2) Inline（`superpowers:executing-plans`）。**前置：** 先 `unset ELECTRON_RUN_AS_NODE` 再跑 `pnpm test:electron`。

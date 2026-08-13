@@ -87,7 +87,7 @@ Buzz 已具备完整的自研 AI Agent 能力：
 |---|---|---|
 | N1 | 安全：凭据不落 IPC | 凭据解析与 SSH 建连全部在主进程完成，IPC 只传 `hostId`，与 `AGENTS.md` 安全要求一致 |
 | N2 | 安全：风险门控 | 所有远程命令执行必须经 `AiShellRiskRuntime` 评估；危险命令必须经用户确认 |
-| N3 | 兼容性：版本约束 | Electron ^43、React ^19、TypeScript ^5.6、Vite ^5；新依赖需满足现有约束 |
+| N3 | 兼容性：版本约束 | Electron ^43、React ^19、TypeScript ^5.6、Vite ^5；Tailwind 升至 ^4（全渲染层）；新依赖需满足现有约束 |
 | N4 | 一致性：设计系统 | 新增 UI 沿用 Buzz 设计 token（`tailwind.config.ts` 的 `void/carbon/…/acid-lime` 等）与 shadcn 风格 |
 | N5 | 可测试性 | 主进程命令与领域逻辑需命令契约测试（`AGENTS.md`）；渲染层沿用 `tests/src` 注入 fake 的模式 |
 | N6 | 并发上限 | 同一 Agent 单任务内主机连接并发数上限 4（防资源耗尽） |
@@ -193,7 +193,7 @@ Buzz 已具备完整的自研 AI Agent 能力：
 - `SshRuntime`（`src/main/domains/ssh/runtime.ts`）持有一个 `Client`（ssh2）列表，`open()` 建立交互式 shell（PTY）；凭据来自 `SshCredentialVault`（`#credentials.get(credentialRef)`），host key 校验/确认走 `#pending` + `#knownHosts`。
 - 库存侧 `InventoryRepository` 提供 `listHosts(vaultId)` 等；渲染层 `useInventoryStore` 持有 hosts/groups；`getHostCredential(host)`（`src/renderer/features/ssh/savedCredentials.ts`）可把 `credentialRef` 解析为认证材料。
 - 所有 IPC 命令在 `src/shared/ipc/command-names.ts` allowlist + 各 domain `commands.ts` zod 校验；新命令必须注册 + 契约测试（`AGENTS.md`）。
-- 现有 IPC 流式机制 `emitStreamEvent(streamId, event)` / 有限流（`ai_agent_prompt`）可直接复用。
+- 现有 IPC 流式机制 `emitStreamEvent(streamId, event)` / 有限流（`ai_agent_prompt`）仍用于右侧 `AiAssistantPanel`；**Agent 栏的流式 prompt 改走专用 `agent:stream` `MessagePort` 通道**（见 §6.4，参考官方 Electron 指南），与既有 dispatcher 互不干扰。
 
 ### 6.2 新增能力：无头（headless）SSH 主机通道
 
@@ -214,16 +214,21 @@ Buzz 已具备完整的自研 AI Agent 能力：
 - 输入解析：发送前解析 `@` directive（`:host[...]{name=id}`）→ 目标 `hostId[]`；将目标列表注入该 turn 的上下文（system/tool hint），并限定 agent 只能用这些目标（越权用未提及主机视为错误）。
 - **风险门控**：`host_exec` 沿用 `AiShellRiskRuntime`；危险命令 → `toolConfirmationRequired` → UI 确认 → 继续/终止。
 
-### 6.4 IPC 变更（最小面）
+### 6.4 Electron ↔ assistant-ui 通信（参考[官方 Electron 指南](https://www.assistant-ui.com/docs/guides/electron) Pattern 2「local main process」）
 
-| 命令 | 说明 |
-|---|---|
-| `agent_create` | 语义不变（providerConfigId），但不再要求 `sshSessionId`（可选），改由渲染层同时传入可选 `targets` |
-| `agent_prompt` | 输入新增 `targets?: string[]`（解析后的 hostId 列表），进入该 turn 上下文 |
-| 其余（steer/abort/decide_tool/close） | 不变 |
-| `inventory_list_hosts` / `inventory_list_groups` | 复用，供渲染层 `@` 选择器拉取数据 |
+通信遵循官方指南：**`MessagePort` 预加载桥 + data-only 协议 + `useLocalRuntime`/`ChatModelAdapter`**，主进程校验 sender + payload，`BrowserWindow` 保持 `contextIsolation:true`/`sandbox:true`/`nodeIntegration:false`，**不通过 IPC 传 callback/`AbortSignal`/`File`**；Stop = port-close → 主进程 abort。Buzz 用自研 `pi-agent-core`/`pi-ai` 替代指南示例里的 `ai`/`@ai-sdk/openai`（**不引入 ai-sdk**）。
 
-> 注：渲染层 `@` 选择器可直接用 `useInventoryStore` 已加载的数据，**无需新增 IPC**；以上 `targets` 语义仅扩展已有 `agent_prompt` 的 schema。
+| 通道 | 形态 | 说明 |
+|---|---|---|
+| `agent:stream`（**流式 prompt**） | 专用 `MessagePort` 通道 | 渲染层 `window.terminus.streamAgent({agentId, text, targets, vaultId?}, onEvent)` 建 `MessageChannel`、`postMessage(channel, req, [port2])`；主进程 `registerAgentStreamIpc` 在 `agent:stream` 上接收 port，校验 `event.sender === mainWindow.webContents && senderFrame === mainFrame` + zod payload，跑 `MultiHostAgentRuntime.prompt(...)` 以 `port.postMessage` 为 emit，`port.once("close") → abort`，结束 `port.close()`。 |
+| `agent_create` / `agent_steer` / `agent_abort` / `agent_decide_tool` / `agent_close`（**生命周期**） | 既有 dispatcher `terminus:invoke` | 简单请求/响应，zod schema + 契约测试。`agent_create` 不再要 `sshSessionId`，改传 `targets?` 与 `vaultId?`。**注意：无 `agent_prompt` 命令**——流式 prompt 走上面的 `MessagePort`。 |
+| `inventory_*` | 复用 | 渲染层 `@` 选择器直接读 `useInventoryStore` 已加载数据，**无需新增 IPC**。 |
+
+**data-only 协议**（`src/shared/agent-stream.ts`，三 bundle 共享）：`AgentStreamRequest = {agentId, text, targets, vaultId?}`；`AgentStreamEvent = AgentEvent`（`agentStart`/`messageStart|Update|End`/`toolStart|Update|End`/`toolConfirmationRequired`/`agentEnd`/`historySaveFailed`）。指南说「tools/reasoning 需显式扩展协议」——`AgentEvent` 的 tool/confirmation 事件即此扩展。
+
+**渲染层适配（指南 step 4）：** `useLocalRuntime(ipcAgentModel)`，`ChatModelAdapter.run` 取最新 user message + `resolveTargets`（parse directives + group 展开）→ `streamAgent` → 消费 `AgentEvent` 流并 **yield 累积 `ThreadMessageLike` 快照**（text + tool-call parts，工具卡经 `useAssistantToolUI({toolName:"host_exec"})`）；同时把 `toolConfirmationRequired`/hosts 进度事件 **tee** 给 AgentPage 侧状态（ProgressPanel + ConfirmCard）。转录状态由 assistant-ui runtime 拥有，侧状态由事件派生（单一权威副本）。
+
+> 设计要点：转录（消息/工具卡）走 assistant-ui runtime；执行（进度/确认）走侧 tee。确认回执 `agentClient.decideTool`（invoke）→ 主进程 `decideTool` → agent 继续 → 流恢复。
 
 ### 6.5 事件流（复用现有 `AiAgentEvent`）
 
@@ -272,10 +277,13 @@ Buzz 已具备完整的自研 AI Agent 能力：
 
 | 包 | 用途 | 备注 |
 |---|---|---|
-| `@assistant-ui/react` | 聊天原语 + `@` 提及 | **pin 精确版本**；`unstable_` API 封装于 `src/renderer/features/agent/composer/` |
-| （可选）`@assistant-ui/react-lexical` | 富文本 chip 输入 | 仅在文本态 directive 体验不足时引入 |
+| `@assistant-ui/react` | 聊天原语 + `@` 提及 + `useLocalRuntime`/`ChatModelAdapter`（Electron 指南 Pattern 2 的运行时桥） | **pin 精确版本**；`unstable_` API 封装于 `src/renderer/features/agent/composer/` 与 `src/renderer/components/assistant-ui/` |
+| `@assistant-ui/react-lexical` | 富文本 directive chip 输入（`LexicalComposerInput`） | 文本态 directive 体验；pin 精确版本 |
+| `@tailwindcss/postcss`（+ `tailwindcss` ^4，去 `autoprefixer`，`tailwindcss-animate`→`tw-animate-css`） | 升级 Tailwind v3.4 → v4 | 全渲染层；见实现计划 Task 1 |
 
-> 不引入：`ai`/`@ai-sdk/react`（无 useChat 输入端）、`@copilotkit/*`（框架绑定过重）、OpenUI（不适用）。
+> **通信依赖**：`MessagePort` 预加载桥 + `useLocalRuntime`/`ChatModelAdapter` 均来自 `@assistant-ui/react` + Electron 内置，**无额外通信库**。
+>
+> 不引入：`ai`/`@ai-sdk/*`（Buzz 用 `pi-agent-core`/`pi-ai` 作后端，不装 ai-sdk；指南示例的 `streamText` 由 `MultiHostAgentRuntime.prompt` 替代）、`@assistant-ui/react-ai-sdk`（不用 HTTP `AssistantChatTransport`）、`@base-ui/react`（与现有 Radix 重复）、`@copilotkit/*`（框架绑定过重）、`@assistant-ui/react-markdown`（本期不做富文本 markdown）、OpenUI（不适用）。
 
 ---
 

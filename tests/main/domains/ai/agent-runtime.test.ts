@@ -133,6 +133,14 @@ describe("Electron Pi Agent runtime", () => {
           ],
         },
       });
+    expect(events.filter((event) => event.type === "messageUpdate"))
+      .not.toContainEqual(expect.objectContaining({
+        message: expect.objectContaining({
+          content: expect.arrayContaining([
+            expect.objectContaining({ type: "thinking", thinking: "TheThe" }),
+          ]),
+        }),
+      }));
     expect(history.save).toHaveBeenCalledWith(expect.objectContaining({
       messages: expect.arrayContaining([
         expect.objectContaining({

@@ -209,10 +209,13 @@ function context(id: string) {
 }
 
 function validate(input: SaveAiSession): void {
-  if (!input.title.trim() || !input.providerConfigId.trim() || !input.sshSessionId.trim()) {
+  // Multi-host Agent sessions do not belong to one SSH session. They use an
+  // empty sshSessionId so the renderer can distinguish them from terminal AI
+  // sessions while still sharing the encrypted history store.
+  if (!input.title.trim() || !input.providerConfigId.trim()) {
     throw new DomainError(
       "AI_HISTORY_INVALID",
-      "Session title, provider, and SSH session are required.",
+      "Session title and provider are required.",
     );
   }
 }

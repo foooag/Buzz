@@ -1,112 +1,54 @@
-import { describe, expect, it, vi } from "vitest";
-import {
-  createAgentHostResolver,
-  resolveHeadlessProfile,
-} from "../../../../src/main/domains/agent/host-resolution.js";
-import type { Host } from "../../../../src/main/domains/inventory/models.js";
-import type { InventoryRepository } from "../../../../src/main/domains/inventory/repository.js";
-import type { SshCredentialVault } from "../../../../src/main/domains/ssh/credential-vault.js";
-
-const host = {
-  id: "h1",
-  vaultId: "vault-1",
-  groupId: "g1",
-  name: "web-prod-01",
-  address: "192.168.1.10",
-  username: "root",
-  authKind: "password",
-  credentialRef: "cred-1",
-  port: 22,
-} as unknown as Host;
+import { describe, expect, it } from "vitest";
+import { resolveHeadlessProfile } from "../../../../src/main/domains/agent/host-resolution";
+import type { Host } from "../../../../src/main/domains/inventory/models";
 
 describe("resolveHeadlessProfile", () => {
-  it("builds an SSH profile from inventory host and credential", () => {
-    expect(resolveHeadlessProfile(host, {
-      authKind: "password",
-      credentialRef: "cred-1",
-    })).toEqual({
+  it("maps an inventory host to an SSH profile", () => {
+    expect(resolveHeadlessProfile(host({
+      address: "db.example.test",
+      port: 2202,
+      authKind: "privateKey",
+      credentialRef: "credential-1",
+      identity: "identity-1",
+    }))).toEqual({
       hostId: "h1",
-      hostname: "192.168.1.10",
-      port: 22,
-      username: "root",
-      authKind: "password",
-      credentialRef: "cred-1",
-      identityId: null,
+      hostname: "db.example.test",
+      port: 2202,
+      username: "deploy",
+      authKind: "privateKey",
+      credentialRef: "credential-1",
+      identityId: "identity-1",
       keepaliveInterval: null,
     });
   });
+
+  it("uses SSH defaults without resolving credentials", () => {
+    expect(resolveHeadlessProfile(host())).toMatchObject({
+      port: 22,
+      authKind: "password",
+      credentialRef: "",
+      identityId: null,
+    });
+  });
 });
 
-describe("createAgentHostResolver", () => {
-  it("resolves a profile and group host map from the inventory", async () => {
-    const inventory = {
-      listVaults: vi.fn(() => [{ id: "vault-1", name: "Local vault" }]),
-      listHosts: vi.fn(() => [host]),
-    } as unknown as InventoryRepository;
-    const credentials = {
-      get: vi.fn(async () => ({ type: "password", password: "secret" })),
-    } as unknown as SshCredentialVault;
-    const resolver = createAgentHostResolver(inventory, credentials);
-
-    await expect(resolver.resolveProfile("h1")).resolves.toMatchObject({
-      hostId: "h1",
-      hostname: "192.168.1.10",
-    });
-    expect(resolver.groupHosts()).toEqual({ g1: ["h1"] });
-  });
-
-  it("reports a missing credential for an inventory host", async () => {
-    const inventory = {
-      listVaults: vi.fn(() => [{ id: "vault-1", name: "Local vault" }]),
-      listHosts: vi.fn(() => [{ ...host, credentialRef: undefined }]),
-    } as unknown as InventoryRepository;
-    const resolver = createAgentHostResolver(
-      inventory,
-      { get: vi.fn() } as unknown as SshCredentialVault,
-    );
-    await expect(resolver.resolveProfile("h1")).rejects.toMatchObject({
-      code: "AGENT_HOST_CREDENTIAL_MISSING",
-    });
-  });
-
-  it("reports a host that is not in the inventory", async () => {
-    const inventory = {
-      listVaults: vi.fn(() => [{ id: "vault-1", name: "Local vault" }]),
-      listHosts: vi.fn(() => []),
-    } as unknown as InventoryRepository;
-    const resolver = createAgentHostResolver(
-      inventory,
-      { get: vi.fn() } as unknown as SshCredentialVault,
-    );
-    await expect(resolver.resolveProfile("ghost")).rejects.toMatchObject({
-      code: "AGENT_HOST_NOT_FOUND",
-    });
-  });
-
-  it("resolves mention labels to inventory hosts and groups", () => {
-    const inventory = {
-      listVaults: vi.fn(() => [{ id: "vault-1", name: "Local vault" }]),
-      listHosts: vi.fn(() => [host]),
-      listGroups: vi.fn(() => [{
-        id: "g1",
-        vaultId: "vault-1",
-        parentId: null,
-        name: "Production",
-      }]),
-    } as unknown as InventoryRepository;
-    const resolver = createAgentHostResolver(
-      inventory,
-      { get: vi.fn() } as unknown as SshCredentialVault,
-    );
-
-    expect(resolver.resolveMentionLabel("web-prod-01")).toEqual({
-      type: "host",
-      id: "h1",
-    });
-    expect(resolver.resolveMentionLabel("Production")).toEqual({
-      type: "group",
-      id: "g1",
-    });
-    expect(resolver.resolveMentionLabel("missing")).toBeUndefined();
-  });
-});
+function host(overrides: Partial<Host> = {}): Host {
+  return {
+    id: "h1",
+    vaultId: "v1",
+    groupId: null,
+    name: "Database",
+    address: "127.0.0.1",
+    username: "deploy",
+    tags: [],
+    notes: "",
+    startupCommands: [],
+    env: {},
+    startupSnippets: [],
+    label: "",
+    lastConnected: "",
+    createdAt: "2026-08-11T00:00:00.000Z",
+    updatedAt: "2026-08-11T00:00:00.000Z",
+    ...overrides,
+  };
+}

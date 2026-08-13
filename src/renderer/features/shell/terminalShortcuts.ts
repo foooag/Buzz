@@ -59,6 +59,10 @@ export function useTerminalShortcuts(actions: TerminalShortcutActions) {
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
+  // xterm keeps keyboard focus in an internal textarea. It is an editable
+  // element technically, but app-level terminal shortcuts must continue to
+  // work while the terminal has focus.
+  if (target.closest(".terminal-pane")) return false;
   return Boolean(
     target.closest("input, textarea, select, [contenteditable='true'], [role='textbox']"),
   );

@@ -424,7 +424,7 @@ export function SftpPanel({ api = sftpApi, keepaliveInterval = 30 }: SftpPanelPr
 
       {visibleError ? (
         <div className="px-5 pb-2.5">
-          <div className="flex items-start gap-2.5 rounded-xl border border-coral-red/30 bg-coral-red/[0.06] px-3.5 py-3">
+          <div className="flex items-start gap-2.5 rounded-xl border border-coral-red/30 bg-coral-red/6 px-3.5 py-3">
             <CircleAlert size={16} className="mt-0.5 shrink-0 text-coral-red" />
             <div className="min-w-0 flex-1">
               <p className="m-0 text-[12.5px] font-semibold text-coral-red">Couldn't connect</p>
@@ -487,6 +487,18 @@ export function SftpPanel({ api = sftpApi, keepaliveInterval = 30 }: SftpPanelPr
               ? () => { void api.mkdirRemote(topRemoteSessionId, joinCwd(topCwd, "new-folder")); }
               : undefined
           }
+          onDragStart={(entry) => {
+            const path = joinCwd(topCwd, entry.name);
+            if (topSourceObj.kind === "local") setPendingLocalPaths([path]);
+            return path;
+          }}
+          onDropEntries={
+            topSourceObj.kind === "remote" && topRemoteSessionId
+              ? (paths) => { void enqueueUpload(topRemoteSessionId, paths, topCwd); }
+              : bottomRemoteSessionId
+                ? (paths) => { void enqueueDownload(bottomRemoteSessionId, paths, topCwd); }
+                : undefined
+          }
         />
         <FilePane
           key={`bottom-${bottomSource}`}
@@ -532,6 +544,18 @@ export function SftpPanel({ api = sftpApi, keepaliveInterval = 30 }: SftpPanelPr
             bottomSourceObj.kind === "remote" && bottomRemoteSessionId
               ? () => { void api.mkdirRemote(bottomRemoteSessionId, joinCwd(bottomCwd, "new-folder")); }
               : undefined
+          }
+          onDragStart={(entry) => {
+            const path = joinCwd(bottomCwd, entry.name);
+            if (bottomSourceObj.kind === "local") setPendingLocalPaths([path]);
+            return path;
+          }}
+          onDropEntries={
+            bottomSourceObj.kind === "remote" && bottomRemoteSessionId
+              ? (paths) => { void enqueueUpload(bottomRemoteSessionId, paths, bottomCwd); }
+              : topRemoteSessionId
+                ? (paths) => { void enqueueDownload(topRemoteSessionId, paths, bottomCwd); }
+                : undefined
           }
         />
       </div>
@@ -698,7 +722,7 @@ function SftpConnectShell({
               id="sftp-host-select"
               value={draftHostId}
               onChange={(event) => setDraftHostId(event.target.value)}
-              className="shrink-0 bg-transparent text-[12.5px] text-mist outline-none"
+              className="shrink-0 bg-transparent text-[12.5px] text-mist outline-hidden"
             >
               <option value="" disabled>Choose a host…</option>
               {hosts.map((h) => (
@@ -719,7 +743,7 @@ function SftpConnectShell({
                 }
               }}
               placeholder="/var/www/shop"
-              className="min-w-0 flex-1 bg-transparent font-mono text-[12.5px] text-mist outline-none placeholder:text-fog/45"
+              className="min-w-0 flex-1 bg-transparent font-mono text-[12.5px] text-mist outline-hidden placeholder:text-fog/45"
             />
             <button
               type="button"
@@ -742,7 +766,7 @@ function SftpConnectShell({
           </div>
 
           {error ? (
-            <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-coral-red/30 bg-coral-red/[0.06] px-3.5 py-3">
+            <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-coral-red/30 bg-coral-red/6 px-3.5 py-3">
               <CircleAlert size={16} className="mt-0.5 shrink-0 text-coral-red" />
               <div className="min-w-0 flex-1">
                 <p className="m-0 text-[12.5px] font-semibold text-coral-red">Couldn't connect</p>
