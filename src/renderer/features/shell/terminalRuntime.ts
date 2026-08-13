@@ -15,7 +15,10 @@ export type TerminalRuntimeOptions = {
 export type TerminalRuntime = {
   open: (container: HTMLElement) => void;
   write: (data: Uint8Array) => void;
-  fit: () => void;
+  // Returns the dimensions after fitting, or undefined when nothing changed.
+  // Callers use this to decide whether the host PTY needs a resize (FitAddon
+  // itself never notifies the host).
+  fit: () => TerminalSize | undefined;
   focus: () => void;
   clear: () => void;
   find: (query: string) => boolean;
@@ -141,6 +144,17 @@ export const createXtermRuntime: TerminalRuntimeFactory = (
       { duration: 180, easing: "ease-out" },
     );
   });
+  const fit = (): TerminalSize | undefined => {
+    if (!openedContainer || openedContainer.closest("[hidden]"))
+      return undefined;
+    const bounds = openedContainer.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return undefined;
+    const before = { cols: terminal.cols, rows: terminal.rows };
+    fitAddon.fit();
+    if (terminal.cols === before.cols && terminal.rows === before.rows)
+      return undefined;
+    return { cols: terminal.cols, rows: terminal.rows };
+  };
 
   return {
     open: (container) => {
@@ -148,7 +162,7 @@ export const createXtermRuntime: TerminalRuntimeFactory = (
       terminal.open(container);
     },
     write: (data) => terminal.write(data),
-    fit: () => fitAddon.fit(),
+    fit,
     focus: () => terminal.focus(),
     clear: () => terminal.clear(),
     find: (query) => searchAddon.findNext(query),
@@ -165,7 +179,7 @@ export const createXtermRuntime: TerminalRuntimeFactory = (
       terminal.options.fontSize = nextOptions.fontSize;
       terminal.options.macOptionIsMeta = nextOptions.optionAsMeta;
       terminal.options.scrollback = nextOptions.scrollback;
-      fitAddon.fit();
+      fit();
     },
     dimensions: () => ({ cols: terminal.cols, rows: terminal.rows }),
     onData: (listener) => terminal.onData(listener),

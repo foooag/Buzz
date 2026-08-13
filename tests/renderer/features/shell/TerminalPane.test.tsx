@@ -149,6 +149,45 @@ describe("TerminalPane", () => {
     vi.useRealTimers();
   });
 
+  it("ignores resize notifications while its session is hidden", () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    const view = render(
+      <div hidden>
+        <TerminalPane
+          paneId="pane-1"
+          sessionId="session-1"
+          api={harness.api}
+          eventBus={harness.eventBus}
+          runtimeFactory={harness.runtimeFactory}
+          resizeObserverFactory={harness.resizeObserverFactory}
+          themeId="pro"
+        />
+      </div>,
+    );
+
+    act(() => {
+      harness.resize();
+      vi.advanceTimersByTime(50);
+    });
+
+    expect(harness.runtime.fit).not.toHaveBeenCalled();
+    expect(harness.api.resize).not.toHaveBeenCalled();
+
+    view.container.firstElementChild?.removeAttribute("hidden");
+    act(() => {
+      harness.resize();
+      vi.advanceTimersByTime(50);
+    });
+
+    expect(harness.runtime.fit).toHaveBeenCalledOnce();
+    expect(harness.api.resize).toHaveBeenCalledWith("session-1", {
+      cols: 80,
+      rows: 24,
+    });
+    vi.useRealTimers();
+  });
+
   it("updates theme in place and disposes every runtime resource", () => {
     const harness = createHarness();
     const view = render(

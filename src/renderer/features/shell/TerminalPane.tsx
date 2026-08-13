@@ -62,6 +62,12 @@ export function TerminalPane({
     let lastSize: TerminalSize | undefined;
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     const observer = resizeObserverFactory(() => {
+      // Keep-alive sessions sit below an ancestor with the `hidden` attribute.
+      // Fitting in that state is unsafe: FitAddon can resolve `width: 100%` as
+      // 100 pixels and shrink both xterm and the remote PTY to only a handful
+      // of columns. Output received before the session is shown again then
+      // arrives permanently hard-wrapped to that bogus width.
+      if (container.closest("[hidden]")) return;
       runtime.fit();
       const size = runtime.dimensions();
       if (lastSize?.cols === size.cols && lastSize.rows === size.rows) return;

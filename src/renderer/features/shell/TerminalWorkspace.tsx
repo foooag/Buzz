@@ -35,6 +35,7 @@ import {
 } from "../settings/terminalPreferences";
 
 type TerminalWorkspaceProps = {
+  sessionId: string;
   api: TerminalApi;
   eventBus: TerminalEventBus;
   runtimeFactory?: TerminalRuntimeFactory;
@@ -59,6 +60,7 @@ type TerminalWorkspaceProps = {
 };
 
 export function TerminalWorkspace({
+  sessionId,
   api,
   eventBus,
   runtimeFactory,
@@ -80,10 +82,8 @@ export function TerminalWorkspace({
 }: TerminalWorkspaceProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [aiOpen, setAiOpen] = useState(true);
-  const activeSessionId = useTerminalStore((state) => state.activeSessionId);
-  const session = useTerminalStore((state) =>
-    state.activeSessionId ? state.sessions[state.activeSessionId] : undefined,
-  );
+  const session = useTerminalStore((state) => state.sessions[sessionId]);
+  const isActive = useTerminalStore((state) => state.activeSessionId === sessionId);
   const splitActivePane = useTerminalStore((state) => state.splitActivePane);
   const closePane = useTerminalStore((state) => state.closePane);
   const setActivePane = useTerminalStore((state) => state.setActivePane);
@@ -138,16 +138,19 @@ export function TerminalWorkspace({
   }, [api, onTerminalEvent, restartSession, session]);
 
   const closeActivePane = useCallback(async () => {
-    if (!session || !activeSessionId) return;
+    if (!session) return;
     const pane = findPane(session.root, session.activePaneId);
     if (!pane) return;
     await api.close(pane.sessionId);
-    closePane(activeSessionId, pane.paneId);
+    closePane(session.id, pane.paneId);
     if (useTerminalStore.getState().sessionOrder.length === 0) onEmpty();
-  }, [activeSessionId, api, closePane, onEmpty, session]);
+  }, [api, closePane, onEmpty, session]);
 
   // ⌘I / Ctrl+I toggles AI mode (matches the design prototype).
+  // Gated on isActive: with all sessions mounted, this listener is registered
+  // once per workspace, so only the active one should react.
   useEffect(() => {
+    if (!isActive) return;
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && (event.key === "i" || event.key === "I")) {
         event.preventDefault();
@@ -156,7 +159,7 @@ export function TerminalWorkspace({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [isActive]);
 
   if (!session) return null;
 
@@ -164,71 +167,73 @@ export function TerminalWorkspace({
     <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-black text-[#f2f2f2]" aria-label={session.title}>
       <div className="flex min-h-0 flex-1">
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="absolute right-3 top-2.5 z-10 flex items-center gap-1.5 rounded-[10px] border border-white/10 bg-[rgb(22_23_24/0.82)] p-1.5 shadow-[0_8px_30px_rgb(0_0_0/0.25)] backdrop-blur-md" aria-label="Terminal actions">
-            <Button type="button" aria-pressed={aiOpen} aria-label="Toggle AI mode (⌘I)" title="Toggle AI mode  (⌘I)" className={`h-[30px] gap-1.5 px-2.5 text-[12px] font-medium tracking-tight ${aiOpen ? "bg-acid-lime text-void hover:brightness-105" : "bg-transparent text-mist hover:bg-white/10"}`} onClick={() => setAiOpen((open) => !open)}>
-              <Sparkles size={15} /> AI
-            </Button>
-            <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-white/10" />
-            {terminalSearchOpen ? (
-              <label className="flex items-center gap-1.5 px-1.5 text-[#b7bdd0]">
-                <span className="sr-only">Search terminal</span>
-                <input
-                  autoFocus
-                  type="search"
-                  value={searchQuery}
-                  placeholder="Search terminal"
-                  className="h-[30px] w-[140px] rounded-md border border-white/10 bg-transparent px-2 text-[13px] text-white outline-hidden placeholder:text-[#b7bdd0]/70"
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter")
-                      runtimeRegistry.get(session.activePaneId)?.find(searchQuery);
-                    else if (event.key === "Escape") onTerminalSearchChange(false);
-                  }}
-                />
-              </label>
-            ) : null}
-            {session.status === "exited" || session.status === "error" ? (
-              <Button type="button" variant="ghost" size="icon" aria-label="Restart terminal" className="h-[30px] w-[30px] text-[#b7bdd0] hover:bg-white/10 hover:text-white" onClick={() => void restart()}>
-                <RotateCcw size={16} />
+          {isActive ? (
+            <div className="absolute right-3 top-2.5 z-10 flex items-center gap-1.5 rounded-[10px] border border-white/10 bg-[rgb(22_23_24/0.82)] p-1.5 shadow-[0_8px_30px_rgb(0_0_0/0.25)] backdrop-blur-md" aria-label="Terminal actions">
+              <Button type="button" aria-pressed={aiOpen} aria-label="Toggle AI mode (⌘I)" title="Toggle AI mode  (⌘I)" className={`h-[30px] gap-1.5 px-2.5 text-[12px] font-medium tracking-tight ${aiOpen ? "bg-acid-lime text-void hover:brightness-105" : "bg-transparent text-mist hover:bg-white/10"}`} onClick={() => setAiOpen((open) => !open)}>
+                <Sparkles size={15} /> AI
               </Button>
-            ) : null}
-            <Button type="button" variant="ghost" size="icon" aria-label="Split right" className="h-[30px] w-[30px] text-[#b7bdd0] hover:bg-white/10 hover:text-white" onClick={() => void split("vertical")}>
-              <Columns2 size={16} />
-            </Button>
-            <Button type="button" variant="ghost" size="icon" aria-label="Split down" className="h-[30px] w-[30px] text-[#b7bdd0] hover:bg-white/10 hover:text-white" onClick={() => void split("horizontal")}>
-              <Rows2 size={16} />
-            </Button>
-            <label className="flex items-center gap-1.5 px-1.5 text-[#b7bdd0]">
-              <SlidersHorizontal size={15} />
-              <span className="sr-only">Terminal theme</span>
-              <Select value={themeId} onValueChange={(value) => onThemeChange(value)}>
-                <SelectTrigger className="h-[30px] max-w-[116px] gap-1.5 border-white/10 bg-transparent px-2 text-[#b7bdd0]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {terminalThemes.map((candidate) => (
-                    <SelectItem key={candidate.id} value={candidate.id}>
-                      {candidate.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Toggle commands"
-              data-active={commandDrawerOpen || undefined}
-              className="h-[30px] w-[30px] text-[#b7bdd0] hover:bg-white/10 hover:text-white"
-              onClick={() => onCommandDrawerChange(!commandDrawerOpen)}
-            >
-              <PanelRightOpen size={16} />
-            </Button>
-            <Button type="button" variant="ghost" size="icon" aria-label="Close active pane" className="h-[30px] w-[30px] text-[#b7bdd0] hover:bg-white/10 hover:text-white" onClick={() => void closeActivePane()}>
-              <X size={16} />
-            </Button>
-          </div>
+              <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-white/10" />
+              {terminalSearchOpen ? (
+                <label className="flex items-center gap-1.5 px-1.5 text-[#b7bdd0]">
+                  <span className="sr-only">Search terminal</span>
+                  <input
+                    autoFocus
+                    type="search"
+                    value={searchQuery}
+                    placeholder="Search terminal"
+                    className="h-[30px] w-[140px] rounded-md border border-white/10 bg-transparent px-2 text-[13px] text-white outline-hidden placeholder:text-[#b7bdd0]/70"
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter")
+                        runtimeRegistry.get(session.activePaneId)?.find(searchQuery);
+                      else if (event.key === "Escape") onTerminalSearchChange(false);
+                    }}
+                  />
+                </label>
+              ) : null}
+              {session.status === "exited" || session.status === "error" ? (
+                <Button type="button" variant="ghost" size="icon" aria-label="Restart terminal" className="h-[30px] w-[30px] text-[#b7bdd0] hover:bg-white/10 hover:text-white" onClick={() => void restart()}>
+                  <RotateCcw size={16} />
+                </Button>
+              ) : null}
+              <Button type="button" variant="ghost" size="icon" aria-label="Split right" className="h-[30px] w-[30px] text-[#b7bdd0] hover:bg-white/10 hover:text-white" onClick={() => void split("vertical")}>
+                <Columns2 size={16} />
+              </Button>
+              <Button type="button" variant="ghost" size="icon" aria-label="Split down" className="h-[30px] w-[30px] text-[#b7bdd0] hover:bg-white/10 hover:text-white" onClick={() => void split("horizontal")}>
+                <Rows2 size={16} />
+              </Button>
+              <label className="flex items-center gap-1.5 px-1.5 text-[#b7bdd0]">
+                <SlidersHorizontal size={15} />
+                <span className="sr-only">Terminal theme</span>
+                <Select value={themeId} onValueChange={(value) => onThemeChange(value)}>
+                  <SelectTrigger className="h-[30px] max-w-[116px] gap-1.5 border-white/10 bg-transparent px-2 text-[#b7bdd0]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {terminalThemes.map((candidate) => (
+                      <SelectItem key={candidate.id} value={candidate.id}>
+                        {candidate.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Toggle commands"
+                data-active={commandDrawerOpen || undefined}
+                className="h-[30px] w-[30px] text-[#b7bdd0] hover:bg-white/10 hover:text-white"
+                onClick={() => onCommandDrawerChange(!commandDrawerOpen)}
+              >
+                <PanelRightOpen size={16} />
+              </Button>
+              <Button type="button" variant="ghost" size="icon" aria-label="Close active pane" className="h-[30px] w-[30px] text-[#b7bdd0] hover:bg-white/10 hover:text-white" onClick={() => void closeActivePane()}>
+                <X size={16} />
+              </Button>
+            </div>
+          ) : null}
 
           <div className="flex min-h-0 flex-1">
             <div className="terminal-workspace-panes min-w-0 flex-1">
@@ -248,12 +253,12 @@ export function TerminalWorkspace({
                 rightClickPaste={terminalPreferences.rightClickPaste}
               />
             </div>
-            {commandDrawerOpen ? (
+            {isActive && commandDrawerOpen ? (
               <CommandDrawer focusSearch={focusCommandSearch} onRun={runCommandSnippet} />
             ) : null}
           </div>
         </div>
-        {aiOpen ? (
+        {isActive && aiOpen ? (
           <AiAssistantPanel
             onClose={() => setAiOpen(false)}
             providerApi={aiConfigApi}

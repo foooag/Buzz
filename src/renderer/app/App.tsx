@@ -17,7 +17,7 @@ import type {
   SplitNode,
   TerminalEvent,
 } from "../features/shell/terminalTypes";
-import { TerminalWorkspace } from "../features/shell/TerminalWorkspace";
+import { TerminalSessionStack } from "../features/shell/TerminalSessionStack";
 import {
   inventoryApi,
   type InventoryApi,
@@ -131,9 +131,7 @@ function RoutedApp({
     () => create<ForwardingState>()(createForwardingState(forwarding)),
     [forwarding],
   );
-  const sessions = useTerminalStore((state) => state.sessions);
   const sessionOrder = useTerminalStore((state) => state.sessionOrder);
-  const activeSessionId = useTerminalStore((state) => state.activeSessionId);
   const sidebarCompact = useTerminalStore((state) => state.sidebarCompact);
   const addSession = useTerminalStore((state) => state.addSession);
   const removeSession = useTerminalStore((state) => state.removeSession);
@@ -437,8 +435,8 @@ function RoutedApp({
           <Route
             path="/terminal"
             element={
-              activeSessionId && sessions[activeSessionId] ? (
-                <TerminalWorkspace
+              sessionOrder.length > 0 ? (
+                <TerminalSessionStack
                   api={api}
                   eventBus={terminalEventBus}
                   runtimeFactory={runtimeFactory}
@@ -455,7 +453,7 @@ function RoutedApp({
                   onEmpty={() => setDestination("servers")}
                   terminalPreferences={terminalPreferences}
                   aiConfigApi={aiConfig}
-                  isSshSession={(sessionId) =>
+                  isSshSession={(sessionId: string) =>
                     sshSessionIds.current.has(sessionId)
                   }
                 />

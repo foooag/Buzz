@@ -93,8 +93,8 @@ export function applyEventToSnapshot(
       .map((part) => part.text)
       .join("");
     return [
-      ...streamingPart(current, "reasoning", reasoning),
-      ...streamingPart(current, "text", text),
+      ...growReasoningParts(current, reasoning),
+      ...streamingTextPart(current, text),
       ...toolParts,
     ];
   }
@@ -123,25 +123,46 @@ export function applyEventToSnapshot(
   return [...current];
 }
 
-// Keep the streamed text/reasoning as a SINGLE growing part. Markdown renderers
-// (Streamdown) parse each part independently via MessagePrimitive.Parts, so
-// appending a suffix part per token would split a markdown span/code fence
-// across parts and break rendering. Mutating the one part in place keeps the
-// whole document parseable on every token.
-function streamingPart(
+// Reasoning is rendered as plain text inside GroupedParts. Appending only the
+// new suffix gives every stream update a new part identity, so assistant-ui
+// mounts the update instead of leaving the first part snapshot on screen.
+// Adjacent reasoning parts are coalesced by the thought group in MessageViews.
+function growReasoningParts(
   current: readonly ThreadAssistantMessagePart[],
-  type: "reasoning" | "text",
   nextText: string,
 ): ThreadAssistantMessagePart[] {
   const existing = current.filter(
     (part): part is Extract<
       ThreadAssistantMessagePart,
-      { type: "reasoning" | "text" }
-    > => part.type === type,
+      { type: "reasoning" }
+    > => part.type === "reasoning",
   );
   const currentText = existing.map((part) => part.text).join("");
   if (nextText === currentText) return [...existing];
-  return nextText ? [{ type, text: nextText }] : [];
+  if (nextText.startsWith(currentText)) {
+    const suffix = nextText.slice(currentText.length);
+    return suffix
+      ? [...existing, { type: "reasoning", text: suffix }]
+      : [...existing];
+  }
+  return nextText ? [{ type: "reasoning", text: nextText }] : [];
+}
+
+// Streamdown parses each text part independently. Keep the answer as one
+// growing part so markdown spans and code fences stay parseable across tokens.
+function streamingTextPart(
+  current: readonly ThreadAssistantMessagePart[],
+  nextText: string,
+): ThreadAssistantMessagePart[] {
+  const existing = current.filter(
+    (part): part is Extract<
+      ThreadAssistantMessagePart,
+      { type: "text" }
+    > => part.type === "text",
+  );
+  const currentText = existing.map((part) => part.text).join("");
+  if (nextText === currentText) return [...existing];
+  return nextText ? [{ type: "text", text: nextText }] : [];
 }
 
 function latestUserText(messages: readonly ThreadMessage[]): string {

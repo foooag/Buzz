@@ -29,6 +29,9 @@ function Harness({ shortcutActions }: { shortcutActions: TerminalShortcutActions
     <div>
       <input aria-label="Editable field" />
       <button type="button">Terminal surface</button>
+      <div className="terminal-pane">
+        <textarea aria-label="Terminal input" />
+      </div>
     </div>
   );
 }
@@ -59,6 +62,19 @@ describe("terminal shortcuts", () => {
       }),
     ).toBe(false);
     expect(shortcutActions.pasteActive).toHaveBeenCalledOnce();
+  });
+
+  it("handles app shortcuts from xterm's internal textarea", () => {
+    const shortcutActions = actions();
+    render(<Harness shortcutActions={shortcutActions} />);
+
+    expect(
+      fireEvent.keyDown(screen.getByRole("textbox", { name: "Terminal input" }), {
+        key: "w",
+        metaKey: true,
+      }),
+    ).toBe(false);
+    expect(shortcutActions.closeActive).toHaveBeenCalledOnce();
   });
 
   it("leaves copy available when browser text is selected", () => {

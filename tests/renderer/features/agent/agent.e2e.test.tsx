@@ -77,17 +77,24 @@ describe("Agent conversation integration", () => {
     });
     const reasoningLabel = await screen.findByText("Reasoning");
     const reasoning = reasoningLabel.closest("details");
-    expect(reasoning).toHaveTextContent("The");
+    const reasoningContent = reasoning?.querySelector("p");
+    expect(reasoningContent?.textContent).toBe("The");
 
-    act(() => {
-      emit?.(events[3]);
-    });
-    await waitFor(() => expect(reasoning).toHaveTextContent("The user asked to inspect"));
+    const updates = [
+      "The user asked to inspect the live Agent stream",
+      "The user asked to inspect the live Agent stream carefully",
+    ];
+    for (const [index, expected] of updates.entries()) {
+      act(() => emit?.(events[index + 3]));
+      await waitFor(() =>
+        expect(reasoningContent?.textContent).toBe(expected),
+      );
+    }
     expect(reasoning).toHaveAttribute("open");
     expect(screen.getAllByText("Reasoning")).toHaveLength(1);
 
     act(() => {
-      for (const event of events.slice(4)) emit?.(event);
+      for (const event of events.slice(5)) emit?.(event);
     });
     await waitFor(() => expect(stop).toHaveBeenCalled());
   });
@@ -160,10 +167,22 @@ function reasoningEvents(): AgentEvent[] {
     stopReason: "pending" as const,
     timestamp: Date.now(),
   };
+  const continued = {
+    ...partial,
+    content: [
+      {
+        type: "thinking" as const,
+        thinking: "The user asked to inspect the live Agent stream",
+      },
+    ],
+  };
   const complete = {
     ...partial,
     content: [
-      { type: "thinking", thinking: "The user asked to inspect" },
+      {
+        type: "thinking" as const,
+        thinking: "The user asked to inspect the live Agent stream carefully",
+      },
       { type: "text", text: "Done" },
     ],
     stopReason: "stop" as const,
@@ -172,6 +191,7 @@ function reasoningEvents(): AgentEvent[] {
     { type: "agentStart" },
     { type: "messageStart", message: { ...partial, content: [] } },
     { type: "messageUpdate", message: partial },
+    { type: "messageUpdate", message: continued },
     { type: "messageUpdate", message: complete },
     { type: "messageEnd", message: complete },
     {

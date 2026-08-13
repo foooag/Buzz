@@ -26,8 +26,9 @@ test("streams live provider reasoning into the Electron Agent UI", async ({}, te
     const composer = window.getByRole("textbox", { name: "Agent command" });
     await expect(composer).toBeEditable();
     await composer.fill(
-      "Reason carefully about whether 1234567 multiplied by 89 is greater than 100000000. " +
-      "Do not use tools. End the final answer with STREAM_OK.",
+      "Do not use tools. Think through whether 1234567 multiplied by 89 is greater than " +
+      "100000000. End your reasoning with the exact marker REASONING_STREAM_COMPLETE_7429, " +
+      "then give a short final answer.",
     );
     const send = window.getByRole("button", { name: "Send Agent command" });
     await send.click();
@@ -37,12 +38,11 @@ test("streams live provider reasoning into the Electron Agent UI", async ({}, te
     const reasoningBlocks = window.locator("details").filter({ hasText: "Reasoning" });
     const reasoning = reasoningBlocks.last();
     await expect(reasoning).toHaveAttribute("open", "");
-    await expect.poll(
-      async () => (await reasoning.locator("p").textContent())?.trim().length ?? 0,
-      { timeout: 30_000 },
-    ).toBeGreaterThan(12);
-    await stop.click();
-    await expect(send).toBeVisible({ timeout: 10_000 });
+    await expect(reasoning.locator("p")).toContainText(
+      "REASONING_STREAM_COMPLETE_7429",
+      { timeout: 60_000 },
+    );
+    await expect(stop).not.toBeVisible({ timeout: 30_000 });
   } finally {
     await application.close();
     await testInfo.attach("electron-main.log", {
