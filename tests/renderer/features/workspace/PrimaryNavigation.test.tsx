@@ -24,44 +24,4 @@ describe("PrimaryNavigation Agent destination", () => {
       "page",
     );
   });
-
-  it("renders and activates the Lexical test page", async () => {
-    render(
-      <MemoryRouter initialEntries={["/servers"]}>
-        <PrimaryNavigation />
-        <Routes>
-          <Route path="/servers" element={<div>Servers route</div>} />
-          <Route path="/lexical-test" element={<div>Lexical test route</div>} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    await userEvent.click(screen.getByRole("link", { name: "Lexical Test" }));
-
-    expect(screen.getByText("Lexical test route")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Lexical Test" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-  });
-
-  it("renders and activates the Tiptap test page", async () => {
-    render(
-      <MemoryRouter initialEntries={["/servers"]}>
-        <PrimaryNavigation />
-        <Routes>
-          <Route path="/servers" element={<div>Servers route</div>} />
-          <Route path="/tiptap-test" element={<div>Tiptap test route</div>} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    await userEvent.click(screen.getByRole("link", { name: "Tiptap Test" }));
-
-    expect(screen.getByText("Tiptap test route")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Tiptap Test" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-  });
 });

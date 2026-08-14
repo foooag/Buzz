@@ -504,8 +504,6 @@ function RoutedApp({
 const destinationPaths: Record<Destination, string> = {
   servers: "/servers",
   agent: "/agent",
-  "lexical-test": "/lexical-test",
-  "tiptap-test": "/tiptap-test",
   sftp: "/sftp",
   forwarding: "/forwarding",
   history: "/history",

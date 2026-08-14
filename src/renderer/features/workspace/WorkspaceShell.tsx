@@ -20,8 +20,6 @@ function recentDot(status: string): string {
 export type Destination =
   | "servers"
   | "agent"
-  | "lexical-test"
-  | "tiptap-test"
   | "sftp"
   | "forwarding"
   | "history"
