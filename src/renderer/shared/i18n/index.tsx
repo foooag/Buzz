@@ -313,9 +313,14 @@ const zh: Record<string, string> = {
   "The SSH connection could not be opened.": "无法打开 SSH 连接。",
   "Update connection settings": "更新连接设置",
   Confirm: "确认",
+  "Check for updates": "检查更新",
+  "Checking…": "正在检查…",
+  "Up to date": "已是最新版本",
+  "Check failed — try again": "检查失败，请重试",
 };
 
 const replaceRules: Array<[RegExp, string]> = [
+  [/^Buzz (.+) is available$/, "Buzz $1 可用"],
   [/^Delete (.+)$/, "删除 $1"],
   [/^Remove (.+)$/, "移除 $1"],
   [/^Connect (.+) with SSH$/, "使用 SSH 连接 $1"],

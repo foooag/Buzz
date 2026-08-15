@@ -7,6 +7,8 @@ import { PreferencesWindow } from "@/features/settings/PreferencesWindow";
 import { defaultTerminalPreferences } from "@/features/settings/terminalPreferences";
 import type { SshApi } from "@/features/ssh/sshApi";
 import { deterministicWindowControlsApi } from "@/features/settings/deterministicWindowControlsApi";
+import { createDeterministicUpdaterApi } from "@/features/updater/deterministicUpdaterApi";
+import type { AvailableUpdate } from "@/features/updater/updaterApi";
 
 const ts = "2026-07-27T07:00:00.000Z";
 
@@ -134,5 +136,52 @@ describe("PreferencesWindow", () => {
 
     await user.click(screen.getByRole("button", { name: "Zoom" }));
     expect(toggleMaximize).toHaveBeenCalled();
+  });
+
+  it("runs a manual update check from the changelog area and reports up-to-date", async () => {
+    const user = userEvent.setup();
+    const { api } = createDeterministicUpdaterApi({ update: null });
+    render(
+      <PreferencesWindow
+        open
+        inventoryApi={fakeApi()}
+        onClose={() => undefined}
+        updater={api}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Check for updates" }));
+    expect(await screen.findByText("Up to date")).toBeVisible();
+  });
+
+  it("surfaces a found version badge and the update dialog on manual check", async () => {
+    const user = userEvent.setup();
+    const update: AvailableUpdate = {
+      version: "0.2.0",
+      body: "Security and reliability fixes.",
+      close: vi.fn(async () => undefined),
+      downloadAndInstall: vi.fn(async () => undefined),
+    };
+    const { api } = createDeterministicUpdaterApi({ update });
+    render(
+      <PreferencesWindow
+        open
+        inventoryApi={fakeApi()}
+        onClose={() => undefined}
+        updater={api}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Check for updates" }));
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Buzz update available · 0.2.0",
+      }),
+    ).toBeVisible();
+    expect(screen.getByText("Buzz 0.2.0 is available")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Check for updates" }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -15,6 +15,7 @@ import {
   type AvailableUpdate,
   type UpdaterApi,
 } from "./updaterApi";
+import { ReleaseNotes } from "./ReleaseNotes";
 
 type InstallState =
   | { phase: "ready" }
@@ -27,34 +28,57 @@ const updateChecks = new WeakMap<
   Promise<AvailableUpdate | null>
 >();
 
-export function UpdateDialog({ api = updaterApi }: { api?: UpdaterApi }) {
+// Shares a single in-flight check across all consumers of the same API
+// instance, so a manual check and the dialog mount don't hit the network twice.
+function primeUpdateCheck(
+  api: UpdaterApi,
+): Promise<AvailableUpdate | null> {
+  let pending = updateChecks.get(api);
+  if (!pending) {
+    pending = api.check();
+    updateChecks.set(api, pending);
+  }
+  return pending;
+}
+
+function forgetUpdateCheck(api: UpdaterApi): void {
+  updateChecks.delete(api);
+}
+
+export function UpdateDialog({
+  api = updaterApi,
+  initialUpdate,
+}: {
+  api?: UpdaterApi;
+  initialUpdate?: AvailableUpdate | null;
+}) {
   const { t } = useI18n();
-  const [update, setUpdate] = useState<AvailableUpdate | null>(null);
+  const [update, setUpdate] = useState<AvailableUpdate | null>(
+    initialUpdate ?? null,
+  );
   const [installState, setInstallState] = useState<InstallState>({
     phase: "ready",
   });
 
   useEffect(() => {
+    // A caller-provided result (manual check) replaces the startup probe.
+    if (initialUpdate !== undefined) return;
     let active = true;
-    let pending = updateChecks.get(api);
-    if (!pending) {
-      pending = api.check();
-      updateChecks.set(api, pending);
-    }
+    const pending = primeUpdateCheck(api);
 
     void pending
       .then((available) => {
         if (active && available) setUpdate(available);
       })
       .catch(() => {
-        updateChecks.delete(api);
+        forgetUpdateCheck(api);
         // Update checks are best-effort and must never block application startup.
       });
 
     return () => {
       active = false;
     };
-  }, [api]);
+  }, [api, initialUpdate]);
 
   if (!update) return null;
 
@@ -74,6 +98,7 @@ export function UpdateDialog({ api = updaterApi }: { api?: UpdaterApi }) {
             return {
               ...current,
               downloaded: current.downloaded + event.data.chunkLength,
+              total: current.total ?? event.data.contentLength,
             };
           });
         }
@@ -113,9 +138,7 @@ export function UpdateDialog({ api = updaterApi }: { api?: UpdaterApi }) {
         </AlertDialogHeader>
 
         {update.body ? (
-          <div className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md border border-graphite bg-carbon/60 p-3 text-sm text-mist">
-            {update.body}
-          </div>
+          <ReleaseNotes body={update.body} />
         ) : null}
 
         {installState.phase === "downloading" ? (
@@ -163,7 +186,7 @@ export function UpdateDialog({ api = updaterApi }: { api?: UpdaterApi }) {
               type="button"
               variant="outline"
               onClick={() => {
-                updateChecks.delete(api);
+                forgetUpdateCheck(api);
                 void update.close();
                 setUpdate(null);
               }}

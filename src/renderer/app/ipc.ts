@@ -139,7 +139,10 @@ export async function toggleMaximizeWindow(): Promise<void> {
 
 export type UpdateDownloadEvent =
   | { event: "Started"; data: { contentLength?: number } }
-  | { event: "Progress"; data: { chunkLength: number } }
+  | {
+      event: "Progress";
+      data: { chunkLength: number; contentLength?: number };
+    }
   | { event: "Finished"; data?: undefined };
 
 export type AvailableUpdate = {

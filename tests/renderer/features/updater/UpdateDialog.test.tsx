@@ -57,4 +57,32 @@ describe("UpdateDialog", () => {
     await waitFor(() => expect(api.check).toHaveBeenCalledOnce());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
+
+  it("renders GitHub HTML release notes as safe document content", async () => {
+    const api: UpdaterApi = {
+      check: vi.fn(async () => ({
+        version: "0.2.0",
+        body: [
+          "<h2>What's Changed</h2>",
+          "<ul><li>Fixed updates by <a href=\"https://example.com\">@foooag</a></li></ul>",
+          "<script>window.releaseNotesWereUnsafe = true</script>",
+        ].join(""),
+        close: vi.fn(),
+        downloadAndInstall: vi.fn(),
+      })),
+      relaunch: vi.fn(),
+    };
+
+    render(<UpdateDialog api={api} />);
+
+    expect(
+      await screen.findByRole("heading", { name: "What's Changed" }),
+    ).toBeVisible();
+    expect(screen.getByRole("listitem")).toHaveTextContent(
+      "Fixed updates by @foooag",
+    );
+    expect(
+      screen.queryByText("window.releaseNotesWereUnsafe = true"),
+    ).not.toBeInTheDocument();
+  });
 });

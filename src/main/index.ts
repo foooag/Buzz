@@ -14,6 +14,7 @@ import type { AiService } from "./domains/ai/service.js";
 import type { MultiHostAgentRuntime } from "./domains/agent/agent-runtime.js";
 import { registerAgentStreamIpc } from "./domains/agent/stream-ipc.js";
 import type { SshHeadlessRuntime } from "./domains/ssh/headless.js";
+import { getAvailableUpdateMetadata } from "./updater.js";
 
 const streamOwners = new Map<string, WebContents>();
 let commandDispatcher: ElectronCommandDispatcher | undefined;
@@ -140,21 +141,17 @@ function installIpcHandlers(): void {
     if (!app.isPackaged) return null;
     const autoUpdater = await getAutoUpdater();
     const result = await autoUpdater.checkForUpdates();
-    if (!result) return null;
-    return {
-      version: result.updateInfo.version,
-      date: result.updateInfo.releaseDate,
-      body: typeof result.updateInfo.releaseNotes === "string"
-        ? result.updateInfo.releaseNotes
-        : undefined,
-    };
+    return getAvailableUpdateMetadata(result);
   });
   ipcMain.handle("terminus:update:close", async () => undefined);
   ipcMain.handle("terminus:update:download", async (event) => {
     const autoUpdater = await getAutoUpdater();
     const send = (payload: unknown) => event.sender.send("terminus:update:event", payload);
     const progress = (info: { delta: number; total: number }) =>
-      send({ event: "Progress", data: { chunkLength: info.delta } });
+      send({
+        event: "Progress",
+        data: { chunkLength: info.delta, contentLength: info.total },
+      });
     autoUpdater.on("download-progress", progress);
     send({ event: "Started", data: {} });
     try {
@@ -177,7 +174,10 @@ async function isAllowedCommand(value: unknown): Promise<boolean> {
 
 async function getAutoUpdater() {
   const electronUpdater = await import("electron-updater");
-  return electronUpdater.default.autoUpdater;
+  const autoUpdater = electronUpdater.default.autoUpdater;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  return autoUpdater;
 }
 
 const configuredTestData = !app.isPackaged ? process.env.TERMINUS_E2E_DATA_DIR : undefined;
