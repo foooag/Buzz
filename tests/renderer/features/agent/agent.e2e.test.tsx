@@ -103,6 +103,43 @@ describe("Agent conversation integration", () => {
     });
     await waitFor(() => expect(stop).toHaveBeenCalled());
   });
+
+  it("groups reasoning from the whole turn before the response", async () => {
+    const client = agentClient((onEvent, onClose) => {
+      for (const event of interleavedReasoningEvents()) onEvent(event);
+      onClose?.();
+      return vi.fn();
+    });
+    render(
+      <AgentPage
+        agentClient={client}
+        providerApi={providerApi()}
+        sessionApi={sessionApi()}
+      />,
+    );
+
+    const composer = await screen.findByRole("textbox", { name: "Agent command" });
+    fireEvent.paste(composer, {
+      clipboardData: {
+        getData: () => "Inspect and summarize",
+        types: ["text/plain"],
+      },
+    });
+    const send = screen.getByRole("button", { name: "Send Agent command" });
+    await waitFor(() => expect(send).toBeEnabled());
+    fireEvent.click(send);
+
+    const firstAnswer = await screen.findByText("First answer fragment.");
+    const reasoningLabels = screen.getAllByText("Reasoning");
+    expect(reasoningLabels).toHaveLength(1);
+    const reasoning = reasoningLabels[0]?.closest("details");
+    expect(reasoning).toHaveTextContent("First reasoning step.");
+    expect(reasoning).toHaveTextContent("Second reasoning step.");
+    expect(reasoning).not.toHaveTextContent("First answer fragment.");
+    expect(
+      reasoning?.compareDocumentPosition(firstAnswer) ?? 0,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
 });
 
 function agentClient(
@@ -222,6 +259,53 @@ function reasoningEvents(): AgentEvent[] {
         status: "idle",
         hosts: [],
         messages: [complete],
+      },
+    },
+  ];
+}
+
+function interleavedReasoningEvents(): AgentEvent[] {
+  const messages = [
+    {
+      role: "assistant" as const,
+      content: [{ type: "thinking" as const, thinking: "First reasoning step." }],
+      stopReason: "toolUse" as const,
+      timestamp: 1,
+    },
+    {
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text: "First answer fragment." }],
+      stopReason: "toolUse" as const,
+      timestamp: 2,
+    },
+    {
+      role: "assistant" as const,
+      content: [{ type: "thinking" as const, thinking: "Second reasoning step." }],
+      stopReason: "toolUse" as const,
+      timestamp: 3,
+    },
+    {
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text: "Final answer fragment." }],
+      stopReason: "stop" as const,
+      timestamp: 4,
+    },
+  ];
+  return [
+    { type: "agentStart" },
+    ...messages.flatMap((message): AgentEvent[] => [
+      { type: "messageStart", message: { ...message, content: [] } },
+      { type: "messageUpdate", message },
+      { type: "messageEnd", message },
+    ]),
+    {
+      type: "agentEnd",
+      snapshot: {
+        agentId: "agent-1",
+        providerConfigId: "provider-1",
+        status: "idle",
+        hosts: [],
+        messages,
       },
     },
   ];

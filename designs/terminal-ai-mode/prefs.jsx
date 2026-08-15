@@ -773,7 +773,15 @@ function AiProvidersSection() {
 
 function PreferencesWindow({ open, onClose, theme, setTheme, font, setFont, fontSize, setFontSize }) {
   const [section, setSection] = useState("terminal");
+  const [update, setUpdate] = useState("idle"); // idle | checking | latest | available
   if (!open) return null;
+  const checkForUpdates = () => {
+    if (update === "checking") return;
+    setUpdate("checking");
+    setTimeout(() => setUpdate("available"), 1400); // dev stub: always finds 0.2.0
+  };
+  const updateLabel =
+    update === "checking" ? "Checking…" : update === "latest" ? "Up to date" : update === "available" ? "Buzz 0.2.0 available" : "Check for updates";
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-void/70 p-4 backdrop-blur-sm" onMouseDown={onClose}>
       <div
@@ -808,10 +816,28 @@ function PreferencesWindow({ open, onClose, theme, setTheme, font, setFont, font
             })}
           </div>
           <div className="mt-auto px-2.5 pt-3 text-[11px] leading-relaxed text-fog/70">
-            <div className="flex items-center gap-1.5 text-fog">
-              <Icon name="bookmark" size={11} />
-              Changelog
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-fog">
+                <Icon name="bookmark" size={11} />
+                Changelog
+              </div>
+              <button
+                type="button"
+                onClick={checkForUpdates}
+                disabled={update === "checking"}
+                className="inline-flex items-center gap-1 rounded-md border border-graphite px-1.5 py-0.5 text-[10.5px] text-fog transition-colors hover:border-smoke hover:text-mist disabled:cursor-default disabled:opacity-70"
+              >
+                <Icon name="refresh" size={10} className={update === "checking" ? "spin" : ""} />
+                {updateLabel}
+              </button>
             </div>
+            {update === "available" ? (
+              <div className="mt-1.5 flex items-center gap-1.5 rounded-md bg-acid-lime/10 px-1.5 py-1 text-[10.5px] text-acid-lime">
+                <Icon name="download" size={10} />
+                <span className="flex-1">Buzz 0.2.0 is available</span>
+                <span className="cursor-pointer underline decoration-dotted">Get update</span>
+              </div>
+            ) : null}
             <p className="m-0 mt-1">Buzz 0.1.0 (dev) · Electron/xterm build</p>
           </div>
         </nav>

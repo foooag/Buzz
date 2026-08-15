@@ -16,6 +16,7 @@ export type MentionComposerProps = {
   models: readonly ModelOption[];
   modelId: string;
   onModelChange: (modelId: string) => void;
+  ready?: boolean;
 };
 
 export function MentionComposer({
@@ -24,6 +25,7 @@ export function MentionComposer({
   models,
   modelId,
   onModelChange,
+  ready = true,
 }: MentionComposerProps) {
   const mention = useAgentMentionAdapter();
   const labelEditor = useCallback((element: HTMLDivElement | null) => {
@@ -42,7 +44,13 @@ export function MentionComposer({
             categoriesLabel="Select target type"
             itemsLabel="Select target"
           />
-          <ComposerPrimitive.Root className="overflow-hidden rounded-lg border border-graphite bg-obsidian/70 transition-colors focus-within:border-smoke">
+          <ComposerPrimitive.Root
+            className="overflow-hidden rounded-lg border border-graphite bg-obsidian/70 transition-colors focus-within:border-smoke"
+            aria-busy={!ready}
+            onSubmit={(event) => {
+              if (!ready) event.preventDefault();
+            }}
+          >
             <LexicalComposerInput
               ref={labelEditor}
               autoFocus={autoFocus}
@@ -60,6 +68,7 @@ export function MentionComposer({
               </span>
               <ThreadPrimitive.If running={false}>
                 <ComposerPrimitive.Send
+                  disabled={!ready}
                   aria-label="Send Agent command"
                   title="Send"
                   className="inline-flex h-7 items-center gap-1.5 rounded-md bg-acid-lime px-2.5 text-[11px] font-semibold text-void outline-hidden transition hover:brightness-105 disabled:bg-graphite disabled:text-fog"
