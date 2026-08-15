@@ -154,13 +154,11 @@ describe("PreferencesWindow", () => {
     expect(await screen.findByText("Up to date")).toBeVisible();
   });
 
-  it("surfaces a found version badge and the update dialog on manual check", async () => {
+  it("surfaces a found version badge while the update downloads in the background", async () => {
     const user = userEvent.setup();
     const update: AvailableUpdate = {
       version: "0.2.0",
       body: "Security and reliability fixes.",
-      close: vi.fn(async () => undefined),
-      downloadAndInstall: vi.fn(async () => undefined),
     };
     const { api } = createDeterministicUpdaterApi({ update });
     render(
@@ -174,12 +172,8 @@ describe("PreferencesWindow", () => {
 
     await user.click(screen.getByRole("button", { name: "Check for updates" }));
 
-    expect(
-      await screen.findByRole("heading", {
-        name: "Buzz update available · 0.2.0",
-      }),
-    ).toBeVisible();
-    expect(screen.getByText("Buzz 0.2.0 is available")).toBeVisible();
+    expect(await screen.findByText("Buzz 0.2.0 is available")).toBeVisible();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Check for updates" }),
     ).not.toBeInTheDocument();

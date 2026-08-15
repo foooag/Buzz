@@ -14,7 +14,11 @@ import type { AiService } from "./domains/ai/service.js";
 import type { MultiHostAgentRuntime } from "./domains/agent/agent-runtime.js";
 import { registerAgentStreamIpc } from "./domains/agent/stream-ipc.js";
 import type { SshHeadlessRuntime } from "./domains/ssh/headless.js";
-import { getAvailableUpdateMetadata } from "./updater.js";
+import {
+  BackgroundUpdateController,
+  type BackgroundUpdateState,
+} from "./updater.js";
+import { createShutdownCoordinator } from "./shutdown.js";
 
 const streamOwners = new Map<string, WebContents>();
 let commandDispatcher: ElectronCommandDispatcher | undefined;
@@ -30,8 +34,8 @@ let aiService: AiService | undefined;
 let agentRuntime: MultiHostAgentRuntime | undefined;
 let sshHeadlessRuntime: SshHeadlessRuntime | undefined;
 let mainWindow: BrowserWindow | undefined;
-let allowQuit = false;
-let shutdownStarted = false;
+let backgroundUpdater: BackgroundUpdateController | undefined;
+let shutdownCoordinator: ReturnType<typeof createShutdownCoordinator> | undefined;
 const developmentRendererUrl = process.env.ELECTRON_RENDERER_URL ?? "http://127.0.0.1:1420";
 
 function createWindow(): BrowserWindow {
@@ -139,31 +143,20 @@ function installIpcHandlers(): void {
   });
   ipcMain.handle("terminus:update:check", async () => {
     if (!app.isPackaged) return null;
-    const autoUpdater = await getAutoUpdater();
-    const result = await autoUpdater.checkForUpdates();
-    return getAvailableUpdateMetadata(result);
+    return (await getBackgroundUpdater()).check();
   });
-  ipcMain.handle("terminus:update:close", async () => undefined);
-  ipcMain.handle("terminus:update:download", async (event) => {
-    const autoUpdater = await getAutoUpdater();
-    const send = (payload: unknown) => event.sender.send("terminus:update:event", payload);
-    const progress = (info: { delta: number; total: number }) =>
-      send({
-        event: "Progress",
-        data: { chunkLength: info.delta, contentLength: info.total },
-      });
-    autoUpdater.on("download-progress", progress);
-    send({ event: "Started", data: {} });
-    try {
-      await autoUpdater.downloadUpdate();
-      send({ event: "Finished" });
-    } finally {
-      autoUpdater.off("download-progress", progress);
+  ipcMain.handle("terminus:update:status", async () => {
+    if (!app.isPackaged) {
+      return { phase: "idle" } satisfies BackgroundUpdateState;
     }
+    return (await getBackgroundUpdater()).getState();
+  });
+  ipcMain.handle("terminus:update:retry", async () => {
+    if (!app.isPackaged) return;
+    await (await getBackgroundUpdater()).retry();
   });
   ipcMain.handle("terminus:update:relaunch", async () => {
-    const autoUpdater = await getAutoUpdater();
-    autoUpdater.quitAndInstall(false, true);
+    await shutdownCoordinator?.request("install-update");
   });
 }
 
@@ -180,12 +173,52 @@ async function getAutoUpdater() {
   return autoUpdater;
 }
 
+async function getBackgroundUpdater(): Promise<BackgroundUpdateController> {
+  if (backgroundUpdater) return backgroundUpdater;
+  backgroundUpdater = new BackgroundUpdateController(
+    await getAutoUpdater(),
+    (state) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) {
+          window.webContents.send("terminus:update:status-changed", state);
+        }
+      }
+    },
+  );
+  return backgroundUpdater;
+}
+
 const configuredTestData = !app.isPackaged ? process.env.TERMINUS_E2E_DATA_DIR : undefined;
 
 function emitStreamEvent(streamId: string | undefined, event: unknown): void {
   if (!streamId) return;
   const owner = streamOwners.get(streamId);
   if (owner && !owner.isDestroyed()) owner.send("terminus:desktop-event", streamId, event);
+}
+
+async function closeApplicationResources(): Promise<void> {
+  await agentRuntime?.closeAll();
+  agentRuntime = undefined;
+  await sshHeadlessRuntime?.closeAll();
+  sshHeadlessRuntime = undefined;
+  await aiService?.close();
+  aiService = undefined;
+  terminalRuntime?.closeAll();
+  terminalRuntime = undefined;
+  portForwardingRuntime?.closeAll();
+  portForwardingRuntime = undefined;
+  await sftpRuntime?.closeAll();
+  sftpRuntime = undefined;
+  sftpAssociations?.close();
+  sftpAssociations = undefined;
+  await sshRuntime?.closeAll();
+  sshRuntime = undefined;
+  forwardingRepository?.close();
+  forwardingRepository = undefined;
+  sshPersistence?.close();
+  sshPersistence = undefined;
+  inventoryRepository?.close();
+  inventoryRepository = undefined;
 }
 
 async function start(): Promise<void> {
@@ -289,6 +322,14 @@ async function start(): Promise<void> {
       },
     }),
   );
+  shutdownCoordinator = createShutdownCoordinator({
+    cleanup: closeApplicationResources,
+    quit: () => app.quit(),
+    installUpdate: async () => {
+      const autoUpdater = await getAutoUpdater();
+      autoUpdater.quitAndInstall(false, true);
+    },
+  });
   installIpcHandlers();
   mainWindow = createWindow();
 
@@ -299,37 +340,9 @@ async function start(): Promise<void> {
     if (process.platform !== "darwin") app.quit();
   });
   app.on("before-quit", (event) => {
-    if (allowQuit) return;
+    if (!shutdownCoordinator?.shouldPreventNativeQuit()) return;
     event.preventDefault();
-    if (shutdownStarted) return;
-    shutdownStarted = true;
-    void (async () => {
-      await agentRuntime?.closeAll();
-      agentRuntime = undefined;
-      await sshHeadlessRuntime?.closeAll();
-      sshHeadlessRuntime = undefined;
-      await aiService?.close();
-      aiService = undefined;
-      terminalRuntime?.closeAll();
-      terminalRuntime = undefined;
-      portForwardingRuntime?.closeAll();
-      portForwardingRuntime = undefined;
-      await sftpRuntime?.closeAll();
-      sftpRuntime = undefined;
-      sftpAssociations?.close();
-      sftpAssociations = undefined;
-      await sshRuntime?.closeAll();
-      sshRuntime = undefined;
-      forwardingRepository?.close();
-      forwardingRepository = undefined;
-      sshPersistence?.close();
-      sshPersistence = undefined;
-      inventoryRepository?.close();
-      inventoryRepository = undefined;
-    })().finally(() => {
-      allowQuit = true;
-      app.quit();
-    });
+    void shutdownCoordinator?.request("quit");
   });
 }
 

@@ -61,7 +61,6 @@ import {
   loadTerminalPreferences,
   saveTerminalPreferences,
 } from "../features/settings/terminalPreferences";
-import { UpdateDialog } from "../features/updater/UpdateDialog";
 import { updaterApi } from "../features/updater/updaterApi";
 import { aiConfigApi } from "../features/ai/aiApi";
 import type { AiConfigApi } from "../features/ai/aiConfigTypes";
@@ -498,7 +497,6 @@ function RoutedApp({
         initialSection={preferencesSection}
         updater={updaterApi}
       />
-      <UpdateDialog />
     </>
   );
 }

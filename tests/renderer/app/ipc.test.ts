@@ -21,8 +21,9 @@ function installBridge(
     },
     updater: {
       check: vi.fn(),
-      close: vi.fn(),
-      downloadAndInstall: vi.fn(),
+      status: vi.fn(),
+      onStatusChange: vi.fn(() => () => undefined),
+      retry: vi.fn(),
       relaunch: vi.fn(),
     },
     ...bridge,

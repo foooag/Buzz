@@ -4,6 +4,8 @@ import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import { PrimaryNavigation } from "./PrimaryNavigation";
 import { SessionRows } from "../shell/SessionRows";
+import { UpdateStatusControl } from "../updater/UpdateStatusControl";
+import type { UpdaterApi } from "../updater/updaterApi";
 import {
   formatHistoryWhen,
   listConnectionHistory,
@@ -32,6 +34,7 @@ type WorkspaceShellProps = {
   onOpenSession?: (entry: HistoryEntry) => void;
   sidebarCompact?: boolean;
   onPreferences?: () => void;
+  updater?: UpdaterApi;
 };
 
 export function WorkspaceShell({
@@ -41,6 +44,7 @@ export function WorkspaceShell({
   onOpenSession = () => undefined,
   sidebarCompact = false,
   onPreferences = () => undefined,
+  updater,
 }: WorkspaceShellProps) {
   const navigate = useNavigate();
   const [history, setHistory] = useState(listConnectionHistory);
@@ -122,6 +126,7 @@ export function WorkspaceShell({
           <span className="group-data-[sidebar-size=compact]/sidebar:hidden">
             Local vault
           </span>
+          <UpdateStatusControl api={updater} />
         </div>
       </aside>
       <main className="min-h-0 min-w-0 overflow-hidden">{children}</main>

@@ -37,7 +37,6 @@ import {
   windowControlsApi,
   type WindowControlsApi,
 } from "./windowControlsApi";
-import { UpdateDialog } from "../updater/UpdateDialog";
 import type {
   AvailableUpdate,
   UpdaterApi,
@@ -535,9 +534,6 @@ function ChangelogSection({ updater }: { updater: UpdaterApi }) {
           </button>
         )}
       </div>
-      {check.phase === "found" ? (
-        <UpdateDialog api={updater} initialUpdate={check.update} />
-      ) : null}
     </>
   );
 }

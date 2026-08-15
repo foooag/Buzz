@@ -137,23 +137,17 @@ export async function toggleMaximizeWindow(): Promise<void> {
   await requireDesktopBridge().window.toggleMaximize();
 }
 
-export type UpdateDownloadEvent =
-  | { event: "Started"; data: { contentLength?: number } }
-  | {
-      event: "Progress";
-      data: { chunkLength: number; contentLength?: number };
-    }
-  | { event: "Finished"; data?: undefined };
-
 export type AvailableUpdate = {
   version: string;
   date?: string;
   body?: string;
-  close: () => Promise<void>;
-  downloadAndInstall: (
-    onEvent: (event: UpdateDownloadEvent) => void,
-  ) => Promise<void>;
 };
+
+export type UpdateStatus =
+  | { phase: "idle" }
+  | { phase: "downloading"; version: string; percent?: number }
+  | { phase: "ready"; version: string }
+  | { phase: "error"; version?: string };
 
 export function isRunningInElectron(): boolean {
   return Boolean(window.terminus);
@@ -167,10 +161,23 @@ export async function checkForUpdate(): Promise<AvailableUpdate | null> {
     version: update.version,
     date: update.date,
     body: update.body,
-    close: () => requireDesktopBridge().updater.close(),
-    downloadAndInstall: (onEvent) =>
-      requireDesktopBridge().updater.downloadAndInstall(onEvent),
   };
+}
+
+export async function getUpdateStatus(): Promise<UpdateStatus> {
+  if (!window.terminus) return { phase: "idle" };
+  return requireDesktopBridge().updater.status();
+}
+
+export function subscribeUpdateStatus(
+  onStatusChange: (status: UpdateStatus) => void,
+): () => void {
+  if (!window.terminus) return () => undefined;
+  return requireDesktopBridge().updater.onStatusChange(onStatusChange);
+}
+
+export async function retryUpdateDownload(): Promise<void> {
+  await requireDesktopBridge().updater.retry();
 }
 
 export async function relaunchApp(): Promise<void> {

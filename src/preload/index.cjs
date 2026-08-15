@@ -48,16 +48,13 @@ contextBridge.exposeInMainWorld("terminus", {
   },
   updater: {
     check: () => ipcRenderer.invoke("terminus:update:check"),
-    close: () => ipcRenderer.invoke("terminus:update:close"),
-    downloadAndInstall: async (onEvent) => {
-      const listener = (_event, payload) => onEvent(payload);
-      ipcRenderer.on("terminus:update:event", listener);
-      try {
-        await ipcRenderer.invoke("terminus:update:download");
-      } finally {
-        ipcRenderer.removeListener("terminus:update:event", listener);
-      }
+    status: () => ipcRenderer.invoke("terminus:update:status"),
+    onStatusChange: (onStatusChange) => {
+      const listener = (_event, status) => onStatusChange(status);
+      ipcRenderer.on("terminus:update:status-changed", listener);
+      return () => ipcRenderer.removeListener("terminus:update:status-changed", listener);
     },
+    retry: () => ipcRenderer.invoke("terminus:update:retry"),
     relaunch: () => ipcRenderer.invoke("terminus:update:relaunch"),
   },
 });
