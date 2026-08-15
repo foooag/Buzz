@@ -7,6 +7,7 @@ import {
   FolderOpen,
   Languages,
   KeyRound,
+  RefreshCw,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -36,6 +37,11 @@ import {
   windowControlsApi,
   type WindowControlsApi,
 } from "./windowControlsApi";
+import { UpdateDialog } from "../updater/UpdateDialog";
+import type {
+  AvailableUpdate,
+  UpdaterApi,
+} from "../updater/updaterApi";
 
 const PREF_SECTIONS = [
   { id: "language", label: "Language", Icon: Languages },
@@ -471,6 +477,71 @@ function KnownHostsSection({ api }: { api?: SshApi }) {
   );
 }
 
+type UpdateCheckState =
+  | { phase: "idle" }
+  | { phase: "checking" }
+  | { phase: "latest" }
+  | { phase: "error" }
+  | { phase: "found"; update: AvailableUpdate };
+
+function ChangelogSection({ updater }: { updater: UpdaterApi }) {
+  const { t } = useI18n();
+  const [check, setCheck] = useState<UpdateCheckState>({ phase: "idle" });
+
+  const runCheck = async () => {
+    if (check.phase === "checking") return;
+    setCheck({ phase: "checking" });
+    try {
+      const available = await updater.check();
+      if (available) {
+        setCheck({ phase: "found", update: available });
+      } else {
+        setCheck({ phase: "latest" });
+      }
+    } catch {
+      setCheck({ phase: "error" });
+    }
+  };
+
+  return (
+    <>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-fog">
+          <Bookmark size={11} />
+          Changelog
+        </div>
+        {check.phase === "found" ? (
+          <span className="inline-flex items-center gap-1 rounded-pill bg-acid-lime/12 px-2 py-0.5 text-[10.5px] text-acid-lime">
+            {t(`Buzz ${check.update.version} is available`)}
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void runCheck()}
+            disabled={check.phase === "checking"}
+            className="inline-flex items-center gap-1 rounded-md border border-graphite px-1.5 py-0.5 text-[10.5px] text-fog transition-colors hover:border-smoke hover:text-mist disabled:cursor-default disabled:opacity-70"
+          >
+            <RefreshCw
+              size={10}
+              className={check.phase === "checking" ? "animate-spin" : ""}
+            />
+            {check.phase === "checking"
+              ? t("Checking…")
+              : check.phase === "latest"
+                ? t("Up to date")
+                : check.phase === "error"
+                  ? t("Check failed — try again")
+                  : t("Check for updates")}
+          </button>
+        )}
+      </div>
+      {check.phase === "found" ? (
+        <UpdateDialog api={updater} initialUpdate={check.update} />
+      ) : null}
+    </>
+  );
+}
+
 export function PreferencesWindow({
   open,
   onClose,
@@ -483,6 +554,7 @@ export function PreferencesWindow({
   sshApi,
   aiConfigApi,
   windowControls = windowControlsApi,
+  updater,
   initialSection,
 }: {
   open: boolean;
@@ -491,11 +563,13 @@ export function PreferencesWindow({
   terminalThemeId?: string;
   onTerminalThemeChange?: (value: string) => void;
   terminalPreferences?: TerminalPreferences;
+  onPreferencesChange?: (value: TerminalPreferences) => void;
   onTerminalPreferencesChange?: (value: TerminalPreferences) => void;
   sftpApi?: SftpApi;
   sshApi?: SshApi;
   aiConfigApi?: AiConfigApi;
   windowControls?: WindowControlsApi;
+  updater?: UpdaterApi;
   initialSection?: SectionId;
 }) {
   const [section, setSection] = useState<SectionId>(initialSection ?? "language");
@@ -561,10 +635,7 @@ export function PreferencesWindow({
             })}
           </div>
           <div className="mt-auto px-2.5 pt-3 text-[11px] leading-relaxed text-fog/70">
-            <div className="flex items-center gap-1.5 text-fog">
-              <Bookmark size={11} />
-              Changelog
-            </div>
+            {updater ? <ChangelogSection updater={updater} /> : null}
             <p className="m-0 mt-1">Buzz 0.1.0 (dev) · Electron/xterm build</p>
           </div>
         </nav>

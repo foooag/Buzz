@@ -62,6 +62,7 @@ import {
   saveTerminalPreferences,
 } from "../features/settings/terminalPreferences";
 import { UpdateDialog } from "../features/updater/UpdateDialog";
+import { updaterApi } from "../features/updater/updaterApi";
 import { aiConfigApi } from "../features/ai/aiApi";
 import type { AiConfigApi } from "../features/ai/aiConfigTypes";
 import { AgentPage } from "../features/agent/AgentPage";
@@ -495,6 +496,7 @@ function RoutedApp({
           saveTerminalPreferences(next);
         }}
         initialSection={preferencesSection}
+        updater={updaterApi}
       />
       <UpdateDialog />
     </>

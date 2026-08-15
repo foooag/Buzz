@@ -6,7 +6,10 @@ import type {
 
 export type ElectronUpdateDownloadEvent =
   | { event: "Started"; data: { contentLength?: number } }
-  | { event: "Progress"; data: { chunkLength: number } }
+  | {
+      event: "Progress";
+      data: { chunkLength: number; contentLength?: number };
+    }
   | { event: "Finished"; data?: undefined };
 
 export type ElectronUpdateMetadata = {
