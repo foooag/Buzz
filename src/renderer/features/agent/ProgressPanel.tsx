@@ -23,7 +23,7 @@ export function ProgressPanel({
     <aside
       aria-label="Host progress"
       data-screen-label="Agent progress rail"
-      className="flex w-[292px] shrink-0 flex-col border-l border-graphite bg-obsidian/30"
+      className="flex w-[292px] min-w-0 max-w-full shrink-0 flex-col overflow-x-hidden border-l border-graphite bg-obsidian/30"
     >
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-graphite px-3.5">
         <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-fog/70">
@@ -34,7 +34,7 @@ export function ProgressPanel({
           {completed}/{hosts.length} done
         </span>
       </div>
-      <div className="scroll-thin grid min-h-0 flex-1 content-start gap-2 overflow-y-auto p-2.5">
+      <div className="scroll-thin grid min-h-0 min-w-0 flex-1 content-start gap-2 overflow-y-auto overflow-x-hidden p-2.5">
         {hosts.map((host) => (
           <HostProgressCard
             key={host.hostId}
@@ -61,7 +61,7 @@ export function ProgressPanel({
 function HostProgressCard({ host, label }: { host: HostProgress; label: string }) {
   const state = phaseState(host.phase);
   return (
-    <section className={`rounded-lg border bg-carbon p-2.5 transition-colors ${state.border}`}>
+    <section className={`min-w-0 max-w-full rounded-lg border bg-carbon p-2.5 transition-colors ${state.border}`}>
       <div className="flex items-center gap-2">
         <span className={`size-2 shrink-0 rounded-full ${state.dot}`} />
         <Server className="size-3 shrink-0 text-fog" />
@@ -72,7 +72,7 @@ function HostProgressCard({ host, label }: { host: HostProgress; label: string }
           {state.label}
         </span>
       </div>
-      <div className="mt-2 grid gap-1.5">
+      <div className="mt-2 grid min-w-0 gap-1.5">
         {host.commands.map((command) => (
           <CommandProgress key={command.toolCallId} command={command} />
         ))}
@@ -90,14 +90,14 @@ function CommandProgress({ command }: { command: HostCommandProgress }) {
   const running = command.status === "running";
   const error = command.status === "error";
   return (
-    <div className={`rounded-md border px-2 py-1.5 ${
+    <div className={`min-w-0 max-w-full rounded-md border px-2 py-1.5 ${
       running
         ? "border-acid-lime/30 bg-acid-lime/5"
         : error
           ? "border-coral-red/35 bg-coral-red/5"
           : "border-graphite/80 bg-black/25"
     }`}>
-      <div className="flex items-start gap-1.5">
+      <div className="flex min-w-0 items-start gap-1.5">
         {running ? (
           <Loader2 className="spin mt-[3px] size-2.5 shrink-0 text-acid-lime" />
         ) : command.status === "success" ? (
@@ -107,12 +107,12 @@ function CommandProgress({ command }: { command: HostCommandProgress }) {
         ) : (
           <ChevronRight className="mt-0.5 size-3 shrink-0 text-fog" />
         )}
-        <code className="min-w-0 flex-1 break-words font-mono text-[11px] leading-relaxed text-mist">
+        <code className="min-w-0 flex-1 whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[11px] leading-relaxed text-mist">
           {command.command}
         </code>
       </div>
       {error && command.output ? (
-        <p className="m-0 mt-1 text-[10.5px] leading-snug text-coral-red">{command.output}</p>
+        <p className="m-0 mt-1 whitespace-pre-wrap [overflow-wrap:anywhere] text-[10.5px] leading-snug text-coral-red">{command.output}</p>
       ) : null}
     </div>
   );

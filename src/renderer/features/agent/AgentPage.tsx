@@ -45,6 +45,7 @@ import { HistoryDropdown } from "./HistoryDropdown";
 import { HostErrorBanner } from "./HostErrorBanner";
 import { AgentMessages } from "./MessageViews";
 import { MentionComposer } from "./composer/MentionComposer";
+import { groupThoughtParts } from "./messageParts";
 import { ProgressPanel } from "./ProgressPanel";
 import { useAgentRuntime } from "./useAgentRuntime";
 
@@ -67,6 +68,7 @@ export function AgentPage({
   const [providers, setProviders] = useState<AiProviderConfig[] | null>(null);
   const [providerId, setProviderId] = useState("");
   const [agentId, setAgentId] = useState<string | null>(null);
+  const [agentProviderId, setAgentProviderId] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [progress, setProgress] = useState<HostProgress[]>([]);
   const [confirmation, setConfirmation] =
@@ -78,6 +80,7 @@ export function AgentPage({
     AiAgentMessage[] | null
   >(null);
   const [agentRevision, setAgentRevision] = useState(0);
+  const [hasStartedAgent, setHasStartedAgent] = useState(false);
 
   const groupHosts = useMemo(
     () =>
@@ -191,6 +194,8 @@ export function AgentPage({
           return;
         }
         setAgentId(snapshot.agentId);
+        setAgentProviderId(snapshot.providerConfigId);
+        setHasStartedAgent(true);
         setProgress(initialHostProgress(snapshot.hosts));
       })
       .catch(() => {
@@ -289,7 +294,7 @@ export function AgentPage({
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col bg-void"
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-x-hidden bg-void"
       data-screen-label="Agent view"
     >
       <div className="flex min-h-0 min-w-0 flex-1">
@@ -366,26 +371,37 @@ export function AgentPage({
             </div>
           </header>
 
-          {createError ? (
+          {createError && !hasStartedAgent ? (
             <div className="grid min-h-0 flex-1 place-items-center px-8 text-center">
               <p role="alert" className="m-0 text-[12px] text-coral-red">
                 {createError}
               </p>
             </div>
-          ) : agentId ? (
-            <AgentConversation
-              agentClient={agentClient}
-              agentIdRef={agentIdRef}
-              groupHostsRef={groupHostsRef}
-              vaultIdRef={vaultIdRef}
-              sideDispatch={sideDispatch}
-              historyMessages={historyMessages}
-              credentialHostIds={credentialHostIds}
-              onOpenServers={onOpenServers}
-              modelOptions={modelOptions}
-              modelId={providerId}
-              onModelChange={setProviderId}
-            />
+          ) : hasStartedAgent ? (
+            <>
+              {createError ? (
+                <p
+                  role="alert"
+                  className="m-0 border-b border-coral-red/25 bg-coral-red/8 px-4 py-2 text-[11px] text-coral-red"
+                >
+                  {createError}
+                </p>
+              ) : null}
+              <AgentConversation
+                agentClient={agentClient}
+                agentIdRef={agentIdRef}
+                groupHostsRef={groupHostsRef}
+                vaultIdRef={vaultIdRef}
+                sideDispatch={sideDispatch}
+                historyMessages={historyMessages}
+                credentialHostIds={credentialHostIds}
+                onOpenServers={onOpenServers}
+                modelOptions={modelOptions}
+                modelId={providerId}
+                onModelChange={setProviderId}
+                ready={Boolean(agentId && agentProviderId === providerId)}
+              />
+            </>
           ) : (
             <div className="grid min-h-0 flex-1 place-items-center text-[12px] text-fog">
               <span className="flex items-center gap-2">
@@ -428,6 +444,7 @@ function AgentConversation({
   modelOptions,
   modelId,
   onModelChange,
+  ready,
 }: {
   agentClient: AgentClient;
   agentIdRef: RefObject<string | null>;
@@ -440,6 +457,7 @@ function AgentConversation({
   modelOptions: readonly ModelOption[];
   modelId: string;
   onModelChange: (modelId: string) => void;
+  ready: boolean;
 }) {
   const runtime = useAgentRuntime(
     agentClient,
@@ -487,6 +505,7 @@ function AgentConversation({
           models={modelOptions}
           modelId={modelId}
           onModelChange={onModelChange}
+          ready={ready}
         />
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>
@@ -496,8 +515,20 @@ function AgentConversation({
 function toThreadMessages(
   messages: readonly AiAgentMessage[],
 ): ThreadMessageLike[] {
-  return messages.flatMap((message): ThreadMessageLike[] => {
+  const result: ThreadMessageLike[] = [];
+  let assistantParts: ThreadAssistantMessagePart[] = [];
+  const flushAssistant = () => {
+    if (assistantParts.length === 0) return;
+    result.push({
+      role: "assistant",
+      content: groupThoughtParts(assistantParts),
+    });
+    assistantParts = [];
+  };
+
+  for (const message of messages) {
     if (message.role === "user") {
+      flushAssistant();
       const text =
         typeof message.content === "string"
           ? message.content
@@ -505,36 +536,35 @@ function toThreadMessages(
               .filter((part) => part.type === "text")
               .map((part) => part.text)
               .join("\n");
-      return [{ role: "user", content: [{ type: "text", text }] }];
+      result.push({ role: "user", content: [{ type: "text", text }] });
+      continue;
     }
     if (message.role === "assistant") {
-      return [
-        {
-          role: "assistant",
-          content: message.content.flatMap(
-            (part): ThreadAssistantMessagePart[] => {
-              if (part.type === "text")
-                return [{ type: "text" as const, text: part.text }];
-              if (part.type === "thinking")
-                return [{ type: "reasoning" as const, text: part.thinking }];
-              if (part.type === "toolCall")
-                return [
-                  {
-                    type: "tool-call" as const,
-                    toolCallId: part.id,
-                    toolName: part.name,
-                    args: (part.arguments ?? {}) as never,
-                    argsText: JSON.stringify(part.arguments ?? {}),
-                  },
-                ];
-              return [];
-            },
-          ),
-        },
-      ];
+      assistantParts.push(
+        ...message.content.flatMap(
+          (part): ThreadAssistantMessagePart[] => {
+            if (part.type === "text")
+              return [{ type: "text" as const, text: part.text }];
+            if (part.type === "thinking")
+              return [{ type: "reasoning" as const, text: part.thinking }];
+            if (part.type === "toolCall")
+              return [
+                {
+                  type: "tool-call" as const,
+                  toolCallId: part.id,
+                  toolName: part.name,
+                  args: (part.arguments ?? {}) as never,
+                  argsText: JSON.stringify(part.arguments ?? {}),
+                },
+              ];
+            return [];
+          },
+        ),
+      );
     }
-    return [];
-  });
+  }
+  flushAssistant();
+  return result;
 }
 
 function CenteredState({
