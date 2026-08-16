@@ -21,6 +21,9 @@ const zh: Record<string, string> = {
   "A new version was found on GitHub. Install it now and restart Buzz to finish updating.": "在 GitHub 上发现新版本。立即安装并重启 Buzz 以完成更新。",
   "Downloading update…": "正在下载更新…",
   "Downloading update": "正在下载更新",
+  "Restart to update": "重启更新",
+  "Retry update": "重试更新",
+  "Retry update download": "重试下载更新",
   "Update installed. Restarting…": "更新已安装，正在重启…",
   "The update could not be installed. Check your connection and try again.": "无法安装更新，请检查网络连接后重试。",
   Later: "稍后",
@@ -313,9 +316,14 @@ const zh: Record<string, string> = {
   "The SSH connection could not be opened.": "无法打开 SSH 连接。",
   "Update connection settings": "更新连接设置",
   Confirm: "确认",
+  "Check for updates": "检查更新",
+  "Checking…": "正在检查…",
+  "Up to date": "已是最新版本",
+  "Check failed — try again": "检查失败，请重试",
 };
 
 const replaceRules: Array<[RegExp, string]> = [
+  [/^Buzz (.+) is available$/, "Buzz $1 可用"],
   [/^Delete (.+)$/, "删除 $1"],
   [/^Remove (.+)$/, "移除 $1"],
   [/^Connect (.+) with SSH$/, "使用 SSH 连接 $1"],

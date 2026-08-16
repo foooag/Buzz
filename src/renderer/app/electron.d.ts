@@ -4,16 +4,17 @@ import type {
   AgentStreamRequest,
 } from "@shared/agent-stream";
 
-export type ElectronUpdateDownloadEvent =
-  | { event: "Started"; data: { contentLength?: number } }
-  | { event: "Progress"; data: { chunkLength: number } }
-  | { event: "Finished"; data?: undefined };
-
 export type ElectronUpdateMetadata = {
   version: string;
   date?: string;
   body?: string;
 };
+
+export type ElectronUpdateStatus =
+  | { phase: "idle" }
+  | { phase: "downloading"; version: string; percent?: number }
+  | { phase: "ready"; version: string }
+  | { phase: "error"; version?: string };
 
 export type TerminusDesktopBridge = {
   invoke: <T>(command: string, input: unknown) => Promise<IpcResult<T>>;
@@ -38,10 +39,11 @@ export type TerminusDesktopBridge = {
   };
   updater: {
     check: () => Promise<ElectronUpdateMetadata | null>;
-    close: () => Promise<void>;
-    downloadAndInstall: (
-      onEvent: (event: ElectronUpdateDownloadEvent) => void,
-    ) => Promise<void>;
+    status: () => Promise<ElectronUpdateStatus>;
+    onStatusChange: (
+      onStatusChange: (status: ElectronUpdateStatus) => void,
+    ) => () => void;
+    retry: () => Promise<void>;
     relaunch: () => Promise<void>;
   };
 };

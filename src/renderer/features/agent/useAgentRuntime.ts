@@ -6,6 +6,7 @@ import {
 } from "@assistant-ui/react";
 import { useMemo, type RefObject } from "react";
 import { resolveTargets } from "./directiveText";
+import { groupThoughtParts } from "./messageParts";
 import type { AgentClient, AgentEvent } from "./agentTypes";
 
 type SideDispatch = (event: AgentEvent) => void;
@@ -50,7 +51,7 @@ export function useAgentRuntime(
         for await (const event of queue) {
           snapshot = applyEventToSnapshot(snapshot, event);
           yield {
-            content: snapshot.content,
+            content: groupThoughtParts(snapshot.content),
             status: event.type === "agentEnd"
               ? { type: "complete", reason: "stop" as const }
               : { type: "running" as const },
@@ -58,7 +59,7 @@ export function useAgentRuntime(
         }
         if (!receivedAgentEnd) {
           yield {
-            content: snapshot.content,
+            content: groupThoughtParts(snapshot.content),
             status: abortSignal.aborted
               ? { type: "incomplete", reason: "cancelled" as const }
               : { type: "complete", reason: "unknown" as const },

@@ -35,6 +35,19 @@ test("mentions a server and runs a deterministic Agent task", async ({ page }) =
       : false;
   });
   expect(timelineOrder).toBe(true);
-  await expect(page.getByRole("complementary", { name: "Host progress" })
-    .getByText("web-prod-01")).toBeVisible();
+  const progress = page.getByRole("complementary", { name: "Host progress" });
+  await expect(progress.getByText("web-prod-01")).toBeVisible();
+
+  await page.setViewportSize({ width: 666, height: 800 });
+  await progress.locator("code").evaluate((element) => {
+    element.textContent = `docker inspect ${"unbroken-command-token".repeat(30)}`;
+  });
+
+  await expect.poll(() => progress.evaluate((element) => (
+    element.clientWidth <= 292 && element.scrollWidth === element.clientWidth
+  ))).toBe(true);
+  await expect.poll(() => page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }))).toEqual({ clientWidth: 666, scrollWidth: 666 });
 });

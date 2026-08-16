@@ -306,7 +306,15 @@ describe("AgentPage", () => {
       />,
     );
 
-    await user.click(await screen.findByRole("combobox", { name: "Model" }));
+    const composer = await screen.findByRole("textbox", { name: "Agent command" });
+    fireEvent.paste(composer, {
+      clipboardData: {
+        getData: () => "Keep this draft while switching models",
+        types: ["text/plain"],
+      },
+    });
+
+    await user.click(screen.getByRole("combobox", { name: "Model" }));
     await user.click(screen.getByRole("option", { name: /gpt-5/ }));
 
     await waitFor(() => expect(create).toHaveBeenLastCalledWith({
@@ -314,5 +322,8 @@ describe("AgentPage", () => {
       targets: [],
     }));
     expect(screen.getByText("gpt-5")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Agent command" })).toHaveTextContent(
+      "Keep this draft while switching models",
+    );
   });
 });
