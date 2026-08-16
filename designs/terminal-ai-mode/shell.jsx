@@ -10,8 +10,10 @@ const { AiSession } = window;
 const { AgentView } = window;
 const { ServersView, SftpView, PortForwardingView, HistoryView } = window;
 const { PreferencesWindow } = window;
+const { PluginCenterView, PluginStudio } = window;
 const { Icon, SESSION, TIMELINE } = window;
 const { INV } = window;
+const { PLUGINS } = window;
 
 const LOCAL_SHELL = {
   id: "local",
@@ -30,6 +32,12 @@ function BuzzApp() {
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [openSessions, setOpenSessions] = useState([]); // {id, host, title, protocol, timeline}
   const [activeSessionId, setActiveSessionId] = useState(null);
+
+  // Plugin system state (the Plugins page is a resizable grid; highlightId
+  // flashes a tile when arriving from a pinned shortcut or after install)
+  const [installedPlugins, setInstalledPlugins] = useState(() => PLUGINS.REGISTRY.map((p) => ({ ...p })));
+  const [pluginHighlight, setPluginHighlight] = useState(null);
+  const [studioOpen, setStudioOpen] = useState(false);
 
   // Preferences state (theme/font/size drive the Terminal-section live preview)
   const [theme, setTheme] = useState("th-termius-dark");
@@ -75,11 +83,6 @@ function BuzzApp() {
     [connectHost],
   );
 
-  const navigate = useCallback((view) => {
-    setActiveView(view);
-    setActiveSessionId(null);
-  }, []);
-
   const goToServers = useCallback(() => {
     navigate("servers");
   }, [navigate]);
@@ -92,6 +95,51 @@ function BuzzApp() {
     setOpenSessions((prev) => prev.filter((s) => s.id !== id));
     setActiveSessionId((cur) => (cur === id ? null : cur));
   }, []);
+
+  /* ---- plugin handlers -------------------------------------------------- */
+
+  const navigate = useCallback((view) => {
+    setActiveView(view);
+    setActiveSessionId(null);
+    setStudioOpen(false);
+  }, []);
+
+  const flashPlugin = useCallback((id) => {
+    setPluginHighlight(id);
+    window.setTimeout(() => setPluginHighlight((cur) => (cur === id ? null : cur)), 1800);
+  }, []);
+
+  const openPlugin = useCallback(
+    (id) => {
+      setStudioOpen(false);
+      setActiveView("plugins");
+      setActiveSessionId(null);
+      flashPlugin(id);
+    },
+    [flashPlugin],
+  );
+
+  const togglePluginEnabled = useCallback((id) => {
+    setInstalledPlugins((prev) => prev.map((p) => (p.id === id ? { ...p, enabled: !p.enabled } : p)));
+  }, []);
+
+  const uninstallPlugin = useCallback((id) => {
+    setInstalledPlugins((prev) => prev.filter((p) => p.id !== id));
+  }, []);
+
+  const handleInstalled = useCallback(
+    (recipeId) => {
+      const entry = PLUGINS.REGISTRY.find((p) => p.surface === recipeId);
+      setInstalledPlugins((prev) =>
+        prev.some((p) => p.surface === recipeId) ? prev : [...prev, { ...entry }],
+      );
+      setStudioOpen(false);
+      setActiveView("plugins");
+      setActiveSessionId(null);
+      flashPlugin(entry.id);
+    },
+    [flashPlugin],
+  );
 
   // Global nav shortcuts (AiSession handles ⌘I / Esc within a session).
   useEffect(() => {
@@ -125,6 +173,8 @@ function BuzzApp() {
         vault={INV.VAULT.name}
         recent={INV.HISTORY}
         onOpenHistory={() => navigate("history")}
+        plugins={installedPlugins}
+        onOpenPlugin={openPlugin}
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col bg-void">
@@ -142,6 +192,12 @@ function BuzzApp() {
               <ServersView onConnect={connectHost} />
             ) : activeView === "agent" ? (
               <AgentView onConnectFromServers={goToServers} />
+            ) : activeView === "plugins" ? (
+              <PluginCenterView
+                plugins={installedPlugins}
+                highlightId={pluginHighlight}
+                onCreate={() => setStudioOpen(true)}
+              />
             ) : activeView === "sftp" ? (
               <SftpView />
             ) : activeView === "forwarding" ? (
@@ -151,6 +207,10 @@ function BuzzApp() {
             )}
           </div>
         )}
+
+        {studioOpen ? (
+          <PluginStudio onClose={() => setStudioOpen(false)} onInstalled={handleInstalled} />
+        ) : null}
       </main>
 
       <PreferencesWindow
@@ -162,6 +222,9 @@ function BuzzApp() {
         setFont={setFont}
         fontSize={fontSize}
         setFontSize={setFontSize}
+        plugins={installedPlugins}
+        onTogglePlugin={togglePluginEnabled}
+        onUninstallPlugin={uninstallPlugin}
       />
     </div>
   );

@@ -11,6 +11,7 @@ const { INV } = window;
 const PREF_SECTIONS = [
   { id: "terminal", label: "Terminal", icon: "terminal" },
   { id: "sftp", label: "SFTP", icon: "folder" },
+  { id: "plugins", label: "Plugins", icon: "puzzle" },
   { id: "shortcuts", label: "Shortcuts", icon: "command" },
   { id: "known", label: "Known Hosts", icon: "shield-check" },
   { id: "keychain", label: "Keychain", icon: "key" },
@@ -703,6 +704,114 @@ function AiProviderForm({ initial, onSave, onCancel }) {
   );
 }
 
+/* ---- Plugins section ------------------------------------------------ */
+
+const PREF_PLUGIN_TILE = {
+  "pulse-green": "bg-pulse-green/15 text-pulse-green",
+  "signal-teal": "bg-signal-teal/15 text-signal-teal",
+  "acid-lime": "bg-acid-lime/15 text-acid-lime",
+  "iris-violet": "bg-iris-violet/15 text-lavender",
+};
+
+function PluginsSection({ plugins = [], onToggle, onUninstall }) {
+  const [confirmId, setConfirmId] = useState(null);
+  const { PlTrustBadge, PlKindBadge } = window;
+  return (
+    <section>
+      <PrefHeader icon="puzzle" title="Plugins" subtitle="Enable, disable and uninstall installed plugins. Surfaces live on the Plugins page." />
+      {plugins.length === 0 ? (
+        <Card>
+          <div className="flex flex-col items-center px-6 py-8 text-center">
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-graphite text-fog">
+              <Icon name="puzzle" size={19} />
+            </span>
+            <p className="m-0 mt-2.5 text-[13px] text-mist">No plugins installed</p>
+            <p className="m-0 mt-1 max-w-[320px] text-[12px] leading-relaxed text-fog">
+              Create one from the Plugins page — describe what you need and Buzz drafts it with mock data first.
+            </p>
+          </div>
+        </Card>
+      ) : (
+        <Card className="p-0">
+          <div className="divide-y divide-graphite/60">
+            {plugins.map((p) => {
+              const confirming = confirmId === p.id;
+              return (
+                <div key={p.id} className="px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className={"grid h-9 w-9 shrink-0 place-items-center rounded-lg " + (PREF_PLUGIN_TILE[p.accent] ?? PREF_PLUGIN_TILE["acid-lime"])}>
+                      <Icon name={p.icon} size={16} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={"truncate text-[13.5px] font-semibold tracking-tight " + (p.enabled ? "text-paper" : "text-fog")}>
+                          {p.name}
+                        </span>
+                        <span className="font-mono text-[10.5px] text-fog">v{p.version}</span>
+                        <PlTrustBadge trust={p.trust} />
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="truncate text-[11.5px] text-fog">{p.publisher}</span>
+                        <span aria-hidden="true" className="text-fog/40">·</span>
+                        {p.dataSources.map((ds) => (
+                          <PlKindBadge key={ds.id} kind={ds.kind} />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {confirming ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmId(null)}
+                            className="rounded-md px-2.5 py-1.5 text-[12px] text-fog transition-colors hover:bg-white/5 hover:text-mist"
+                          >
+                            Keep
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setConfirmId(null);
+                              onUninstall?.(p.id);
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-md bg-coral-red/90 px-2.5 py-1.5 text-[12px] font-semibold text-paper transition hover:brightness-110"
+                          >
+                            <Icon name="trash" size={12} />
+                            Uninstall
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          aria-label={"Uninstall " + p.name}
+                          onClick={() => setConfirmId(p.id)}
+                          className="grid h-8 w-8 place-items-center rounded-md text-fog transition-colors hover:bg-coral-red/10 hover:text-coral-red"
+                        >
+                          <Icon name="trash" size={15} />
+                        </button>
+                      )}
+                      <Toggle on={p.enabled} onChange={() => onToggle?.(p.id)} label={p.name} />
+                    </div>
+                  </div>
+                  {confirming ? (
+                    <p className="m-0 mt-2 flex items-start gap-1.5 pl-12 text-[11.5px] leading-relaxed text-fog">
+                      <Icon name="alert-circle" size={12} className="mt-[2px] shrink-0 text-yellow-400" />
+                      Uninstall disposes surfaces, routes and event subscriptions in reverse order. Connections and vault credentials are kept.
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+      <p className="m-0 mt-3 text-[11px] leading-relaxed text-fog/70">
+        Disabling suspends a plugin’s surfaces without removing bindings. Uninstall never deletes vault credentials or connections owned by you.
+      </p>
+    </section>
+  );
+}
+
 function AiProvidersSection() {
   const [providers, setProviders] = useState(AI_PROVIDERS);
   const [editing, setEditing] = useState(null); // null | { isNew: bool, initial?: obj }
@@ -771,7 +880,7 @@ function AiProvidersSection() {
 
 /* ---- Shell ---------------------------------------------------------- */
 
-function PreferencesWindow({ open, onClose, theme, setTheme, font, setFont, fontSize, setFontSize }) {
+function PreferencesWindow({ open, onClose, theme, setTheme, font, setFont, fontSize, setFontSize, plugins, onTogglePlugin, onUninstallPlugin }) {
   const [section, setSection] = useState("terminal");
   const [update, setUpdate] = useState("idle"); // idle | checking | latest | available
   if (!open) return null;
@@ -855,6 +964,8 @@ function PreferencesWindow({ open, onClose, theme, setTheme, font, setFont, font
               <TerminalSection theme={theme} setTheme={setTheme} font={font} setFont={setFont} fontSize={fontSize} setFontSize={setFontSize} />
             ) : section === "sftp" ? (
               <SftpSection />
+            ) : section === "plugins" ? (
+              <PluginsSection plugins={plugins} onToggle={onTogglePlugin} onUninstall={onUninstallPlugin} />
             ) : section === "shortcuts" ? (
               <ShortcutsSection />
             ) : section === "known" ? (

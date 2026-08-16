@@ -20,6 +20,8 @@ function Sidebar({
   vault = "Local vault",
   recent,
   onOpenHistory,
+  plugins,
+  onOpenPlugin,
 }) {
   return (
     <aside className="relative flex min-h-screen w-[266px] shrink-0 flex-col border-r border-graphite bg-carbon px-2.5 pb-4 pt-3 text-mist">
@@ -50,6 +52,8 @@ function Sidebar({
 
       <PrimaryNav activeView={activeView} onNavigate={onNavigate} />
 
+      <PluginShortcuts plugins={plugins} onOpenPlugin={onOpenPlugin} />
+
       <SessionList
         sessions={sessions}
         activeSessionId={activeSessionId}
@@ -70,10 +74,34 @@ function Sidebar({
 const NAV_ITEMS = [
   { id: "servers", label: "Servers", icon: "server" },
   { id: "agent", label: "Agent", icon: "sparkles" },
+  { id: "plugins", label: "Plugins", icon: "puzzle" },
   { id: "sftp", label: "SFTP", icon: "folder" },
   { id: "forwarding", label: "Port Forwarding", icon: "network" },
   { id: "history", label: "History", icon: "history" },
 ];
+
+function PluginShortcuts({ plugins, onOpenPlugin }) {
+  const pinned = (plugins ?? []).filter((p) => p.pinned && p.enabled);
+  if (pinned.length === 0) return null;
+  return (
+    <nav aria-label="Pinned plugins" className="mt-3 grid gap-1 border-t border-graphite pt-3">
+      <div className="px-3.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-fog/70">
+        Pinned plugins
+      </div>
+      {pinned.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          onClick={() => onOpenPlugin?.(p.id)}
+          className="flex min-h-[36px] min-w-0 items-center gap-2.5 rounded-[10px] px-3.5 text-left text-[13px] text-fog transition-colors hover:bg-white/5 hover:text-mist"
+        >
+          <Icon name={p.icon} size={15} className="shrink-0 text-fog/80" />
+          <span className="overflow-hidden text-ellipsis whitespace-nowrap">{p.name}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
 
 function PrimaryNav({ activeView, onNavigate }) {
   return (
