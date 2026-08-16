@@ -1,10 +1,11 @@
 # 产品需求文档：AI 插件系统
 
-- **文档版本**：v1.0
-- **日期**：2026-08-14
+- **文档版本**：v1.1
+- **日期**：2026-08-16
 - **状态**：待评审
 - **目标版本**：MVP → Beta
 - **目标读者**：产品、设计、安全、桌面端、Agent、平台与市场服务团队
+- **修订记录**：v1.1 新增 `http.private` 内网端点数据源、前台轮询、`data.stream` 预留契约、内置 DevOps Connection 模板与 CI/CD 可视面板场景（场景 G）；拆分公网/内网 HTTP 安全策略；同步权限、验收、测试与里程碑
 
 ---
 
@@ -24,7 +25,7 @@ Buzz 将新增一个以 AI 为创作入口的插件系统。用户只需描述�
 2. 在 Agent 对话中以内嵌卡片使用，例如让 Agent 临时生成巡检结果面板，再将其保存为插件；
 3. 从官方市场、本地插件包或私享链接安装其他用户发布的插件。
 
-首版支持 Buzz 内置数据能力与受控 HTTP 数据源；支持读写操作，但采用安装授权与敏感动作运行时确认。AI 默认组合 Buzz 标准组件，只有标准组件无法满足需求时，才生成运行于沙盒 Web Frame 的自定义 UI。
+首版支持 Buzz 内置数据能力与受控 HTTP 数据源（公网 API 与用户绑定的内网端点）；支持读写操作，但采用安装授权与敏感动作运行时确认。AI 默认组合 Buzz 标准组件，只有标准组件无法满足需求时，才生成运行于沙盒 Web Frame 的自定义 UI。
 
 ---
 
@@ -159,6 +160,10 @@ Agent 在对话中生成一次多主机巡检卡片。用户选择“保存为�
 
 创作者通过不可搜索的链接分享测试版。私享版本仍需完成自动扫描，但不进入公开搜索和排行榜，也不要求公开市场人工审核后才能分享。
 
+#### 场景 G：CI/CD 可视面板
+
+用户输入：“做一个 CI/CD 面板，汇总 GitLab MR、Jenkins 构建状态、ArgoCD 应用健康与工作负载。”插件为每个服务声明独立数据源：GitLab、Jenkins、ArgoCD 使用 `http` 或 `http.private`（内网端点在安装时由用户录入并绑定）；Kubernetes 状态优先通过 ArgoCD 聚合视图读取，避免直连集群 API。首版将面板拆为按数据源独立的分区卡片；跨源关联编排与流水线拓扑图在后续版本通过确定性编排和沙盒自定义组件支持。查看构建日志属于已授权读操作；触发构建、发布与回滚命中远程操作策略，执行前显示准确目标并要求确认。
+
 ---
 
 ## 6. 端到端产品流程
@@ -208,6 +213,7 @@ flowchart LR
 
 - 展示发布者、来源、签名、版本、数据源、网络域名和权限；
 - 用户逐项绑定数据源并授权；
+- 内网 HTTP 端点在安装时由用户录入 host、端口与路径范围；插件声明的只是端点用途与数量，不能预置地址；
 - 安装完成后创建 `PluginInstallation`，但不复制用户凭据到插件目录；
 - 插件默认出现在插件中心，用户可选择固定到主导航。
 
@@ -252,6 +258,9 @@ flowchart LR
 | F11 | 敏感操作复用现有风险确认与一次性授权 | P0 |
 | F12 | 支持取消、超时、速率限制、响应大小限制和错误标准化 | P0 |
 | F13 | HTTP 数据源支持域名、协议、方法和路径范围声明 | P0 |
+| F27 | 支持用户绑定内网端点的 `http.private` 数据源，请求精确匹配绑定范围 | P0 |
+| F28 | 支持前台轮询声明，页面隐藏时自动暂停并受统一速率限制 | P1 |
+| F29 | 内置 GitLab、Jenkins、ArgoCD、Kubernetes Connection 模板 | P1 |
 
 ### 7.3 UI Runtime
 
@@ -405,8 +414,9 @@ sequenceDiagram
 | `buzz.ssh` | 在明确主机范围内执行非交互命令 | 复用 Host Key、超时、目标限制和 Shell 风险门控 |
 | `buzz.sftp` | 列目录、读写、上传、下载、重命名、删除 | 路径范围与写操作权限分离，危险动作确认 |
 | `http` | 调用预声明 HTTPS API | 域名、方法、路径、重定向、超时、大小与响应 schema 限制 |
+| `http.private` | 调用用户绑定的内网 HTTPS/HTTP API | 端点与路径范围由用户安装时录入，精确匹配，禁跨端点重定向，TLS 策略见 13.3 |
 
-适配器分为 Service Definition、Service Provider 和 Consumer 三层。插件只能引用稳定的 Service Definition；具体 Provider 由 Buzz 核心实现和升级。
+适配器分为 Service Definition、Service Provider 和 Consumer 三层。插件只能引用稳定的 Service Definition；具体 Provider 由 Buzz 核心实现和升级。Buzz 内置 GitLab、Jenkins、ArgoCD 与 Kubernetes 的 Connection 模板，预设认证方式、分页参数与速率限制；令牌与密码仍只保存于 Vault，由模板在主进程注入。
 
 ### 9.5 Agent 集成
 
@@ -476,7 +486,7 @@ interface PluginManifest {
 ```ts
 interface DataSourceDefinition {
   id: string;
-  kind: "buzz.inventory" | "buzz.ssh" | "buzz.sftp" | "http";
+  kind: "buzz.inventory" | "buzz.ssh" | "buzz.sftp" | "http" | "http.private";
   title: string;
   bindingSchema: JsonSchema;
   operations: DataOperation[];
@@ -489,6 +499,10 @@ interface DataOperation {
   outputSchema: JsonSchema;
   permission: string;
   timeoutMs?: number;
+  polling?: {
+    intervalMs: number;
+    maxIntervalMs?: number;
+  };
   cache?: {
     strategy: "none" | "memory";
     ttlMs?: number;
@@ -556,7 +570,9 @@ type PluginBridgeRequest =
 type PluginBridgeResponse =
   | { type: "bridge.ready"; requestId: string; capabilities: string[] }
   | { type: "data.result"; requestId: string; result: JsonValue }
-  | { type: "data.error"; requestId: string; error: PluginPublicError };
+  | { type: "data.error"; requestId: string; error: PluginPublicError }
+  | { type: "data.stream.chunk"; requestId: string; chunk: JsonValue }
+  | { type: "data.stream.end"; requestId: string };
 ```
 
 桥接要求：
@@ -566,6 +582,8 @@ type PluginBridgeResponse =
 - frame 不得指定任意 Data Broker operation，只能引用当前 Definition 中已注册 Action；
 - 宿主忽略未知消息类型并记录非敏感诊断；
 - frame 销毁后，所有未完成请求必须取消。
+
+`data.stream.*` 为流式响应预留消息（P2），面向构建日志、Pod 日志等流式数据；首版以分页拉取加轮询近似，启用前必须补充背压、取消、分块大小与顺序性的契约定义。
 
 ---
 
@@ -605,7 +623,7 @@ AI 只有在标准 Catalog 无法表达明确需求时，才建议生成自定�
 
 适用例子：
 
-- 特殊拓扑图；
+- 特殊拓扑图，例如 CI/CD 全链路流水线图；
 - 复杂时间轴；
 - 标准图表无法表达的交互式可视化；
 - 需要高密度定制布局的监控组件。
@@ -640,6 +658,7 @@ AI 只有在标准 Catalog 无法表达明确需求时，才建议生成自定�
 | --- | --- | --- |
 | 展示权限 | 渲染标准组件、读取插件本地 UI 状态 | 安装说明，无逐次确认 |
 | 数据查询权限 | 读取指定主机状态、访问指定 HTTPS API | 安装时按数据源授权 |
+| 自动刷新权限 | Surface 前台按声明间隔轮询已授权查询 | 安装时按数据源授权，页面隐藏时自动暂停 |
 | 数据写入权限 | 上传文件、调用写 HTTP 接口 | 安装时授权，执行时按风险判断 |
 | 敏感操作权限 | 删除文件、重启服务、危险 Shell 命令 | 每次显示准确影响并一次性确认 |
 | 禁止能力 | 读取 Secret、任意 IPC、Node、任意网络 | 不可申请 |
@@ -657,13 +676,29 @@ AI 只有在标准 Catalog 无法表达明确需求时，才建议生成自定�
 
 ### 13.3 HTTP 安全策略
 
+HTTP 数据源分为公网 `http` 与内网 `http.private` 两类，目标声明方式与 SSRF 策略不同，但都遵循“权限只能被收紧”。
+
+公网 `http` 数据源：
+
 - 首版只允许 HTTPS，开发模式可单独允许 loopback HTTP；
 - 域名必须在 manifest 中精确声明，不默认允许子域名；
 - DNS 解析后阻止未授权的 loopback、link-local、私网或 metadata 地址；
 - 重定向后的目标重新执行完整策略；
+- 对 Cookie 与浏览器会话隔离，不复用用户网页登录态。
+
+内网 `http.private` 数据源：
+
+- 面向用户自有的内网 DevOps 与运维端点，例如自建 GitLab、Jenkins、ArgoCD 或 Kubernetes API；
+- manifest 只声明所需端点的数量与用途，具体 host、端口和路径范围由用户安装时录入，插件不能预置地址，也不能探测绑定之外的地址；
+- 每次请求必须精确匹配用户绑定的端点与路径范围，重定向禁止跨端点；
+- TLS 默认校验；用户可导入私有 CA，或对单个端点显式跳过校验，跳过时 UI 明确标记降级并写入审计记录；
+- 私网与 metadata 地址拦截不适用于用户主动绑定的内网端点，但绑定动作本身必须由用户显式完成。
+
+两类数据源共同要求：
+
 - Header 中的 Secret 由 Connection 模板注入，不返回插件；
 - 限制方法、Content-Type、请求体、响应体、超时和重试次数；
-- 对 Cookie 与浏览器会话隔离，不复用用户网页登录态。
+- 轮询请求计入 Data Broker 统一速率限制。
 
 ### 13.4 数据最小化
 
@@ -765,7 +800,10 @@ Beta 阶段建议跟踪：
 - 自定义 frame 无法访问 Node、Electron、父 DOM、任意网络与 Vault；
 - 禁用和卸载后不存在残留路由、Surface、Action 或事件监听；
 - 新增权限或域名的更新不会静默安装；
-- 被安全撤回的版本在客户端同步撤回清单后默认禁用。
+- 被安全撤回的版本在客户端同步撤回清单后默认禁用；
+- 内网端点请求无法访问用户绑定范围之外的地址，跨端点重定向被拒绝；
+- 声明轮询的插件在页面隐藏时暂停轮询，重新可见后按策略恢复；
+- 使用内置 Connection 模板完成 GitLab、Jenkins、ArgoCD 绑定并执行只读查询。
 
 ---
 
@@ -777,6 +815,8 @@ Beta 阶段建议跟踪：
 - Catalog props 校验与危险 URL 拒绝；
 - Permission Engine 的 allow、deny、ask 与单调收紧；
 - Data Broker 输入冻结、输出校验、脱敏、取消和超时；
+- `http.private` 端点精确匹配、跨端点重定向拒绝与 TLS 降级审计；
+- 轮询调度、页面隐藏暂停与统一速率限制；
 - Registry 注册、逆序撤销和部分撤销失败；
 - 安装、更新权限 diff、撤回和卸载状态机；
 - 插件桥消息 origin、身份、请求关联和 payload 校验。
@@ -799,12 +839,15 @@ Beta 阶段建议跟踪：
 5. 执行需要确认的远程操作；
 6. 发布为私享链接并由另一测试用户安装；
 7. 发布增加权限的新版本并验证重新授权；
-8. 撤回恶意测试版本并验证客户端禁用。
+8. 撤回恶意测试版本并验证客户端禁用；
+9. 创建 CI/CD 可视面板，录入内网 GitLab、Jenkins、ArgoCD 端点并完成只读查询；
+10. 验证内网请求被限制在绑定端点范围内，轮询在页面隐藏时暂停。
 
 ### 17.4 安全测试
 
 - frame 逃逸、DOM 越权、Node 探测和协议混淆；
 - SSRF、DNS rebinding、重定向绕过和私网探测；
+- `http.private` 绑定范围外探测、路径绕过与地址伪造；
 - schema 递归炸弹、超大 JSON、深层嵌套和组件数量攻击；
 - XSS、危险 URL、Markdown 注入与伪装系统确认框；
 - 权限混淆、Action ID 替换、重放和跨插件请求；
@@ -820,10 +863,12 @@ Beta 阶段建议跟踪：
 - 定义 `.buzzplugin`、manifest、Definition 和 Installation 契约；
 - 实现 Plugin Registry、作用域注册与可逆卸载；
 - 实现标准 Catalog 与 Surface Runtime；
-- 实现 Inventory、SSH、SFTP、HTTP Data Broker；
-- 支持本地导入、权限授权和独立插件页。
+- 实现 Inventory、SSH、SFTP、HTTP（含 `http.private` 内网端点绑定）Data Broker；
+- 内置 GitLab、Jenkins、ArgoCD、Kubernetes Connection 模板；
+- 支持本地导入、权限授权和独立插件页；
+- 支持前台轮询与页面隐藏暂停策略。
 
-**退出标准**：使用手写 Definition 完成健康看板和 nginx 操作台验收，Secret 不跨 IPC，卸载无残留。
+**退出标准**：使用手写 Definition 完成健康看板、nginx 操作台和 CI/CD 面板（内网端点绑定）验收，Secret 不跨 IPC，卸载无残留。
 
 ### M2：AI 创作与自定义 UI
 
@@ -848,6 +893,7 @@ Beta 阶段建议跟踪：
 
 在安全和市场数据成熟后评估：
 
+- 流式数据响应与 `data.stream` 消息桥；
 - MCP 数据源；
 - 数据库只读连接器；
 - 第三方 OAuth Provider；
@@ -870,6 +916,7 @@ M4 仅为探索方向，不属于本 PRD 首版承诺。
 | 市场审核成为瓶颈 | 发布等待时间增长 | 自动扫描分级、标准组件插件快速通道、人工聚焦高风险项 |
 | 插件更新破坏布局 | 用户工作流中断 | SemVer、兼容范围、预发布验证、主版本不自动更新 |
 | HTTP 能力被用于 SSRF | 内网与元数据泄露 | 域名声明、解析后检查、重定向复验、私网策略和大小限制 |
+| 内网端点绑定被用作内网跳板 | 横向移动与凭据泄露 | 用户显式录入、精确匹配、禁跨端点重定向、TLS 策略与审计 |
 | 插件生态碎片化 | 组件与能力难以兼容 | 版本化 Catalog、稳定 Data Source Definition 和迁移工具 |
 
 ---
@@ -880,7 +927,8 @@ M4 仅为探索方向，不属于本 PRD 首版承诺。
 | --- | --- |
 | 插件定义 | 数据源契约与 UI 的合集 |
 | 创作者 | 普通用户通过自然语言创建 |
-| 数据源 | Buzz Inventory、SSH、SFTP 与受控 HTTP |
+| 数据源 | Buzz Inventory、SSH、SFTP、受控 HTTP（公网域名与用户绑定内网端点） |
+| 实时性 | 前台轮询、页面隐藏暂停；流式响应 P2 预留 |
 | 操作范围 | 读写均可，安装授权加敏感动作运行时确认 |
 | 生成流程 | 模拟预览 → 真实数据测试 → 安装或发布 |
 | 使用位置 | 独立插件页与 Agent 内嵌 |
