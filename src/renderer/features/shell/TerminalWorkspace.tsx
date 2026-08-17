@@ -262,6 +262,7 @@ export function TerminalWorkspace({
           <AiAssistantPanel
             onClose={() => setAiOpen(false)}
             providerApi={aiConfigApi}
+            onRunCommand={runCommandSnippet}
             sshSessionId={(() => {
               const activePane = findPane(session.root, session.activePaneId);
               return activePane && isSshSession?.(activePane.sessionId)

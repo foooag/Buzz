@@ -45,8 +45,13 @@ export function createDeterministicQuickScriptApi(initial: QuickScript[] = []): 
       rows.push({ ...base, id: `qs-${++seq}`, title: "Disk usage", script: "df -h", confidence: 0.85 });
       return { hostId: "host-deterministic", createdCount: 2, mode: "llm", durationMs: 12, droppedCount: 0 };
     },
-    async list(hostId) {
-      return sortRows().filter((row) => row.hostId === hostId);
+    // The fixture keeps one in-memory pool regardless of hostId: the real
+    // backend resolves the host from the sshSessionId at generate time, so a
+    // list() scoped by the panel's resolved host must still surface the rows
+    // the fixture generated. Existing tests seed/list with a single host, so
+    // ignoring the filter changes nothing for them.
+    async list() {
+      return sortRows();
     },
     async update(id, patch) {
       const row = rows.find((entry) => entry.id === id);

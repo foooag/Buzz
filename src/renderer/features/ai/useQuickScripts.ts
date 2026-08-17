@@ -4,7 +4,7 @@ import type { QuickScript, QuickScriptStatus } from "@shared/ipc/quickscripts/ty
 import type { QuickScriptGenPhase } from "./QuickScriptsSection";
 import type { QuickScriptApi } from "./deterministicQuickScriptApi";
 
-export const QUICK_SLASH_TRIGGERS = ["/生成快捷指令", "/quick-script"] as const;
+export const QUICK_SLASH_TRIGGERS: readonly string[] = ["/生成快捷指令", "/quick-script"];
 
 export const QUICK_SLASH_COMMANDS = [
   { token: "/生成快捷指令", hint: "Recap this session · generate quick scripts" },
@@ -62,6 +62,11 @@ export function useQuickScripts({
     setCollapsedKey(collapsedStorageKey);
     setOffset(0);
     setPhase("idle");
+    // 主机切换时一并清掉跨主机残留:待确认的执行、撤销 toast、编辑草稿都
+    // 属于上一台主机的会话状态,留在新主机上会让旧脚本跑进新终端。
+    setPendingConfirm(null);
+    setUndo(null);
+    setEditing(null);
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hostId]);

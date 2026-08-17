@@ -299,9 +299,7 @@ describe("Termius-compatible terminal workspace", () => {
     });
     expect(aiSidebar).toHaveAttribute("data-screen-label", "AI sidebar");
     expect(
-      within(aiSidebar).getByPlaceholderText(
-        "Describe what you want done on web-prod-01…",
-      ),
+      within(aiSidebar).getByRole("textbox", { name: "Message AI assistant" }),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Toggle AI mode (⌘I)" })).toHaveAttribute(
       "aria-pressed",

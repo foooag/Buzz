@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type Dispatch,
@@ -13,15 +14,14 @@ import {
   CornerDownLeft,
   History,
   Plus,
-  Send,
-  ShieldCheck,
   Sparkles,
-  Square,
   Terminal,
   X,
 } from "lucide-react";
 import { Streamdown } from "streamdown";
+import { classify } from "@shared/shell-risk";
 import { Button } from "@/components/ui/button";
+import { listConnectionHistory } from "@/features/workspace/connectionHistory";
 import { aiConfigApi } from "./aiApi";
 import type { AiConfigApi, AiProviderConfig } from "./aiConfigTypes";
 import { aiAgentApi, type AiAgentClient } from "./aiAgentApi";
@@ -33,6 +33,14 @@ import type {
 } from "./aiAgentTypes";
 import { aiSessionApi, type AiSessionSummary } from "./aiSessionApi";
 import { ConversationHistoryPanel } from "./ConversationHistoryPanel";
+import { AiComposer } from "./AiComposer";
+import { QuickScriptsSection } from "./QuickScriptsSection";
+import { QuickScriptEditDialog } from "./QuickScriptEditDialog";
+import { QuickScriptConfirmDialog } from "./QuickScriptConfirmDialog";
+import { QuickScriptToast } from "./QuickScriptToast";
+import { quickScriptApi as defaultQuickScriptApi } from "./quickScriptApi";
+import type { QuickScriptApi } from "./deterministicQuickScriptApi";
+import { QUICK_SLASH_TRIGGERS, useQuickScripts } from "./useQuickScripts";
 
 const AI_SIDEBAR_WIDTH_KEY = "terminus.aiSidebarWidth";
 const AI_SIDEBAR_DEFAULT_WIDTH = 376;
@@ -65,6 +73,8 @@ export type AiAssistantPanelProps = {
   sshSessionId?: string;
   providerApi?: AiConfigApi;
   agentClient?: AiAgentClient;
+  quickScriptApi?: QuickScriptApi;                 // 新增
+  onRunCommand?: (command: string) => void;        // 新增
 };
 
 type PendingSshCommand = {
@@ -77,11 +87,12 @@ export function AiAssistantPanel({
   sshSessionId,
   providerApi = aiConfigApi,
   agentClient = aiAgentApi,
+  quickScriptApi = defaultQuickScriptApi,
+  onRunCommand,
 }: AiAssistantPanelProps) {
   const [providers, setProviders] = useState<AiProviderConfig[]>([]);
   const [providerId, setProviderId] = useState("");
   const [messages, setMessages] = useState<AiAgentMessage[]>([]);
-  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(Boolean(sshSessionId));
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string>();
@@ -92,6 +103,18 @@ export function AiAssistantPanel({
   const [historyOpen, setHistoryOpen] = useState(false);
   const agentIdRef = useRef<string | undefined>(undefined);
   const pendingSshCommandRef = useRef<PendingSshCommand | undefined>(undefined);
+
+  const hostEntry = useMemo(
+    () => (sshSessionId ? listConnectionHistory().find((entry) => entry.sessionId === sshSessionId) : undefined),
+    [sshSessionId],
+  );
+  const quick = useQuickScripts({
+    sshSessionId,
+    hostId: hostEntry?.hostId,
+    api: quickScriptApi,
+    onRunCommand,
+  });
+  const hostLabel = hostEntry ? `${hostEntry.username}@${hostEntry.host}` : "";
 
   useEffect(() => {
     try {
@@ -203,7 +226,6 @@ export function AiAssistantPanel({
     setActiveConvId(null);
     setHistoryOpen(false);
     setError(undefined);
-    setInput("");
     setRunning(false);
     if (selectedProvider && sshSessionId) {
       void agentClient.create({ providerConfigId: selectedProvider.id, sshSessionId }).then(
@@ -278,20 +300,29 @@ export function AiAssistantPanel({
 
   const busy = running;
 
-  const send = (): void => {
-    const text = input.trim();
+  const send = (text: string): void => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (QUICK_SLASH_TRIGGERS.includes(trimmed)) {
+      if (!sshSessionId || !agentIdRef.current) {
+        setError("Start an AI conversation in this terminal before generating quick scripts.");
+        return;
+      }
+      setError(undefined);
+      void quick.generate();
+      return;
+    }
     const agentId = agentIdRef.current;
-    if (!text || !agentId) return;
-    setInput("");
+    if (!agentId) return;
     setError(undefined);
     if (running) {
-      void agentClient.steer(agentId, text).catch(() => {
+      void agentClient.steer(agentId, trimmed).catch(() => {
         setError("The AI agent could not accept the message.");
       });
       return;
     }
     setRunning(true);
-    void agentClient.prompt(agentId, text, (event) => {
+    void agentClient.prompt(agentId, trimmed, (event) => {
       applyAgentEvent(
         enrichConfirmationDetails(event, pendingSshCommandRef),
         setMessages,
@@ -423,77 +454,60 @@ export function AiAssistantPanel({
         <div className="flex min-h-0 flex-1 items-center justify-center">
           <EmptyState text="Configure an AI provider in Settings before starting a session." />
         </div>
-      ) : messages.length === 0 ? (
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center">
-          <span className="grid h-11 w-11 place-items-center rounded-xl border border-acid-lime/20 bg-acid-lime/10 text-acid-lime">
-            <Sparkles size={20} />
-          </span>
-          <h3 className="m-0 mt-4 text-[14px] font-medium text-mist">AI standing by</h3>
-          <p className="m-0 mt-1.5 max-w-[260px] text-[12px] leading-relaxed text-fog">
-            Describe a task below and I'll run it on this host.
-          </p>
-        </div>
       ) : (
-        <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          <div className="flex flex-col gap-3">
-            {messages.map((message, index) => (
-              <MessageView key={`${message.timestamp}-${index}`} message={message} />
-            ))}
-          </div>
-          {error ? <p role="alert" className="mt-3 text-sm text-coral-red">{error}</p> : null}
-        </div>
+        <>
+          {hostEntry && (quick.poolCount > 0 || quick.phase !== "idle") ? (
+            <QuickScriptsSection
+              hostName={hostEntry.host}
+              visible={quick.visible}
+              poolCount={quick.poolCount}
+              phase={quick.phase}
+              generatedCount={quick.generatedCount}
+              collapsed={quick.collapsed}
+              onToggleCollapse={quick.toggleCollapse}
+              onShuffle={quick.shuffle}
+              onExecute={quick.execute}
+              onPin={quick.pin}
+              onEdit={quick.setEditing}
+              onDismiss={quick.dismiss}
+            />
+          ) : null}
+          {messages.length === 0 ? (
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center">
+              <span className="grid h-11 w-11 place-items-center rounded-xl border border-acid-lime/20 bg-acid-lime/10 text-acid-lime">
+                <Sparkles size={20} />
+              </span>
+              <h3 className="m-0 mt-4 text-[14px] font-medium text-mist">AI standing by</h3>
+              <p className="m-0 mt-1.5 max-w-[260px] text-[12px] leading-relaxed text-fog">
+                Describe a task below and I'll run it on this host.
+              </p>
+            </div>
+          ) : (
+            <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 py-3">
+              <div className="flex flex-col gap-3">
+                {messages.map((message, index) => (
+                  <MessageView key={`${message.timestamp}-${index}`} message={message} />
+                ))}
+              </div>
+              {error ? <p role="alert" className="mt-3 text-sm text-coral-red">{error}</p> : null}
+            </div>
+          )}
+        </>
       )}
 
       <div className="shrink-0 border-t border-graphite bg-carbon px-3 pb-2.5 pt-3">
-        <div className="overflow-hidden rounded-lg border border-graphite bg-obsidian/70 transition-colors focus-within:border-smoke">
-          <textarea
-            aria-label="Message AI assistant"
-            value={input}
-            disabled={!agentIdRef.current}
-            placeholder="Describe what you want done on web-prod-01…"
-            rows={3}
-            className="scroll-thin max-h-32 min-h-[76px] w-full resize-none bg-transparent px-3 py-2.5 text-[13px] leading-relaxed text-paper outline-hidden placeholder:text-fog/70 disabled:opacity-50"
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                send();
-              }
-            }}
-          />
-          <div className="flex items-center justify-between gap-2 border-t border-graphite/80 px-2.5 py-2">
-            <span className="inline-flex items-center gap-1.5 text-[10.5px] text-fog">
-              <ShieldCheck size={12} />
-              {selectedProvider?.providerKind === "ollama"
-                ? "Local · keyless"
-                : "Cloud · app vault"}
-            </span>
-            {busy ? (
-              <Button
-                type="button"
-                variant="ghost"
-                aria-label="Abort"
-                className="h-7 gap-1.5 border border-coral-red/45 px-2.5 text-[11px] text-coral-red hover:bg-coral-red/12 hover:text-coral-red"
-                onClick={() => {
-                  const agentId = agentIdRef.current;
-                  if (agentId) void agentClient.abort(agentId);
-                }}
-              >
-                <Square size={13} /> Abort
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                aria-label="Send"
-                className="h-7 gap-1.5 px-2.5 text-[11px]"
-                disabled={!agentIdRef.current || !input.trim()}
-                onClick={send}
-              >
-                Send <Send size={13} />
-              </Button>
-            )}
-          </div>
-        </div>
+        <AiComposer
+          placeholder={`Describe what you want done on ${hostEntry?.host ?? "this host"}…`}
+          shieldLabel={selectedProvider?.providerKind === "ollama" ? "Local · keyless" : "Cloud · app vault"}
+          disabled={!agentIdRef.current}
+          busy={busy}
+          onSend={send}
+          onAbort={() => {
+            const agentId = agentIdRef.current;
+            if (agentId) void agentClient.abort(agentId);
+          }}
+          onGenerate={() => void quick.generate()}
+        />
         {sshSessionId && providers.length > 0 ? (
           <div className="mt-2 flex items-center justify-between gap-3 px-0.5 text-[10.5px] text-fog">
             <label className="min-w-0 flex-1">
@@ -521,6 +535,8 @@ export function AiAssistantPanel({
           </div>
         ) : null}
       </div>
+
+      <QuickScriptToast undo={quick.undo} onUndo={quick.undoLast} />
 
       {confirmation ? (
         <div
@@ -577,6 +593,29 @@ export function AiAssistantPanel({
             </div>
           </div>
         </div>
+      ) : null}
+
+      {quick.editing ? (
+        <QuickScriptEditDialog
+          qs={quick.editing}
+          hostLabel={hostLabel}
+          onSave={(draft) => quick.saveEdit(quick.editing!.id, draft)}
+          onDelete={quick.remove}
+          onClose={() => quick.setEditing(null)}
+        />
+      ) : null}
+      {quick.pendingConfirm ? (
+        (() => {
+          const verdict = classify(quick.pendingConfirm.script);
+          return (
+            <QuickScriptConfirmDialog
+              qs={quick.pendingConfirm}
+              hostLabel={hostLabel}
+              reason={verdict.kind === "needsConfirmation" ? verdict.reason : undefined}
+              onResolve={quick.resolveConfirm}
+            />
+          );
+        })()
       ) : null}
     </aside>
   );
