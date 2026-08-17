@@ -10,6 +10,22 @@
 const { useEffect, useMemo, useRef, useState, useCallback } = React;
 const { Icon, INV, lineTokens, formatDuration, nextId } = window;
 
+const SCENARIOS = {
+  docker: {
+    id: "docker",
+    label: "Docker sync",
+    request: "把 @web-prod-01 上的容器同样运行在 @web-prod-02 上",
+    desc: "Cross-host container sync",
+    preview: "docker ps → inspect → pull → run",
+  },
+  fleet: {
+    id: "fleet",
+    label: "Fleet health",
+    request: "@Production 逐台健康检查",
+    desc: "Group batch · risk + gaps",
+    preview: "uptime → df → risk confirm · cred missing",
+  },
+};
 
 const DOCKER_TIMELINE = [
   {

@@ -234,6 +234,9 @@ function Composer({
   awaitingConfirm,
   layout = "bottom",
 }) {
+  const [slashIdx, setSlashIdx] = useState(0);
+  const [slashOff, setSlashOff] = useState(false);
+
   useEffect(() => {
     const ta = inputRef.current;
     if (!ta) return;
@@ -241,26 +244,103 @@ function Composer({
     ta.style.height = Math.min(ta.scrollHeight, 128) + "px";
   }, [input, inputRef]);
 
+  // Slash-command menu (P1): typing "/" floats the command list; Enter/Tab
+  // completes. Only the exact trigger is intercepted on send (in AiSession).
+  const slashCommands = window.QUICK_SLASH_COMMANDS || [];
+  const trimmedInput = input.trim();
+  const slashMatches = trimmedInput.startsWith("/")
+    ? slashCommands.filter((c) => c.token !== trimmedInput && c.token.startsWith(trimmedInput))
+    : [];
+  const sidebar = layout === "sidebar";
+  const slashOpen = sidebar && slashMatches.length > 0 && !slashOff;
+
+  const completeSlash = (token) => {
+    setInput(token);
+    setSlashOff(true);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
   const handleKeyDown = (e) => {
+    if (slashOpen) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashIdx((i) =>
+          e.key === "ArrowDown"
+            ? (i + 1) % slashMatches.length
+            : (i - 1 + slashMatches.length) % slashMatches.length,
+        );
+        return;
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+        e.preventDefault();
+        completeSlash(slashMatches[slashIdx].token);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.nativeEvent) e.nativeEvent.stopImmediatePropagation();
+        setSlashOff(true);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (!busy && input.trim()) onSend();
     }
   };
 
+  const handleInput = (e) => {
+    setInput(e.target.value);
+    setSlashOff(false);
+    setSlashIdx(0);
+  };
+
   const canSend = !busy && !awaitingConfirm && input.trim().length > 0;
-  const sidebar = layout === "sidebar";
 
   if (sidebar) {
     return (
       <div className="shrink-0 border-t border-graphite bg-carbon px-3 pb-3 pt-3">
-        <div className="rounded-lg border border-graphite bg-obsidian/70 transition-colors focus-within:border-smoke">
+        <div className="relative rounded-lg border border-graphite bg-obsidian/70 transition-colors focus-within:border-smoke">
+          {slashOpen ? (
+            <div
+              role="listbox"
+              aria-label="Slash commands"
+              className="pop-in absolute bottom-full left-2 right-2 z-40 mb-1.5 overflow-hidden rounded-lg border border-graphite bg-carbon shadow-[0_12px_40px_rgb(0_0_0/0.45)]"
+            >
+              {slashMatches.map((c, i) => (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={i === slashIdx}
+                  key={c.token}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    completeSlash(c.token);
+                  }}
+                  className={
+                    "flex w-full items-center gap-2.5 px-2.5 py-2 text-left transition-colors " +
+                    (i === slashIdx ? "bg-graphite/60" : "hover:bg-graphite/40")
+                  }
+                >
+                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-acid-lime/12 text-acid-lime">
+                    <Icon name="sparkles" size={13} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-mono text-[12px] text-mist">{c.token}</span>
+                    <span className="block truncate text-[10.5px] text-fog">{c.hint}</span>
+                  </span>
+                  <Kbd>⏎</Kbd>
+                </button>
+              ))}
+            </div>
+          ) : null}
           <textarea
             ref={inputRef}
             rows={3}
             value={input}
             placeholder={`Describe what you want done on ${SESSION.host}…`}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleInput}
             onKeyDown={handleKeyDown}
             className="scroll-thin max-h-32 min-h-[76px] w-full resize-none bg-transparent px-3 py-2.5 text-[13px] leading-relaxed text-mist outline-none placeholder:text-fog/70"
           />
@@ -308,6 +388,24 @@ function Composer({
             {PROVIDER.model}
           </span>
           <span className="flex shrink-0 items-center gap-1">
+            {!busy ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInput("/");
+                    setSlashOff(false);
+                    inputRef.current?.focus();
+                  }}
+                  title="生成快捷指令 — 复盘本会话"
+                  className="inline-flex items-center gap-0.5 rounded px-1 py-px text-[10.5px] text-fog/80 transition-colors hover:bg-white/5 hover:text-mist"
+                >
+                  <span className="font-mono text-mist/80">/</span>
+                  快捷指令
+                </button>
+                <span className="text-fog/40">·</span>
+              </>
+            ) : null}
             <Kbd>{busy ? "Esc" : "⏎"}</Kbd>
             <span>{busy ? "abort" : "send"}</span>
           </span>
@@ -327,7 +425,7 @@ function Composer({
           rows={1}
           value={input}
           placeholder={`Describe what you want done on ${SESSION.host}…`}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={handleInput}
           onKeyDown={handleKeyDown}
           className="scroll-thin max-h-32 flex-1 resize-none bg-transparent py-1 text-[13px] leading-relaxed text-mist outline-none placeholder:text-fog/70"
         />

@@ -224,7 +224,49 @@ function TerminalLine({ line }) {
   );
 }
 
-function EchoBlock({ block }) {
+// Executed Quick Script echo (F7): written into the live session exactly as
+// the product does it — single line = typed at the prompt + Enter, multi-line
+// = one bracketed-paste block, so the script is never executed line-by-line.
+function QuickEchoBlock({ block, prompt }) {
+  const { cmd, status, result } = block;
+  const lines = cmd.split("\n");
+  const excerpt = result ? result.full.slice(0, block.echoLines ?? 4) : [];
+
+  return (
+    <div className="mt-2">
+      <div className="whitespace-pre-wrap break-words">
+        {prompt.map((tok, i) => (
+          <span key={i} className={tok[1] || undefined}>
+            {tok[0]}
+          </span>
+        ))}
+        <span className="c-white">{lines[0]}</span>
+      </div>
+      {lines.slice(1).map((l, i) => (
+        <div key={i} className="whitespace-pre-wrap break-words">
+          <span className="c-white">{l}</span>
+        </div>
+      ))}
+      {status === "running" ? (
+        <div className="c-dim">…</div>
+      ) : (
+        excerpt.map((line, i) => <TerminalLine key={i} line={line} />)
+      )}
+      {result && status === "done" ? (
+        <div className="whitespace-pre-wrap break-words">
+          <span className="c-lime">[快捷指令]</span>{" "}
+          <span className={result.exitCode === 0 ? "c-green" : "c-red"}>↳ exit {result.exitCode}</span>
+          <span className="c-dim">  ({window.formatDuration(result.durationMs)})</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function EchoBlock({ block, prompt }) {
+  if (block.kind === "qs") {
+    return <QuickEchoBlock block={block} prompt={prompt || PROMPT} />;
+  }
   const { cmd, status, result } = block;
   const exit = result?.exitCode;
   const ok = status === "done" && exit === 0;
@@ -343,7 +385,7 @@ function Terminal({ echoBlocks, aiOn, onToggleAi, host = SESSION, prompt = PROMP
         ))}
 
         {echoBlocks.map((b) => (
-          <EchoBlock key={b.id} block={b} />
+          <EchoBlock key={b.id} block={b} prompt={prompt} />
         ))}
 
         {/* live prompt + blinking cursor */}

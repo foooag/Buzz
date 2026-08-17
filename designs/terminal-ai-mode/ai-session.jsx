@@ -6,6 +6,18 @@
 const { useEffect, useRef, useState, useCallback } = React;
 const { Terminal } = window;
 const { MessageStream, Composer, ConfirmDialog, HistoryPanel } = window;
+const {
+  QuickScriptsSection,
+  QuickScriptEditDialog,
+  QuickScriptConfirmDialog,
+  QuickScriptToast,
+  quickscriptStore,
+  quickscriptEngine,
+  mergeGeneratedQuickScripts,
+  simulateScriptResult,
+  isRiskyQuickScript,
+  QUICK_SLASH_TRIGGERS,
+} = window;
 const { SESSION, PROVIDER, DEMO_REQUEST, TIMELINE, PROMPT, SCROLLBACK, nextId, buildPrompt, buildScrollback } = window;
 
 /* ---- chat-history storage -------------------------------------------- */
@@ -64,6 +76,18 @@ function AiSession({
   const [input, setInput] = useState(isDemo ? DEMO_REQUEST : "");
   const [confirm, setConfirm] = useState(null); // { id, cmd, verdict } | null
 
+  // Quick scripts (快捷指令) — PRD docs/prd/2026-08-17-buzz-quick-scripts.md.
+  // The suggestion cards are a transient UI layer: they never push
+  // AiAgentMessages and never enter the conversation history; only their
+  // executions echo into the terminal like any other command run.
+  const [quickScripts, setQuickScripts] = useState(() => quickscriptStore.load(host));
+  const [qsGen, setQsGen] = useState({ phase: "idle" }); // idle | working | done | empty | failed
+  const [qsCollapsed, setQsCollapsed] = useState(() => quickscriptStore.loadCollapsed(host));
+  const [qsOffset, setQsOffset] = useState(0); // 换一批 rotation over the sorted pool
+  const [qsUndo, setQsUndo] = useState(null); // { kind, qs, prevStatus } | null
+  const [qsEditing, setQsEditing] = useState(null); // QuickScript | null
+  const [qsConfirm, setQsConfirm] = useState(null); // QuickScript | null
+
   // Chat history: list of past conversations on this host + the id of the
   // conversation currently shown in the sidebar. The live transcript is
   // persisted into the active conversation (or a new one) on every change.
@@ -82,6 +106,8 @@ function AiSession({
   const echoBlocksRef = useRef(echoBlocks);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { echoBlocksRef.current = echoBlocks; }, [echoBlocks]);
+  const quickScriptsRef = useRef(quickScripts);
+  useEffect(() => { quickScriptsRef.current = quickScripts; }, [quickScripts]);
 
   const busy = phase === "streaming" || phase === "awaiting-confirm";
   const awaitingConfirm = phase === "awaiting-confirm";
@@ -249,6 +275,13 @@ function AiSession({
   const handleSend = () => {
     const text = input.trim();
     if (!text || runningRef.current) return;
+    if (sidebarAi && QUICK_SLASH_TRIGGERS.includes(text)) {
+      // Exact-match slash trigger: intercepted, never enters the message
+      // flow, never sent to the model (F1).
+      setInput("");
+      void runQuickScriptGeneration();
+      return;
+    }
     setInput("");
     void runTurn(text);
   };
@@ -336,6 +369,7 @@ function AiSession({
     setEchoBlocks([]);
     setActiveConvId(null);
     setPhase("idle");
+    setQsGen({ phase: "idle" });
     cancelledRef.current = false;
     setHistoryOpen(false);
     focusComposer();
@@ -387,6 +421,105 @@ function AiSession({
     setTimeout(() => inputRef.current?.focus(), 30);
   };
 
+  /* ---- quick scripts (快捷指令) actions -------------------------------- */
+
+  // Persist per host (mirrors the quick_scripts table keyed by host_id).
+  useEffect(() => { quickscriptStore.save(host, quickScripts); }, [host, quickScripts]);
+  useEffect(() => { quickscriptStore.saveCollapsed(host, qsCollapsed); }, [host, qsCollapsed]);
+
+  useEffect(() => {
+    if (!qsUndo) return;
+    const t = setTimeout(() => setQsUndo(null), 5200);
+    return () => clearTimeout(t);
+  }, [qsUndo]);
+
+  // /生成快捷指令 — intercepted before it ever enters the message flow (F1).
+  const runQuickScriptGeneration = async () => {
+    if (qsGen.phase === "working") return;
+    setQsGen({ phase: "working" });
+    setQsCollapsed(false);
+    await new Promise((r) => setTimeout(r, 2600));
+    const cmds = messagesRef.current
+      .filter((m) => m.role === "tool" && m.status === "done")
+      .map((m) => m.cmd);
+    const result = quickscriptEngine(host, cmds);
+    if (result.mode === "empty") {
+      setQsGen({ phase: "empty" });
+      return;
+    }
+    const { list, created } = mergeGeneratedQuickScripts(quickScriptsRef.current, result.items);
+    setQuickScripts(list);
+    setQsGen({ phase: "done", count: created, mode: result.mode });
+    setTimeout(() => setQsGen((g) => (g.phase === "done" ? { phase: "idle" } : g)), 4800);
+  };
+
+  // F7 — write into the current terminal: single line = typed + Enter,
+  // multi-line = one bracketed-paste block (never line-by-line).
+  const runQuickScriptEcho = (qs) => {
+    const echoId = nextId("echo");
+    const result = simulateScriptResult(qs.script);
+    pushEcho({ id: echoId, kind: "qs", cmd: qs.script, status: "running", result: null, echoLines: 4 });
+    setTimeout(() => {
+      patchEcho(echoId, { status: "done", result });
+      setQuickScripts((prev) =>
+        prev.map((s) => (s.id === qs.id ? { ...s, executedCount: s.executedCount + 1, isNew: false } : s)),
+      );
+    }, Math.max(500, Math.min(result.durationMs, 1500)));
+  };
+
+  const executeQuickScript = (qs) => {
+    if (isRiskyQuickScript(qs.script)) setQsConfirm(qs); // gate first (场景 C)
+    else runQuickScriptEcho(qs);
+  };
+
+  const resolveQuickScriptConfirm = (decision) => {
+    const qs = qsConfirm;
+    setQsConfirm(null);
+    if (decision === "run" && qs) runQuickScriptEcho(qs);
+  };
+
+  const toggleQuickScriptPin = (id) => {
+    setQuickScripts((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, status: s.status === "pinned" ? "suggested" : "pinned" } : s)),
+    );
+  };
+
+  const dismissQuickScript = (id) => {
+    const qs = quickScriptsRef.current.find((s) => s.id === id);
+    if (!qs) return;
+    const prevStatus = qs.status;
+    setQuickScripts((prev) => prev.map((s) => (s.id === id ? { ...s, status: "dismissed" } : s)));
+    setQsUndo({ kind: "dismiss", qs, prevStatus });
+  };
+
+  const deleteQuickScript = (id) => {
+    const qs = quickScriptsRef.current.find((s) => s.id === id);
+    if (!qs) return;
+    setQuickScripts((prev) => prev.filter((s) => s.id !== id));
+    setQsEditing(null);
+    setQsUndo({ kind: "delete", qs });
+  };
+
+  const saveQuickScriptEdit = (draft) => {
+    if (!qsEditing) return;
+    setQuickScripts((prev) =>
+      prev.map((s) =>
+        s.id === qsEditing.id
+          ? { ...s, title: draft.title.trim() || s.title, script: draft.script }
+          : s,
+      ),
+    );
+    setQsEditing(null);
+  };
+
+  const undoQuickScript = () => {
+    const u = qsUndo;
+    if (!u) return;
+    if (u.kind === "delete") setQuickScripts((prev) => [...prev, u.qs]);
+    else setQuickScripts((prev) => prev.map((s) => (s.id === u.qs.id ? { ...s, status: u.prevStatus || "suggested" } : s)));
+    setQsUndo(null);
+  };
+
   const toggleAi = () => {
     if (!aiOn) {
       setAiOn(true);
@@ -422,6 +555,16 @@ function AiSession({
           resolveConfirm("cancel");
           return;
         }
+        if (qsConfirm) {
+          e.preventDefault();
+          setQsConfirm(null);
+          return;
+        }
+        if (qsEditing) {
+          e.preventDefault();
+          setQsEditing(null);
+          return;
+        }
         if (historyOpen) {
           e.preventDefault();
           setHistoryOpen(false);
@@ -441,12 +584,26 @@ function AiSession({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aiOn, historyOpen]);
+  }, [aiOn, historyOpen, qsConfirm, qsEditing]);
 
   /* -------------------------------------------------------------------- */
 
+  // Quick scripts display: pinned → confidence (F6), Top 3 with 换一批
+  // rotation over the pool. Section takes no space when there is nothing
+  // to show and no generation feedback pending.
+  const qsActive = quickScripts.filter((s) => s.status !== "dismissed");
+  const qsSorted = [...qsActive].sort(
+    (a, b) =>
+      (a.status === "pinned" ? 0 : 1) - (b.status === "pinned" ? 0 : 1) ||
+      b.confidence - a.confidence ||
+      b.executedCount - a.executedCount,
+  );
+  const qsWindow =
+    qsSorted.length <= 3 ? qsSorted : [0, 1, 2].map((i) => qsSorted[(qsOffset + i) % qsSorted.length]);
+  const qsShow = qsSorted.length > 0 || qsGen.phase !== "idle";
+
   return (
-    <main className="relative flex min-w-0 flex-1 flex-col">
+    <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex min-h-0 min-w-0 flex-1">
         <Terminal
           host={host}
@@ -460,7 +617,7 @@ function AiSession({
         {aiOn && sidebarAi ? (
           <aside
             data-screen-label="AI sidebar"
-            className="flex w-[376px] shrink-0 flex-col border-l border-graphite bg-carbon xl:w-[400px]"
+            className="relative flex w-[376px] shrink-0 flex-col border-l border-graphite bg-carbon xl:w-[400px]"
           >
             <div className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-graphite px-4">
               <div className="flex min-w-0 items-center gap-2.5">
@@ -539,22 +696,42 @@ function AiSession({
                 onNewChat={startNewChat}
                 onClose={() => setHistoryOpen(false)}
               />
-            ) : messages.length === 0 ? (
-              <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center">
-                <div className="grid h-11 w-11 place-items-center rounded-xl border border-acid-lime/20 bg-acid-lime/10 text-acid-lime">
-                  <Icon name="sparkles" size={20} />
-                </div>
-                <h3 className="m-0 mt-4 text-[14px] font-medium text-mist">AI standing by</h3>
-                <p className="m-0 mt-1.5 max-w-[260px] text-[12px] leading-relaxed text-fog">
-                  Describe a task below and I’ll run it on {host.host}.
-                </p>
-              </div>
             ) : (
-              <MessageStream
-                messages={messages}
-                onToggleExpand={toggleExpand}
-                layout="sidebar"
-              />
+              <>
+                {qsShow ? (
+                  <QuickScriptsSection
+                    host={host}
+                    visible={qsWindow}
+                    poolCount={qsSorted.length}
+                    hasMore={qsSorted.length > 3}
+                    gen={qsGen}
+                    collapsed={qsCollapsed}
+                    onToggleCollapse={() => setQsCollapsed((v) => !v)}
+                    onShuffle={() => setQsOffset((o) => (qsSorted.length > 3 ? (o + 3) % qsSorted.length : 0))}
+                    onExecute={executeQuickScript}
+                    onPin={toggleQuickScriptPin}
+                    onEdit={setQsEditing}
+                    onDismiss={dismissQuickScript}
+                  />
+                ) : null}
+                {messages.length === 0 ? (
+                  <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-8 text-center">
+                    <div className="grid h-11 w-11 place-items-center rounded-xl border border-acid-lime/20 bg-acid-lime/10 text-acid-lime">
+                      <Icon name="sparkles" size={20} />
+                    </div>
+                    <h3 className="m-0 mt-4 text-[14px] font-medium text-mist">AI standing by</h3>
+                    <p className="m-0 mt-1.5 max-w-[260px] text-[12px] leading-relaxed text-fog">
+                      Describe a task below and I’ll run it on {host.host}.
+                    </p>
+                  </div>
+                ) : (
+                  <MessageStream
+                    messages={messages}
+                    onToggleExpand={toggleExpand}
+                    layout="sidebar"
+                  />
+                )}
+              </>
             )}
 
             <Composer
@@ -567,6 +744,8 @@ function AiSession({
               awaitingConfirm={awaitingConfirm}
               layout="sidebar"
             />
+
+            <QuickScriptToast undo={qsUndo} onUndo={undoQuickScript} />
           </aside>
         ) : null}
       </div>
@@ -598,6 +777,20 @@ function AiSession({
 
       {confirm ? (
         <ConfirmDialog card={confirm} onResolve={resolveConfirm} />
+      ) : null}
+
+      {qsEditing ? (
+        <QuickScriptEditDialog
+          qs={qsEditing}
+          host={host}
+          onSave={saveQuickScriptEdit}
+          onDelete={deleteQuickScript}
+          onClose={() => setQsEditing(null)}
+        />
+      ) : null}
+
+      {qsConfirm ? (
+        <QuickScriptConfirmDialog qs={qsConfirm} host={host} onResolve={resolveQuickScriptConfirm} />
       ) : null}
     </main>
   );

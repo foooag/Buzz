@@ -18,7 +18,7 @@
           "path": "Buzz.html",
           "createdAt": "2026-07-25T03:56:45.495Z",
           "status": "needs-review",
-          "subtitle": "Add Agent chat history: header dropdown with rename/delete/New chat, localStorage-persisted sessions, full snapshot restore",
+          "subtitle": "Fix AI sidebar overflow (min-h-0 on session main — messages now scroll instead of pushing the panel past the viewport); restore dropped SCENARIOS const that crashed the Agent view",
           "viewport": {
             "width": 1440,
             "height": 900
@@ -28,5 +28,5 @@
     }
   },
   "createdAt": "2026-07-25T03:13:38.099Z",
-  "updatedAt": "2026-08-06T03:10:57.214Z"
+  "updatedAt": "2026-08-17T07:06:24.085Z"
 }
