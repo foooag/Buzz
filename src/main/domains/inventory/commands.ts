@@ -56,6 +56,7 @@ const vaultIdInput = z.object({ vaultId: string });
 
 export function createInventoryCommandHandlers(
   repository: InventoryRepository,
+  hooks: { onHostDeleted?: (hostId: string) => void } = {},
 ): CommandHandlers {
   return {
     inventory_list_vaults: command(emptyInput, () => repository.listVaults()),
@@ -67,7 +68,12 @@ export function createInventoryCommandHandlers(
       z.object({ input: z.object({ id: string, name: string }) }),
       ({ input }) => repository.updateVault(input),
     ),
-    inventory_delete_vault: command(idInput, ({ id }) => repository.deleteVault(id)),
+    inventory_delete_vault: command(idInput, ({ id }) => {
+      if (hooks.onHostDeleted) {
+        for (const host of repository.listHosts(id)) hooks.onHostDeleted(host.id);
+      }
+      return repository.deleteVault(id);
+    }),
     inventory_list_groups: command(
       vaultIdInput,
       ({ vaultId }) => repository.listGroups(vaultId),
@@ -95,7 +101,11 @@ export function createInventoryCommandHandlers(
       z.object({ input: updateHost }),
       ({ input }) => repository.updateHost(input),
     ),
-    inventory_delete_host: command(idInput, ({ id }) => repository.deleteHost(id)),
+    inventory_delete_host: command(idInput, ({ id }) => {
+      const result = repository.deleteHost(id);
+      hooks.onHostDeleted?.(id);
+      return result;
+    }),
     inventory_list_identities: command(
       vaultIdInput,
       ({ vaultId }) => repository.listIdentities(vaultId),

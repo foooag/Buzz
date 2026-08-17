@@ -21,6 +21,12 @@ export const COMMANDS = {
   aiRenameSession: "ai_rename_session",
   aiDeleteSession: "ai_delete_session",
 
+  quickScriptGenerate: "quickscript_generate",
+  quickScriptList: "quickscript_list",
+  quickScriptUpdate: "quickscript_update",
+  quickScriptDelete: "quickscript_delete",
+  quickScriptClearData: "quickscript_clear_data",
+
   agentCreate: "agent_create",
   agentSteer: "agent_steer",
   agentAbort: "agent_abort",

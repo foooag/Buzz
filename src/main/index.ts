@@ -11,6 +11,7 @@ import type { ForwardingRepository } from "./domains/forwarding/repository.js";
 import type { SftpRuntime as ElectronSftpRuntime } from "./domains/sftp/runtime.js";
 import type { SftpAssociations } from "./domains/sftp/associations.js";
 import type { AiService } from "./domains/ai/service.js";
+import type { QuickScriptsService } from "./domains/quickscripts/service.js";
 import type { MultiHostAgentRuntime } from "./domains/agent/agent-runtime.js";
 import { registerAgentStreamIpc } from "./domains/agent/stream-ipc.js";
 import type { SshHeadlessRuntime } from "./domains/ssh/headless.js";
@@ -31,6 +32,7 @@ let forwardingRepository: ForwardingRepository | undefined;
 let sftpRuntime: ElectronSftpRuntime | undefined;
 let sftpAssociations: SftpAssociations | undefined;
 let aiService: AiService | undefined;
+let quickScripts: (QuickScriptsService & { close(): void }) | undefined;
 let agentRuntime: MultiHostAgentRuntime | undefined;
 let sshHeadlessRuntime: SshHeadlessRuntime | undefined;
 let mainWindow: BrowserWindow | undefined;
@@ -203,6 +205,8 @@ async function closeApplicationResources(): Promise<void> {
   sshHeadlessRuntime = undefined;
   await aiService?.close();
   aiService = undefined;
+  quickScripts?.close();
+  quickScripts = undefined;
   terminalRuntime?.closeAll();
   terminalRuntime = undefined;
   portForwardingRuntime?.closeAll();
@@ -240,6 +244,8 @@ async function start(): Promise<void> {
     { SftpAssociations },
     { createAiCommandHandlers },
     { openAiService },
+    { createQuickScriptsCommandHandlers },
+    { openQuickScriptsService },
     { createAgentCommandHandlers },
     { MultiHostAgentRuntime },
     { SshHeadlessRuntime },
@@ -261,6 +267,8 @@ async function start(): Promise<void> {
     import("./domains/sftp/associations.js"),
     import("./domains/ai/commands.js"),
     import("./domains/ai/service.js"),
+    import("./domains/quickscripts/commands.js"),
+    import("./domains/quickscripts/service.js"),
     import("./domains/agent/commands.js"),
     import("./domains/agent/agent-runtime.js"),
     import("./domains/ssh/headless.js"),
@@ -295,6 +303,15 @@ async function start(): Promise<void> {
   ));
   terminalRuntime = new TerminalRuntime(emitStreamEvent);
   aiService = await openAiService(dataDirectory, isolatedE2e, sshRuntime);
+  quickScripts = await openQuickScriptsService({
+    dataDirectory,
+    isolatedE2e,
+    configs: aiService.configs,
+    models: aiService.models,
+    history: aiService.history,
+    agents: aiService.agents,
+    ssh: sshRuntime,
+  });
   sshHeadlessRuntime = new SshHeadlessRuntime(sshRuntime);
   agentRuntime = new MultiHostAgentRuntime(
     aiService.models,
@@ -306,12 +323,19 @@ async function start(): Promise<void> {
   commandDispatcher = new CommandDispatcher(
     {
       ...createAppCommandHandlers(app.getVersion()),
-      ...createInventoryCommandHandlers(inventoryRepository),
+      ...createInventoryCommandHandlers(inventoryRepository, {
+        onHostDeleted: (hostId) => quickScripts?.deleteForHost(hostId),
+      }),
       ...createTerminalCommandHandlers(terminalRuntime, sshRuntime),
       ...createSshCommandHandlers(sshRuntime, sshPersistence.knownHosts),
       ...createForwardingCommandHandlers(portForwardingRuntime, forwardingRepository),
       ...createSftpCommandHandlers(sftpRuntime, sftpAssociations),
       ...createAiCommandHandlers(aiService, emitStreamEvent),
+      ...createQuickScriptsCommandHandlers(quickScripts, (event) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.webContents.send("terminus:quickscript-generated", event);
+        }
+      }),
       ...createAgentCommandHandlers(agentRuntime),
     },
     async () => ({

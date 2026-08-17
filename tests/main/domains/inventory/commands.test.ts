@@ -97,6 +97,20 @@ describe("Electron inventory command handlers", () => {
       data: "listVaults",
     });
   });
+
+  it("invokes the onHostDeleted hook when a host or vault is deleted", async () => {
+    const onHostDeleted = vi.fn();
+    const repository = {
+      deleteHost: vi.fn(),
+      deleteVault: vi.fn(),
+      listHosts: vi.fn(() => [{ id: "host-1" }, { id: "host-2" }]),
+    };
+    const handlers = createInventoryCommandHandlers(repository as never, { onHostDeleted });
+    await handlers["inventory_delete_host"]?.({ id: "host-1" }, context);
+    expect(onHostDeleted).toHaveBeenCalledWith("host-1");
+    await handlers["inventory_delete_vault"]?.({ id: "vault-1" }, context);
+    expect(onHostDeleted).toHaveBeenCalledWith("host-2");
+  });
 });
 
 function fakeRepository(): InventoryRepository {
