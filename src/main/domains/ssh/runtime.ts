@@ -267,6 +267,10 @@ export class SshRuntime {
     return this.#session(sessionId).profile.hostname;
   }
 
+  hostId(sessionId: string): string {
+    return this.#session(sessionId).profile.hostId;
+  }
+
   async executeCommand(
     sessionId: string,
     cwd: string,

@@ -176,6 +176,16 @@ export class AiAgentRuntime {
     return this.#entries.size;
   }
 
+  /** Live session context for quick-script generation (PRD F2: runtime first). */
+  sessionContext(sshSessionId: string): { messages: readonly AgentMessage[]; sessionId: string | undefined } | undefined {
+    for (const entry of this.#entries.values()) {
+      if (entry.sshSessionId === sshSessionId && !entry.closed) {
+        return { messages: entry.agent.state.messages, sessionId: entry.sessionId };
+      }
+    }
+    return undefined;
+  }
+
   async #handleEvent(entry: AgentEntry, event: AgentEvent): Promise<void> {
     if (entry.closed) return;
     switch (event.type) {

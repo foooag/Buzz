@@ -10,6 +10,9 @@ export type GeneratedScript = {
   description: string | null;
   riskHint: string | null;
   confidence: number;
+  /** Source-session stats; filled by the generation service, default 0. */
+  sourceUsageCount?: number;
+  sourceSuccessCount?: number;
 };
 
 const MAX_POOL = 8;
@@ -185,7 +188,7 @@ export class QuickScriptRepository {
            id, host_id, source_session_id, title, encrypted_script, description,
            source_usage_count, source_success_count, executed_count, confidence, risk_hint,
            status, mode, is_new, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, 'suggested', ?, 1, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 'suggested', ?, 1, ?, ?)`,
       )
       .run(
         id,
@@ -197,6 +200,8 @@ export class QuickScriptRepository {
           Buffer.from(item.script, "utf8"),
         ),
         item.description,
+        item.sourceUsageCount ?? 0,
+        item.sourceSuccessCount ?? 0,
         item.confidence,
         item.riskHint,
         mode,
