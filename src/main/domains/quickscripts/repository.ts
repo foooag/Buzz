@@ -100,8 +100,8 @@ export class QuickScriptRepository {
             )
             .run(
               item.title,
-              match.sourceUsageCount,
-              match.sourceSuccessCount,
+              item.sourceUsageCount ?? match.sourceUsageCount,
+              item.sourceSuccessCount ?? match.sourceSuccessCount,
               item.confidence,
               item.description,
               new Date().toISOString(),

@@ -55,15 +55,26 @@ describe("QuickScriptRepository", () => {
     repository.update(a.id, { status: "pinned" });
 
     const second = repository.mergeGenerated("host-1", "session-2", [
-      { title: "A2", script: "a ", description: "updated", riskHint: null, confidence: 0.99 },
+      { title: "A2", script: "a ", description: "updated", riskHint: null, confidence: 0.99, sourceUsageCount: 4, sourceSuccessCount: 3 },
       item("C", "c"),
     ], "llm");
     expect(second).toBe(1);
     const listed = repository.list("host-1");
-    expect(listed.find((row) => row.title === "A2")).toBeDefined(); // matched by normalized script "a", renamed is separate
-    expect(listed.find((row) => row.script === "a")?.description).toBe("updated");
+    const refreshed = listed.find((row) => row.script === "a");
+    expect(refreshed).toBeDefined(); // matched by normalized script "a"
+    expect(refreshed?.title).toBe("A2"); // matched row renamed from incoming title
+    expect(refreshed?.description).toBe("updated");
+    expect(refreshed?.sourceUsageCount).toBe(4); // stats refreshed from incoming values
+    expect(refreshed?.sourceSuccessCount).toBe(3);
     expect(listed.every((row) => row.isNew === false || row.script === "c")).toBe(true);
     expect(listed.find((row) => row.script === "a")?.status).toBe("pinned");
+
+    // A later match without incoming stats keeps the refreshed values (?? match fallback).
+    const third = repository.mergeGenerated("host-1", "session-3", [item("A3", "a ")], "llm");
+    expect(third).toBe(0);
+    const retained = repository.list("host-1").find((row) => row.script === "a");
+    expect(retained?.sourceUsageCount).toBe(4);
+    expect(retained?.sourceSuccessCount).toBe(3);
 
     const many = Array.from({ length: 12 }, (_, i) => item(`T${i}`, `cmd-${i}`, 0.1 + i / 100));
     repository.mergeGenerated("host-2", "session-9", many, "rules");
