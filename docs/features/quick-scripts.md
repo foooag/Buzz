@@ -1,6 +1,6 @@
 # Quick Scripts
 
-Quick Scripts turn the commands an AI session already ran into one-click cards: type `/生成快捷指令` in the SSH AI assistant panel and Buzz recaps the session into named scripts you can run, pin, edit, or dismiss.
+Quick Scripts turn a session's already-run commands into one-click cards: type /生成快捷指令 in the SSH AI assistant panel to run, pin, edit, or dismiss them.
 
 ## What it does
 
