@@ -3,6 +3,7 @@ import { classify } from "@shared/shell-risk";
 import type { QuickScript, QuickScriptStatus } from "@shared/ipc/quickscripts/types";
 import type { QuickScriptGenPhase } from "./QuickScriptsSection";
 import type { QuickScriptApi } from "./deterministicQuickScriptApi";
+import { loadQuickScriptPreferences } from "./quickScriptPreferences";
 
 export const QUICK_SLASH_TRIGGERS: readonly string[] = ["/生成快捷指令", "/quick-script"];
 
@@ -96,7 +97,7 @@ export function useQuickScripts({
     setPhase("working");
     setCollapsed(false);
     try {
-      const result = await apiRef.current.generate({ sshSessionId });
+      const result = await apiRef.current.generate({ sshSessionId, useLlm: loadQuickScriptPreferences().useAiGeneration });
       if (result.mode === "empty") {
         setPhase("empty");
         return;

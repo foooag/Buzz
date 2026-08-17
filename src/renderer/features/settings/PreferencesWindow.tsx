@@ -34,6 +34,11 @@ import { SftpSettings } from "./SftpSettings";
 import type { AiConfigApi } from "../ai/aiConfigTypes";
 import { AiProvidersSection } from "../ai/AiProvidersSection";
 import {
+  clearQuickScriptData,
+  loadQuickScriptPreferences,
+  saveQuickScriptPreferences,
+} from "../ai/quickScriptPreferences";
+import {
   windowControlsApi,
   type WindowControlsApi,
 } from "./windowControlsApi";
@@ -538,6 +543,41 @@ function ChangelogSection({ updater }: { updater: UpdaterApi }) {
   );
 }
 
+function QuickScriptsSection() {
+  const [quickScriptUseAi, setQuickScriptUseAi] = useState(
+    loadQuickScriptPreferences().useAiGeneration,
+  );
+  const [quickScriptCleared, setQuickScriptCleared] = useState(false);
+
+  const updateUseAi = (value: boolean) => {
+    setQuickScriptUseAi(value);
+    saveQuickScriptPreferences({ useAiGeneration: value });
+  };
+
+  return (
+    <div className="mt-4 rounded-lg border border-graphite bg-obsidian/40 p-3.5">
+      <Toggle
+        on={quickScriptUseAi}
+        onChange={updateUseAi}
+        label="Quick scripts"
+        hint="Generate quick scripts from AI sessions using your AI provider. Off = fully offline rules mode."
+      />
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          className="rounded-md border border-coral-red/40 px-2.5 py-1.5 text-[12px] text-coral-red transition-colors hover:bg-coral-red/12"
+          onClick={() => void clearQuickScriptData().then(() => setQuickScriptCleared(true)).catch(() => undefined)}
+        >
+          Clear all quick script data
+        </button>
+        {quickScriptCleared ? (
+          <span className="text-[11px] text-pulse-green">Cleared.</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function PreferencesWindow({
   open,
   onClose,
@@ -669,7 +709,10 @@ export function PreferencesWindow({
             ) : section === "credentials" ? (
               <CredentialsSection api={inventoryApi} />
             ) : aiConfigApi ? (
-              <AiProvidersSection api={aiConfigApi} />
+              <div className="grid gap-4">
+                <AiProvidersSection api={aiConfigApi} />
+                <QuickScriptsSection />
+              </div>
             ) : (
               <div className="rounded-xl border border-graphite/70 bg-obsidian/30 p-4 text-[12.5px] text-fog">
                 AI providers are unavailable.
