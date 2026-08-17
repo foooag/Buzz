@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Pencil, Server, Trash2 } from "lucide-react";
+import { BookmarkPlus, Pencil, Server, Trash2 } from "lucide-react";
 import type { QuickScript } from "@shared/ipc/quickscripts/types";
 
 export function QuickScriptEditDialog({
@@ -8,12 +8,14 @@ export function QuickScriptEditDialog({
   onSave,
   onDelete,
   onClose,
+  onSaveSnippet,
 }: {
   qs: QuickScript;
   hostLabel: string;
   onSave: (draft: { title: string; script: string }) => void;
   onDelete: (id: string) => void;
   onClose: () => void;
+  onSaveSnippet?: (draft: { title: string; script: string }) => void;
 }) {
   const [title, setTitle] = useState(qs.title);
   const [script, setScript] = useState(qs.script);
@@ -94,6 +96,16 @@ export function QuickScriptEditDialog({
             <Trash2 size={13} />
             Delete
           </button>
+          {onSaveSnippet ? (
+            <button
+              type="button"
+              onClick={() => onSaveSnippet?.({ title: qs.title, script: qs.script })}
+              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-[12.5px] text-fog transition-colors hover:bg-white/5 hover:text-mist"
+            >
+              <BookmarkPlus size={13} />
+              Save as snippet
+            </button>
+          ) : null}
           <div className="flex items-center gap-2">
             <span className="hidden text-[11px] text-fog sm:inline">
               <kbd className="rounded border border-graphite bg-carbon px-1 py-px font-sans text-[10px] text-fog">⌘⏎</kbd> Save

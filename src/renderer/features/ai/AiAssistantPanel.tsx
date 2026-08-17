@@ -21,6 +21,7 @@ import {
 import { Streamdown } from "streamdown";
 import { classify } from "@shared/shell-risk";
 import { Button } from "@/components/ui/button";
+import { createCommandSnippet } from "@/features/shell/commandSnippets";
 import { listConnectionHistory } from "@/features/workspace/connectionHistory";
 import { aiConfigApi } from "./aiApi";
 import type { AiConfigApi, AiProviderConfig } from "./aiConfigTypes";
@@ -602,6 +603,9 @@ export function AiAssistantPanel({
           onSave={(draft) => quick.saveEdit(quick.editing!.id, draft)}
           onDelete={quick.remove}
           onClose={() => quick.setEditing(null)}
+          onSaveSnippet={(draft) => {
+            createCommandSnippet(draft.title.trim() || draft.script.split("\n")[0], draft.script);
+          }}
         />
       ) : null}
       {quick.pendingConfirm ? (

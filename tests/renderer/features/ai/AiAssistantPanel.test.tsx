@@ -6,6 +6,7 @@ import { AiAssistantPanel } from "@/features/ai/AiAssistantPanel";
 import type { AiAgentClient } from "@/features/ai/aiAgentApi";
 import type { AiAgentEvent, AiAgentSnapshot } from "@/features/ai/aiAgentTypes";
 import { createDeterministicQuickScriptApi } from "@/features/ai/deterministicQuickScriptApi";
+import * as commandSnippets from "@/features/shell/commandSnippets";
 import { listConnectionHistory, markConnectionConnected, recordConnectionAttempt } from "@/features/workspace/connectionHistory";
 import type { QuickScript } from "@shared/ipc/quickscripts/types";
 
@@ -360,6 +361,62 @@ describe("AiAssistantPanel", () => {
     expect(onRunCommand).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: /Execute/ }));
     expect(onRunCommand).toHaveBeenCalledWith("sudo systemctl restart nginx");
+  });
+
+  it("saves a quick script as a global command snippet from the edit dialog", async () => {
+    seedHost();
+    const qs: QuickScript = {
+      id: "qs-snippet",
+      hostId: "host-1",
+      sessionId: "ssh-1",
+      title: "List services",
+      script: "systemctl list-units --type=service",
+      description: null,
+      sourceUsageCount: 3,
+      sourceSuccessCount: 3,
+      executedCount: 0,
+      confidence: 0.9,
+      riskHint: null,
+      status: "suggested",
+      isNew: false,
+      mode: "llm",
+      createdAt: "",
+      updatedAt: "",
+    };
+    const quickApi = createDeterministicQuickScriptApi([qs]);
+    const changed = vi.fn();
+    const subscribeSpy = vi.spyOn(commandSnippets, "subscribeCommandSnippets");
+    const unsubscribe = commandSnippets.subscribeCommandSnippets(changed);
+
+    render(
+      <AiAssistantPanel
+        onClose={() => undefined}
+        sshSessionId="ssh-1"
+        providerApi={providerApi}
+        agentClient={agentClient(() => snapshot([]))}
+        quickScriptApi={quickApi}
+      />,
+    );
+
+    const card = await screen.findByRole("button", { name: "Quick script List services" });
+    await userEvent.hover(card);
+    await userEvent.click(screen.getByRole("button", { name: "Edit List services" }));
+    expect(screen.getByText("Edit quick script")).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "Save as snippet" }));
+
+    const snippets = JSON.parse(localStorage.getItem("terminus.commandSnippets") ?? "[]") as Array<{
+      name: string;
+      command: string;
+    }>;
+    expect(snippets).toContainEqual(
+      expect.objectContaining({ name: "List services", command: "systemctl list-units --type=service" }),
+    );
+    expect(subscribeSpy).toHaveBeenCalled();
+    expect(changed).toHaveBeenCalled();
+
+    unsubscribe();
+    subscribeSpy.mockRestore();
   });
 
   it("does not render the section when the host cannot be resolved", async () => {
