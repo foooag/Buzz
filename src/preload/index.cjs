@@ -42,6 +42,11 @@ contextBridge.exposeInMainWorld("terminus", {
       channel.port1.close();
     };
   },
+  onQuickScriptGenerated: (onEvent) => {
+    const listener = (_event, payload) => onEvent(payload);
+    ipcRenderer.on("terminus:quickscript-generated", listener);
+    return () => ipcRenderer.removeListener("terminus:quickscript-generated", listener);
+  },
   window: {
     minimize: () => ipcRenderer.invoke("terminus:window:minimize"),
     toggleMaximize: () => ipcRenderer.invoke("terminus:window:toggle-maximize"),

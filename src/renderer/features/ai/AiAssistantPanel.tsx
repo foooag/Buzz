@@ -39,7 +39,7 @@ import { QuickScriptsSection } from "./QuickScriptsSection";
 import { QuickScriptEditDialog } from "./QuickScriptEditDialog";
 import { QuickScriptConfirmDialog } from "./QuickScriptConfirmDialog";
 import { QuickScriptToast } from "./QuickScriptToast";
-import { quickScriptApi as defaultQuickScriptApi } from "./quickScriptApi";
+import { quickScriptApi as defaultQuickScriptApi, subscribeQuickScriptGenerated } from "./quickScriptApi";
 import type { QuickScriptApi } from "./deterministicQuickScriptApi";
 import { QUICK_SLASH_TRIGGERS, useQuickScripts } from "./useQuickScripts";
 
@@ -116,6 +116,13 @@ export function AiAssistantPanel({
     onRunCommand,
   });
   const hostLabel = hostEntry ? `${hostEntry.username}@${hostEntry.host}` : "";
+
+  useEffect(() => {
+    if (!hostEntry?.hostId) return;
+    return subscribeQuickScriptGenerated((event) => {
+      if (event.hostId === hostEntry.hostId && event.sshSessionId !== sshSessionId) void quick.refresh();
+    });
+  }, [hostEntry?.hostId, sshSessionId]);
 
   useEffect(() => {
     try {

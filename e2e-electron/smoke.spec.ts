@@ -69,6 +69,11 @@ test("boots Electron and reaches the isolated desktop services", async () => {
       data: [{ name: "Electron E2E" }],
     });
     expect(desktopRoundTrip.output).toContain("electron-rpc");
+    const quickScripts = await window.evaluate(async () => {
+      const bridge = (window as unknown as { terminus: { invoke: (command: string, input: unknown) => Promise<unknown> } }).terminus;
+      return bridge.invoke("quickscript_list", { hostId: "host-none" });
+    });
+    await expect(quickScripts).toEqual({ ok: true, data: [] });
     expect(await window.evaluate(() => typeof process)).toBe("undefined");
   } finally {
     await application.close();

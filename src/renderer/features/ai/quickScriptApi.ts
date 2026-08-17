@@ -1,6 +1,7 @@
 import { COMMANDS } from "@shared/ipc/command-names";
 import type {
   QuickScript,
+  QuickScriptGeneratedEvent,
   QuickScriptGenerationResult,
   QuickScriptPatch,
 } from "@shared/ipc/quickscripts/types";
@@ -31,5 +32,12 @@ export const quickScriptApi: QuickScriptApi = {
   clearData: (hostId) =>
     callCommand<{ hostId?: string }, void>(COMMANDS.quickScriptClearData, { hostId }),
 };
+
+export function subscribeQuickScriptGenerated(
+  listener: (event: QuickScriptGeneratedEvent) => void,
+): () => void {
+  const unsubscribe = window.terminus?.onQuickScriptGenerated?.(listener);
+  return () => unsubscribe?.();
+}
 
 export { createDeterministicQuickScriptApi };

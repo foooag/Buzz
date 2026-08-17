@@ -3,6 +3,7 @@ import type {
   AgentStreamEvent,
   AgentStreamRequest,
 } from "@shared/agent-stream";
+import type { QuickScriptGeneratedEvent } from "@shared/ipc/quickscripts/types";
 
 export type ElectronUpdateMetadata = {
   version: string;
@@ -33,6 +34,7 @@ export type TerminusDesktopBridge = {
     onEvent: (event: AgentStreamEvent) => void,
     onClose?: () => void,
   ) => () => void;
+  onQuickScriptGenerated: (onEvent: (event: QuickScriptGeneratedEvent) => void) => () => void;
   window: {
     minimize: () => Promise<void>;
     toggleMaximize: () => Promise<void>;
