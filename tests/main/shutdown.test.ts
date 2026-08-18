@@ -44,4 +44,30 @@ describe("shutdown coordinator", () => {
     expect(installUpdate).toHaveBeenCalledOnce();
     expect(quit).not.toHaveBeenCalled();
   });
+
+  it("recovers with a plain quit after the installer fails to take over", async () => {
+    const calls: string[] = [];
+    const coordinator = createShutdownCoordinator({
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      quit: () => {
+        calls.push("quit");
+      },
+      installUpdate: async () => {
+        throw new Error("installer did not take over");
+      },
+    });
+
+    await expect(coordinator.request("install-update")).rejects.toThrow(
+      "installer did not take over",
+    );
+
+    // The app stayed open, so native quit prevention must be restored.
+    expect(coordinator.shouldPreventNativeQuit()).toBe(true);
+
+    await coordinator.request("quit");
+    // Cleanup runs again (it is idempotent) before the plain quit takes over.
+    expect(calls).toEqual(["cleanup", "cleanup", "quit"]);
+  });
 });

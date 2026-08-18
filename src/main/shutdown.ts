@@ -15,13 +15,21 @@ export function createShutdownCoordinator(options: {
       if (mode === "install-update") requestedMode = mode;
       if (pending) return pending;
 
-      pending = options.cleanup().finally(async () => {
+      pending = options.cleanup().finally(() => {
         nativeQuitAllowed = true;
-        if (requestedMode === "install-update") {
-          await options.installUpdate();
-        } else {
+        if (requestedMode !== "install-update") {
           options.quit();
+          return;
         }
+        return Promise.resolve(options.installUpdate()).catch((error) => {
+          // The installer never took over. Restore the pre-shutdown state so a
+          // later plain quit is not blocked by this rejected promise and does
+          // not re-run the install.
+          nativeQuitAllowed = false;
+          requestedMode = "quit";
+          pending = undefined;
+          throw error;
+        });
       });
       return pending;
     },

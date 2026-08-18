@@ -1,6 +1,16 @@
 import { useEffect, useState } from "react";
-import { CircleAlert, Download, RefreshCw } from "lucide-react";
+import { CircleAlert, Download, PackageOpen, RefreshCw } from "lucide-react";
 import { useI18n } from "@/shared/i18n";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   updaterApi,
   type UpdateStatus,
@@ -15,6 +25,41 @@ function startBackgroundCheck(api: UpdaterApi): void {
   startupChecks.set(api, pending);
 }
 
+function ManualUpdateDialog({
+  open,
+  version,
+  onClose,
+  onReopen,
+}: {
+  open: boolean;
+  version: string;
+  onClose: () => void;
+  onReopen: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <AlertDialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t("Update installer opened")}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {t(
+              "Drag Buzz into the Applications folder to replace the old version, then reopen Buzz from Applications.",
+            )}
+            <span className="block pt-1 text-xs opacity-70">{version}</span>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={onClose}>{t("Done")}</AlertDialogCancel>
+          <AlertDialogAction onClick={onReopen}>
+            {t("Reopen installer")}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 export function UpdateStatusControl({
   api = updaterApi,
 }: {
@@ -23,6 +68,7 @@ export function UpdateStatusControl({
   const { t } = useI18n();
   const [status, setStatus] = useState<UpdateStatus>({ phase: "idle" });
   const [restarting, setRestarting] = useState(false);
+  const [manualPromptOpen, setManualPromptOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -46,11 +92,16 @@ export function UpdateStatusControl({
   if (status.phase === "idle") return null;
 
   const restart = async () => {
-    if (status.phase !== "ready" || restarting) return;
+    if (restarting) return;
+    if (status.phase !== "ready" && status.phase !== "manual-ready") return;
+    const manual = status.phase === "manual-ready";
     setRestarting(true);
     try {
       await api.relaunch();
+      if (manual) setManualPromptOpen(true);
     } catch {
+      // The installer did not take over; restore the action so it can be retried.
+    } finally {
       setRestarting(false);
     }
   };
@@ -60,9 +111,12 @@ export function UpdateStatusControl({
     await api.retry().catch(() => undefined);
   };
 
-  if (status.phase === "downloading") {
+  if (status.phase === "downloading" || status.phase === "manual-downloading") {
     const progress = status.percent === undefined ? "" : ` ${status.percent}%`;
-    const label = `${t("Downloading update")}${progress}`;
+    const downloadingInstaller = status.phase === "manual-downloading";
+    const label = downloadingInstaller
+      ? `${t("Downloading installer")}${progress}`
+      : `${t("Downloading update")}${progress}`;
     return (
       <button
         type="button"
@@ -73,7 +127,7 @@ export function UpdateStatusControl({
       >
         <Download size={14} className="animate-bounce" />
         <span className="truncate group-data-[sidebar-size=compact]/sidebar:hidden">
-          {t("Downloading update")}{progress}
+          {label}
         </span>
       </button>
     );
@@ -93,6 +147,36 @@ export function UpdateStatusControl({
           {t("Retry update")}
         </span>
       </button>
+    );
+  }
+
+  if (status.phase === "manual-ready") {
+    const label = restarting ? t("Opening…") : t("Open installer");
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => void restart()}
+          disabled={restarting}
+          aria-label={label}
+          title={`${label} · ${status.version}`}
+          className="ml-auto inline-flex min-w-0 items-center gap-1.5 rounded-md bg-acid-lime/12 px-1.5 py-1 font-medium text-acid-lime transition-colors hover:bg-acid-lime/20 disabled:cursor-wait"
+        >
+          <PackageOpen size={14} />
+          <span className="truncate group-data-[sidebar-size=compact]/sidebar:hidden">
+            {label}
+          </span>
+        </button>
+        <ManualUpdateDialog
+          open={manualPromptOpen}
+          version={status.version}
+          onClose={() => setManualPromptOpen(false)}
+          onReopen={() => {
+            setManualPromptOpen(false);
+            void api.relaunch().catch(() => undefined);
+          }}
+        />
+      </>
     );
   }
 

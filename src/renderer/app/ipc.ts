@@ -147,6 +147,8 @@ export type UpdateStatus =
   | { phase: "idle" }
   | { phase: "downloading"; version: string; percent?: number }
   | { phase: "ready"; version: string }
+  | { phase: "manual-downloading"; version: string; percent?: number }
+  | { phase: "manual-ready"; version: string }
   | { phase: "error"; version?: string };
 
 export function isRunningInElectron(): boolean {

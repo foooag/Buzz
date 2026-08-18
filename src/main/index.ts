@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, type WebContents } from "electron";
+import { app, BrowserWindow, ipcMain, net, shell, type WebContents } from "electron";
+import fs from "node:fs/promises";
 import path from "node:path";
 import type { CommandName } from "../shared/ipc/command-names.js";
 import type { CommandDispatcher as ElectronCommandDispatcher } from "./ipc/dispatcher.js";
@@ -18,6 +19,9 @@ import type { SshHeadlessRuntime } from "./domains/ssh/headless.js";
 import {
   BackgroundUpdateController,
   type BackgroundUpdateState,
+  detectMacCodeSignature,
+  quitAndInstallOrThrow,
+  type ManualInstaller,
 } from "./updater.js";
 import { createShutdownCoordinator } from "./shutdown.js";
 
@@ -158,6 +162,11 @@ function installIpcHandlers(): void {
     await (await getBackgroundUpdater()).retry();
   });
   ipcMain.handle("terminus:update:relaunch", async () => {
+    const updater = await getBackgroundUpdater();
+    if (updater.getState().phase === "manual-ready") {
+      await updater.openInstaller();
+      return;
+    }
     await shutdownCoordinator?.request("install-update");
   });
 }
@@ -175,6 +184,108 @@ async function getAutoUpdater() {
   return autoUpdater;
 }
 
+let manualInstaller: ManualInstaller | undefined;
+let manualUpdateRequired: boolean | undefined;
+let downloadedInstallerPath: string | undefined;
+
+function manualInstallerDirectory(): string {
+  return path.join(app.getPath("userData"), "updates");
+}
+
+// Unsigned/ad-hoc macOS builds cannot be auto-updated, so they fall back to a
+// manual DMG flow. The result is cached for the lifetime of the process.
+function shouldUseManualInstaller(): boolean {
+  if (manualUpdateRequired !== undefined) return manualUpdateRequired;
+  manualUpdateRequired =
+    process.platform === "darwin" &&
+    app.isPackaged &&
+    detectMacCodeSignature(
+      path.dirname(path.dirname(path.dirname(process.execPath))),
+    ) !== "signed";
+  return manualUpdateRequired;
+}
+
+async function downloadInstallerFile(
+  url: string,
+  onProgress: (percent: number | undefined) => void,
+): Promise<string> {
+  const response = await net.fetch(url, { redirect: "follow" });
+  if (!response.ok || !response.body) {
+    throw new Error(`Installer download failed with status ${response.status}.`);
+  }
+  const fileName =
+    decodeURIComponent(new URL(url).pathname.split("/").pop() ?? "") ||
+    "Buzz-installer.dmg";
+  const destination = path.join(manualInstallerDirectory(), fileName);
+  const totalHeaderValue = Number(response.headers.get("content-length"));
+  const total =
+    Number.isFinite(totalHeaderValue) && totalHeaderValue > 0
+      ? totalHeaderValue
+      : undefined;
+
+  const reader = response.body.getReader();
+  const handle = await fs.open(destination, "w");
+  try {
+    let transferred = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        await handle.write(value);
+        transferred += value.byteLength;
+        onProgress(
+          total === undefined
+            ? undefined
+            : Math.min(100, Math.round((transferred / total) * 100)),
+        );
+      }
+    }
+  } finally {
+    await handle.close();
+  }
+  return destination;
+}
+
+function getManualInstaller(): ManualInstaller {
+  if (manualInstaller) return manualInstaller;
+  manualInstaller = {
+    download: async (installerUrls, onProgress) => {
+      if (installerUrls.length === 0) {
+        throw new Error("No installer URL was found for the release.");
+      }
+      await fs.rm(manualInstallerDirectory(), {
+        recursive: true,
+        force: true,
+      });
+      await fs.mkdir(manualInstallerDirectory(), { recursive: true });
+
+      let lastError: unknown;
+      for (const url of installerUrls) {
+        try {
+          downloadedInstallerPath = await downloadInstallerFile(
+            url,
+            onProgress,
+          );
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError instanceof Error
+        ? lastError
+        : new Error("Installer download failed.");
+    },
+    open: async () => {
+      if (!downloadedInstallerPath) {
+        throw new Error("No downloaded installer is available to open.");
+      }
+      const errorMessage = await shell.openPath(downloadedInstallerPath);
+      if (errorMessage) throw new Error(errorMessage);
+    },
+  };
+  return manualInstaller;
+}
+
 async function getBackgroundUpdater(): Promise<BackgroundUpdateController> {
   if (backgroundUpdater) return backgroundUpdater;
   backgroundUpdater = new BackgroundUpdateController(
@@ -186,6 +297,7 @@ async function getBackgroundUpdater(): Promise<BackgroundUpdateController> {
         }
       }
     },
+    shouldUseManualInstaller() ? getManualInstaller() : undefined,
   );
   return backgroundUpdater;
 }
@@ -351,7 +463,7 @@ async function start(): Promise<void> {
     quit: () => app.quit(),
     installUpdate: async () => {
       const autoUpdater = await getAutoUpdater();
-      autoUpdater.quitAndInstall(false, true);
+      await quitAndInstallOrThrow(autoUpdater);
     },
   });
   installIpcHandlers();

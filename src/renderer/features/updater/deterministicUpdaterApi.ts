@@ -5,9 +5,11 @@ import type { AvailableUpdate, UpdateStatus, UpdaterApi } from "./updaterApi";
 export function createDeterministicUpdaterApi(options: {
   update?: AvailableUpdate | null;
   status?: UpdateStatus;
+  relaunchError?: Error;
 } = {}) {
   const calls = { relaunch: 0, retry: 0 };
   const update = options.update ?? null;
+  const relaunchError = options.relaunchError;
   let status: UpdateStatus = options.status ?? { phase: "idle" };
   const subscribers = new Set<(next: UpdateStatus) => void>();
 
@@ -24,7 +26,9 @@ export function createDeterministicUpdaterApi(options: {
     },
     relaunch: () => {
       calls.relaunch += 1;
-      return Promise.resolve();
+      return relaunchError
+        ? Promise.reject(relaunchError)
+        : Promise.resolve();
     },
   };
 
