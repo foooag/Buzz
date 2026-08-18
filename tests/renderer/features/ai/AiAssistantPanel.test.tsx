@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiProviderConfig } from "@/features/ai/aiConfigTypes";
@@ -323,6 +323,22 @@ describe("AiAssistantPanel", () => {
     await waitFor(() => expect(generate).toHaveBeenCalled());
     expect(client.prompt).not.toHaveBeenCalled();
     expect(input).toHaveTextContent(""); // removeOnExecute 剥离了触发词
+  });
+
+  it("lists a single quick-script option in the slash popover (no alias duplicate)", async () => {
+    seedHost();
+    const client = agentClient(() => snapshot([]));
+    const quickApi = createDeterministicQuickScriptApi([]);
+    render(
+      <AiAssistantPanel onClose={() => undefined} sshSessionId="ssh-1" providerApi={providerApi} agentClient={client} quickScriptApi={quickApi} />,
+    );
+    const input = await screen.findByRole("textbox", { name: "Message AI assistant" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
+    await paste(input, "/");
+    const popover = await screen.findByRole("listbox", { name: "Slash commands" });
+    expect(within(popover).getAllByRole("option")).toHaveLength(1); // 只有 /生成快捷指令,别名不进浮层
+    expect(within(popover).getByRole("option", { name: /^\/生成快捷指令/ })).toBeVisible();
+    expect(within(popover).queryByRole("option", { name: /quick-script/ })).toBeNull();
   });
 
   it("shows suggestion cards after generation and executes them into the terminal", async () => {

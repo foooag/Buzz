@@ -51,31 +51,25 @@ export function AiComposer({ placeholder, shieldLabel, disabled, busy, onSend, o
   const slash = unstable_useSlashCommandAdapter({
     removeOnExecute: true, // PRD F1 —— 触发词永不进入消息流
     fallbackIcon: (props) => <Sparkles {...props} />,
-    commands: [
-      ...QUICK_SLASH_COMMANDS.map((command) => ({
-        id: command.token.slice(1),
-        label: command.token,
-        description: command.hint,
-        icon: "sparkles",
-        execute: () => onGenerate(),
-      })),
-      { id: "quick-script", label: "/quick-script", description: "Alias of /生成快捷指令", icon: "sparkles", execute: () => onGenerate() },
-    ],
+    commands: QUICK_SLASH_COMMANDS.map((command) => ({
+      id: command.token.slice(1),
+      label: command.token,
+      description: command.hint,
+      icon: "sparkles",
+      execute: () => onGenerate(),
+    })),
   });
 
   // 库的 slash adapter 只暴露 search 形式的条目;应用的 flat 浮层按 categories
   // 渲染。把同一命令池暴露为单个 category,flat 模式才有可渲染、可导航的选项。
   const slashItems = useMemo<Unstable_TriggerItem[]>(
-    () => [
-      ...QUICK_SLASH_COMMANDS.map((command) => ({
-        id: command.token.slice(1),
-        type: "command",
-        label: command.token,
-        description: command.hint,
-        metadata: { icon: "sparkles" },
-      })),
-      { id: "quick-script", type: "command", label: "/quick-script", description: "Alias of /生成快捷指令", metadata: { icon: "sparkles" } },
-    ],
+    () => QUICK_SLASH_COMMANDS.map((command) => ({
+      id: command.token.slice(1),
+      type: "command",
+      label: command.token,
+      description: command.hint,
+      metadata: { icon: "sparkles" },
+    })),
     [],
   );
   const slashAdapter = useMemo(
